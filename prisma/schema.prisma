@@ -1,0 +1,134 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Title {
+  hashtag       Int       @id
+  titleName     String    @db.VarChar(255) @map("title_name")
+  alterName     String?   @db.VarChar(255) @map("alter_name")
+  titleLink     String    @db.VarChar(255) @map("title_link")
+  imageLink     String    @unique @db.VarChar(255) @map("image_link")
+  pages         Int
+  uploadedAt    DateTime  @db.Date @map("uploaded_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  readCount     Int       @default(0) @map("read_count")
+  lastReadAt    DateTime? @map("last_read_at")
+  coverBlurHash String?   @map("cover_blur_hash")
+
+  artists    TitleArtist[]
+  groups     TitleGroup[]
+  characters TitleCharacter[]
+  parodies   TitleParody[]
+  tags       TitleTag[]
+
+  @@map("titles")
+}
+
+model Artist {
+  id_artist  Int           @id @default(autoincrement())
+  artist_name String       @unique @db.VarChar(255)
+  artist_link String       @unique @db.VarChar(255)
+  total_works Int?
+
+  titles TitleArtist[]
+
+  @@map("artists")
+}
+
+model Group {
+  id_group   Int          @id @default(autoincrement())
+  group_name String       @unique @db.VarChar(255)
+  group_link String       @unique @db.VarChar(255)
+  total_works Int?
+
+  titles TitleGroup[]
+
+  @@map("groups")
+}
+
+model Character {
+  id_character   Int              @id @default(autoincrement())
+  character_name String           @unique @db.VarChar(255)
+  character_link String           @unique @db.VarChar(255)
+  total_works    Int?
+
+  titles TitleCharacter[]
+
+  @@map("characters")
+}
+
+model Parody {
+  id_parodie   Int              @id @default(autoincrement())
+  parodie_name String           @unique @db.VarChar(255)
+  parodie_link String           @unique @db.VarChar(255)
+  total_works  Int?
+
+  titles TitleParody[]
+
+  @@map("parodies")
+}
+
+model Tag {
+  id_tag     Int        @id @default(autoincrement())
+  tag_name   String     @unique @db.VarChar(255)
+  tag_link   String     @unique @db.VarChar(255)
+  total_works Int?
+
+  titles TitleTag[]
+
+  @@map("tags")
+}
+
+model TitleArtist {
+  hashtag   Int
+  id_artist Int
+  title     Title  @relation(fields: [hashtag], references: [hashtag], onDelete: Cascade, onUpdate: NoAction)
+  artist    Artist @relation(fields: [id_artist], references: [id_artist], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([hashtag, id_artist])
+  @@map("titlestoartists")
+}
+
+model TitleGroup {
+  hashtag  Int
+  id_group Int
+  title    Title @relation(fields: [hashtag], references: [hashtag], onDelete: Cascade, onUpdate: NoAction)
+  group    Group @relation(fields: [id_group], references: [id_group], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([hashtag, id_group])
+  @@map("titlestogroups")
+}
+
+model TitleCharacter {
+  hashtag      Int
+  id_character Int
+  title        Title     @relation(fields: [hashtag], references: [hashtag], onDelete: Cascade, onUpdate: NoAction)
+  character    Character @relation(fields: [id_character], references: [id_character], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([hashtag, id_character])
+  @@map("titlestocharacters")
+}
+
+model TitleParody {
+  hashtag    Int
+  id_parodie Int
+  title      Title  @relation(fields: [hashtag], references: [hashtag], onDelete: Cascade, onUpdate: NoAction)
+  parody     Parody @relation(fields: [id_parodie], references: [id_parodie], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([hashtag, id_parodie])
+  @@map("titlestoparodies")
+}
+
+model TitleTag {
+  hashtag Int
+  id_tag  Int
+  title   Title @relation(fields: [hashtag], references: [hashtag], onDelete: Cascade, onUpdate: NoAction)
+  tag     Tag   @relation(fields: [id_tag], references: [id_tag], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([hashtag, id_tag])
+  @@map("titlestotags")
+}
