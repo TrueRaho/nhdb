@@ -4,15 +4,15 @@ import { useState, type CSSProperties } from "react";
 import { NhIcon } from "./Primitives";
 
 export type Filters = {
-  tags: string[]; characters: string[]; parodies: string[]; artists: string[];
+  tags: string[]; characters: string[]; parodies: string[]; artists: string[]; groups: string[];
   pageMin: number; pageMax: number;
   sortField: string; sortDir: "asc" | "desc";
 };
 
 export type Dataset = {
-  allTags: string[]; allCharacters: string[]; allParodies: string[]; allArtists: string[];
+  allTags: string[]; allCharacters: string[]; allParodies: string[]; allArtists: string[]; allGroups: string[];
   tagCounts: Record<string, number>; charCounts: Record<string, number>;
-  parodyCounts: Record<string, number>; artistCounts: Record<string, number>;
+  parodyCounts: Record<string, number>; artistCounts: Record<string, number>; groupCounts: Record<string, number>;
   pageMin: number; pageMax: number; matchingCount?: number;
 };
 
@@ -116,6 +116,7 @@ export function FilterSheet({ open, onClose, filters, setFilters, dataset }: {
     { id: "characters", label: "chars", count: filters.characters.length },
     { id: "parodies", label: "parodies", count: filters.parodies.length },
     { id: "artists", label: "artists", count: filters.artists.length },
+    { id: "groups", label: "groups", count: filters.groups.length },
     { id: "pages", label: "pages", count: (filters.pageMin > dataset.pageMin || filters.pageMax < dataset.pageMax) ? 1 : 0 },
     { id: "sort", label: "sort", count: filters.sortField !== "added-at" || filters.sortDir !== "desc" ? 1 : 0 },
   ];
@@ -127,7 +128,7 @@ export function FilterSheet({ open, onClose, filters, setFilters, dataset }: {
     });
   };
 
-  const totalActive = filters.tags.length + filters.characters.length + filters.parodies.length + filters.artists.length;
+  const totalActive = filters.tags.length + filters.characters.length + filters.parodies.length + filters.artists.length + filters.groups.length;
 
   return (
     <div style={{
@@ -153,7 +154,7 @@ export function FilterSheet({ open, onClose, filters, setFilters, dataset }: {
           <div style={{ fontFamily: "var(--nh-font-display)", fontSize: 15, fontWeight: 700, color: "var(--nh-text-1)", letterSpacing: "-0.01em" }}>filters</div>
           <div style={{ fontFamily: "var(--nh-font-mono)", fontSize: 10, color: "var(--nh-text-3)", letterSpacing: "0.04em" }}>{totalActive} active</div>
           <div style={{ flex: 1 }} />
-          <button onClick={() => setFilters({ tags: [], characters: [], parodies: [], artists: [], pageMin: 0, pageMax: dataset.pageMax, sortField: "added-at", sortDir: "desc" })} style={{
+          <button onClick={() => setFilters({ tags: [], characters: [], parodies: [], artists: [], groups: [], pageMin: 0, pageMax: dataset.pageMax, sortField: "added-at", sortDir: "desc" })} style={{
             appearance: "none", border: 0, background: "transparent", cursor: "pointer",
             color: "var(--nh-text-3)", fontFamily: "var(--nh-font-mono)", fontSize: 10,
             textTransform: "uppercase", letterSpacing: "0.06em",
@@ -205,6 +206,10 @@ export function FilterSheet({ open, onClose, filters, setFilters, dataset }: {
           {activeSection === "artists" && (
             <FilterMulti options={dataset.allArtists} selected={filters.artists}
               onToggle={(v) => toggle("artists", v)} counts={dataset.artistCounts} placeholder="search artists…" />
+          )}
+          {activeSection === "groups" && (
+            <FilterMulti options={dataset.allGroups} selected={filters.groups}
+              onToggle={(v) => toggle("groups", v)} counts={dataset.groupCounts} placeholder="search groups…" />
           )}
           {activeSection === "pages" && <FilterPageRange filters={filters} setFilters={setFilters} min={0} max={dataset.pageMax} />}
           {activeSection === "sort" && <FilterSort filters={filters} setFilters={setFilters} />}
@@ -336,6 +341,7 @@ function FilterSort({ filters, setFilters }: { filters: Filters; setFilters: Rea
     { id: "tag-count", label: "tag count", icon: "filter" as const },
     { id: "title", label: "title (a→z)", icon: "sort" as const },
     { id: "artist", label: "artist name", icon: "sort" as const },
+    { id: "group", label: "group name", icon: "sort" as const },
     { id: "parody", label: "parody", icon: "sort" as const },
     { id: "hashtag", label: "hashtag id", icon: "sort" as const },
     { id: "random", label: "random", icon: "shuffle" as const },

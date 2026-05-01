@@ -14,7 +14,7 @@ export function NhdbDesktop({
   search, setSearch, filters, setFilters,
   detailItem, setDetailItem, addOpen, setAddOpen,
   view, setView, onTagClick, onChipClick, onDelete, onRead, onAlterName,
-  recentAdds, density,
+  recentAdds, density, onAddItems,
 }: {
   collection: Item[]; filtered: Item[]; dataset: Dataset;
   search: string; setSearch: (s: string) => void;
@@ -28,10 +28,11 @@ export function NhdbDesktop({
   onRead: () => void;
   onAlterName: (value: string) => void;
   recentAdds: Item[]; density: "comfortable" | "compact";
+  onAddItems: (items: Item[]) => void;
 }) {
   const activeFilterCount =
     filters.tags.length + filters.characters.length +
-    filters.parodies.length + filters.artists.length +
+    filters.parodies.length + filters.artists.length + filters.groups.length +
     ((filters.pageMin > dataset.pageMin || filters.pageMax < dataset.pageMax) ? 1 : 0);
 
   return (
@@ -71,7 +72,7 @@ export function NhdbDesktop({
       )}
       {addOpen && (
         <CenteredModal onClose={() => setAddOpen(false)} width={620} maxHeight="80vh">
-          <AddModal open onClose={() => setAddOpen(false)} recentAdds={recentAdds} embedded />
+          <AddModal open onClose={() => setAddOpen(false)} recentAdds={recentAdds} embedded onAdd={onAddItems} />
         </CenteredModal>
       )}
     </div>
@@ -159,7 +160,7 @@ function DesktopSidebar({ filters, setFilters, dataset, activeFilterCount, match
   dataset: Dataset; activeFilterCount: number; matchingCount: number; totalCount: number;
 }) {
   const [openSection, setOpenSection] = useState<Record<string, boolean>>({
-    sort: true, tags: true, artists: false, characters: false, parodies: false, pages: true,
+    sort: true, tags: true, artists: false, groups: false, characters: false, parodies: false, pages: true,
   });
   const tog = (k: string) => setOpenSection(s => ({ ...s, [k]: !s[k] }));
 
@@ -171,7 +172,7 @@ function DesktopSidebar({ filters, setFilters, dataset, activeFilterCount, match
   };
 
   const clearAll = () => setFilters({
-    tags: [], characters: [], parodies: [], artists: [],
+    tags: [], characters: [], parodies: [], artists: [], groups: [],
     pageMin: 0, pageMax: dataset.pageMax,
     sortField: "added-at", sortDir: "desc",
   });
@@ -208,6 +209,10 @@ function DesktopSidebar({ filters, setFilters, dataset, activeFilterCount, match
 
       <SidebarGroup title={`artists · ${filters.artists.length}`} open={openSection.artists} onToggle={() => tog("artists")}>
         <SidebarMulti options={dataset.allArtists} counts={dataset.artistCounts} selected={filters.artists} onToggle={v => toggle("artists", v)} placeholder="search artists…" defaultLimit={8} />
+      </SidebarGroup>
+
+      <SidebarGroup title={`groups · ${filters.groups.length}`} open={openSection.groups} onToggle={() => tog("groups")}>
+        <SidebarMulti options={dataset.allGroups} counts={dataset.groupCounts} selected={filters.groups} onToggle={v => toggle("groups", v)} placeholder="search groups…" defaultLimit={8} />
       </SidebarGroup>
 
       <SidebarGroup title={`characters · ${filters.characters.length}`} open={openSection.characters} onToggle={() => tog("characters")}>
@@ -333,6 +338,7 @@ function SortControl({ filters, setFilters }: { filters: Filters; setFilters: Re
     { id: "tag-count", label: "tag count" },
     { id: "title", label: "title (a→z)" },
     { id: "artist", label: "artist" },
+    { id: "group", label: "group" },
     { id: "parody", label: "parody" },
     { id: "hashtag", label: "hashtag" },
     { id: "random", label: "random" },

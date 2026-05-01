@@ -1,53 +1,100 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { NhCover, NhIcon } from "./Primitives";
-import { mulberry32, PALETTES, TAGS_POOL, ARTIST_POOL, PARODY_POOL, CHARACTER_POOL, type Item } from "../lib/data";
+import { PALETTES, type Item } from "../lib/data";
 
-export function AddModal({ open, onClose, recentAdds, embedded }: {
+export function AddModal({ open, onClose, recentAdds, embedded, onAdd }: {
   open: boolean; onClose: () => void; recentAdds: Item[]; embedded?: boolean;
+  onAdd?: (items: Item[]) => void;
 }) {
   const [input, setInput] = useState("");
   const [scraping, setScraping] = useState(false);
   const [previews, setPreviews] = useState<Item[]>([]);
+  const [adding, setAdding] = useState(false);
 
+  const prevOpenRef = useRef(open);
   useEffect(() => {
-    if (!open) { setInput(""); setScraping(false); setPreviews([]); }
+    const wasOpen = prevOpenRef.current;
+    prevOpenRef.current = open;
+    if (wasOpen && !open) { setInput(""); setScraping(false); setPreviews([]); setAdding(false); }
   }, [open]);
+
+  const onConfirmAdd = async () => {
+    if (previews.length === 0) return;
+    setAdding(true);
+    try {
+      await Promise.all(
+        previews.map(p =>
+          fetch("/api/scrape", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ input: String(p.hashtag) }),
+          })
+        )
+      );
+      onAdd?.(previews);
+      onClose();
+    } catch (e) {
+      console.error("add error:", e);
+      setAdding(false);
+    }
+  };
 
   if (!open) return null;
 
   const inputs = input.split(/[, \n]+/).map(s => s.trim()).filter(Boolean);
 
-  const onScrape = () => {
+  const onScrape = async () => {
     if (inputs.length === 0) return;
     setScraping(true);
     setPreviews([]);
-    setTimeout(() => {
-      const titleNames = ["Sunday Notebook", "Counter Sketch", "Soft Static", "Late Pages", "Open Studio", "Tape Echo"];
-      const previews = inputs.slice(0, 6).map((raw, idx) => {
-        const m = raw.match(/(\d{5,7})/);
-        const hashtag = m ? +m[1] : 100000 + (raw.charCodeAt(0) * 1000) % 800000;
-        const seed = hashtag;
-        const rng = mulberry32(seed);
-        const palette = PALETTES[idx % PALETTES.length];
-        return {
-          hashtag,
-          titleName: titleNames[idx % titleNames.length],
-          alterName: `vol. ${1 + idx % 3}`,
-          pages: 18 + Math.floor(rng() * 80),
-          tags: [...TAGS_POOL].sort(() => rng() - 0.5).slice(0, 5),
-          artists: [ARTIST_POOL[idx % ARTIST_POOL.length]],
-          parodies: [PARODY_POOL[idx % PARODY_POOL.length]],
-          characters: [CHARACTER_POOL[idx % CHARACTER_POOL.length]],
-          groups: [] as string[],
-          uploadedAt: 200, addedAt: 0, readCount: 0, lastReadAt: null,
-          imageLink: "", palette, seed,
-        } satisfies Item;
-      });
-      setPreviews(previews);
+    try {
+      const results = await Promise.all(
+        inputs.map(async (raw) => {
+          const res = await fetch("/api/scrape", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ input: raw, persist: false }),
+          });
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({ error: res.statusText }));
+            throw new Error(err.error ?? res.statusText);
+          }
+          const { scraped } = await res.json() as {
+            scraped: {
+              hashtag: number; title_name: string; alter_name: string | null;
+              image_link: string; pages: number; uploaded_at: string;
+              tags: { name: string }[]; artists: { name: string }[];
+              groups: { name: string }[]; characters: { name: string }[];
+              parodies: { name: string }[];
+            };
+          };
+          const seed = scraped.hashtag;
+          const palette = PALETTES[seed % PALETTES.length];
+          const uploadedAt = Math.floor((Date.now() - new Date(scraped.uploaded_at).getTime()) / 86400000);
+          return {
+            hashtag: scraped.hashtag,
+            titleName: scraped.title_name,
+            alterName: scraped.alter_name ?? "",
+            imageLink: scraped.image_link,
+            pages: scraped.pages,
+            tags: scraped.tags.map(t => t.name),
+            artists: scraped.artists.map(a => a.name),
+            groups: scraped.groups.map(g => g.name),
+            characters: scraped.characters.map(c => c.name),
+            parodies: scraped.parodies.map(p => p.name),
+            uploadedAt, addedAt: 0, readCount: 0, lastReadAt: null,
+            palette, seed,
+          } satisfies Item;
+        })
+      );
+      setPreviews(results);
+    } catch (e) {
+      console.error("scrape error:", e);
+    } finally {
       setScraping(false);
-    }, 1100);
+    }
   };
 
   return (
@@ -131,12 +178,17 @@ export function AddModal({ open, onClose, recentAdds, embedded }: {
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {previews.map(p => <PreviewRow key={p.hashtag} item={p} />)}
               </div>
-              <button style={{
+              <button onClick={onConfirmAdd} disabled={adding} style={{
                 marginTop: 12, width: "100%", height: 42, borderRadius: 8,
-                background: "var(--nh-accent)", color: "#0a0a0a", border: 0, cursor: "pointer",
+                background: "var(--nh-accent)", color: "#0a0a0a", border: 0,
+                cursor: adding ? "default" : "pointer",
+                opacity: adding ? 0.7 : 1,
                 fontFamily: "var(--nh-font-display)", fontSize: 13, fontWeight: 800,
                 letterSpacing: "-0.01em",
-              }}>add {previews.length} title{previews.length > 1 ? "s" : ""} to collection</button>
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+              }}>
+                {adding ? <><span className="nh-dot-pulse"/> saving…</> : `add ${previews.length} title${previews.length > 1 ? "s" : ""} to collection`}
+              </button>
             </div>
           )}
 

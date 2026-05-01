@@ -12,6 +12,8 @@ export function StatsView({ collection, dataset, onTagClick }: {
   const [tagsShowAll, setTagsShowAll] = useState(false);
   const [artistsDir, setArtistsDir] = useState<"desc" | "asc">("desc");
   const [artistsShowAll, setArtistsShowAll] = useState(false);
+  const [groupsDir, setGroupsDir] = useState<"desc" | "asc">("desc");
+  const [groupsShowAll, setGroupsShowAll] = useState(false);
 
   const total = collection.length;
   const totalPages = collection.reduce((s, c) => s + c.pages, 0);
@@ -32,6 +34,10 @@ export function StatsView({ collection, dataset, onTagClick }: {
   const allArtistEntries = Object.entries(dataset.artistCounts).sort((a, b) => artistsDir === "desc" ? b[1] - a[1] : a[1] - b[1]);
   const topArtists = artistsShowAll ? allArtistEntries : allArtistEntries.slice(0, 10);
   const topMaxArtist = Math.max(...Object.values(dataset.artistCounts), 1);
+
+  const allGroupEntries = Object.entries(dataset.groupCounts).sort((a, b) => groupsDir === "desc" ? b[1] - a[1] : a[1] - b[1]);
+  const topGroups = groupsShowAll ? allGroupEntries : allGroupEntries.slice(0, 10);
+  const topMaxGroup = Math.max(...Object.values(dataset.groupCounts), 1);
 
   const buckets = [
     { label: "<25", min: 0, max: 24 },
@@ -185,6 +191,31 @@ export function StatsView({ collection, dataset, onTagClick }: {
         </div>
       </Section>
 
+      {allGroupEntries.length > 0 && (
+        <Section
+          title={`groups · ${dataset.allGroups.length} unique`}
+          action={
+            <div style={{ display: "flex", gap: 4 }}>
+              <SortToggle dir={groupsDir} onToggle={() => setGroupsDir(d => d === "desc" ? "asc" : "desc")} />
+              <ShowToggle showAll={groupsShowAll} total={dataset.allGroups.length} limit={10} onToggle={() => setGroupsShowAll(v => !v)} />
+            </div>
+          }
+        >
+          <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+            {topGroups.map(([g, n], i) => (
+              <div key={g} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{ width: 18, flexShrink: 0, fontFamily: "var(--nh-font-mono)", fontSize: 9, fontWeight: 700, color: "var(--nh-text-3)" }}>{String(i + 1).padStart(2, "0")}</div>
+                <div style={{ flex: 1, minWidth: 0, fontFamily: "var(--nh-font-mono)", fontSize: 11, color: "var(--nh-text-1)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g}</div>
+                <div style={{ width: 80, height: 4, borderRadius: 2, background: "var(--nh-pill-bg)", position: "relative" }}>
+                  <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${(n / topMaxGroup) * 100}%`, background: "var(--nh-accent)", borderRadius: 2 }} />
+                </div>
+                <div style={{ width: 26, flexShrink: 0, textAlign: "right", fontFamily: "var(--nh-font-mono)", fontSize: 11, fontWeight: 600, color: "var(--nh-accent)" }}>{n}</div>
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
+
       <Section title="top parodies">
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
           {topParodies.map(([p, n]) => (
@@ -232,6 +263,7 @@ export function StatsView({ collection, dataset, onTagClick }: {
           <Mini label="characters" value={dataset.allCharacters.length} />
           <Mini label="parodies" value={dataset.allParodies.length} />
           <Mini label="artists" value={dataset.allArtists.length} />
+          <Mini label="groups" value={dataset.allGroups.length} />
           <Mini label="tags" value={dataset.allTags.length} />
         </div>
       </Section>

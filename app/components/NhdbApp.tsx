@@ -25,7 +25,7 @@ export default function NhdbApp({ initialItems }: { initialItems: Item[] }) {
   const [collection, setCollection] = useState<Item[]>(initialItems);
   const [search, setSearch] = useState("");
   const [filters, setFilters] = useState<Filters>(() => ({
-    tags: [], characters: [], parodies: [], artists: [],
+    tags: [], characters: [], parodies: [], artists: [], groups: [],
     pageMin: 0,
     pageMax: initialItems.reduce((m, i) => Math.max(m, i.pages), 0) || 999,
     sortField: "added-at", sortDir: "desc",
@@ -41,16 +41,17 @@ export default function NhdbApp({ initialItems }: { initialItems: Item[] }) {
     const allCharacters = [...new Set(collection.flatMap(c => c.characters))].sort();
     const allParodies = [...new Set(collection.flatMap(c => c.parodies))].sort();
     const allArtists = [...new Set(collection.flatMap(c => c.artists))].sort();
-    const count = (key: "tags" | "characters" | "parodies" | "artists") => {
+    const allGroups = [...new Set(collection.flatMap(c => c.groups))].sort();
+    const count = (key: "tags" | "characters" | "parodies" | "artists" | "groups") => {
       const c: Record<string, number> = {};
       collection.forEach(it => (it[key] as string[]).forEach(v => { c[v] = (c[v] || 0) + 1; }));
       return c;
     };
     const allPages = collection.map(c => c.pages);
     return {
-      allTags, allCharacters, allParodies, allArtists,
+      allTags, allCharacters, allParodies, allArtists, allGroups,
       tagCounts: count("tags"), charCounts: count("characters"),
-      parodyCounts: count("parodies"), artistCounts: count("artists"),
+      parodyCounts: count("parodies"), artistCounts: count("artists"), groupCounts: count("groups"),
       pageMin: Math.min(...allPages), pageMax: Math.max(...allPages),
     };
   }, [collection]);
@@ -69,6 +70,7 @@ export default function NhdbApp({ initialItems }: { initialItems: Item[] }) {
       if (filters.characters.length && !filters.characters.some(t => c.characters.includes(t))) return false;
       if (filters.parodies.length && !filters.parodies.some(t => c.parodies.includes(t))) return false;
       if (filters.artists.length && !filters.artists.some(t => c.artists.includes(t))) return false;
+      if (filters.groups.length && !filters.groups.some(t => c.groups.includes(t))) return false;
       if (c.pages < filters.pageMin || c.pages > filters.pageMax) return false;
       return true;
     });
@@ -85,6 +87,7 @@ export default function NhdbApp({ initialItems }: { initialItems: Item[] }) {
           case "hashtag": return c.hashtag;
           case "title": return c.titleName.toLowerCase();
           case "artist": return (c.artists[0] || "").toLowerCase();
+          case "group": return (c.groups[0] || "").toLowerCase();
           case "parody": return (c.parodies[0] || "").toLowerCase();
           case "tag-count": return c.tags.length;
           default: return 0;
@@ -105,14 +108,14 @@ export default function NhdbApp({ initialItems }: { initialItems: Item[] }) {
 
   const activeFilterCount =
     filters.tags.length + filters.characters.length +
-    filters.parodies.length + filters.artists.length +
+    filters.parodies.length + filters.artists.length + filters.groups.length +
     ((filters.pageMin > dataset.pageMin || filters.pageMax < dataset.pageMax) ? 1 : 0);
 
   const onTagClick = (t: string) =>
     setFilters(f => f.tags.includes(t) ? f : { ...f, tags: [...f.tags, t] });
 
   const onChipClick = (groupLabel: string, val: string) => {
-    const map: Record<string, keyof Filters> = { tags: "tags", characters: "characters", parodies: "parodies", artists: "artists", groups: "tags" };
+    const map: Record<string, keyof Filters> = { tags: "tags", characters: "characters", parodies: "parodies", artists: "artists", groups: "groups" };
     const key = map[groupLabel] || "tags";
     setFilters(f => {
       const list = f[key] as string[];
@@ -157,6 +160,13 @@ export default function NhdbApp({ initialItems }: { initialItems: Item[] }) {
 
   const recentAdds = collection.filter(c => c.addedAt < 14).slice(0, 5);
 
+  const onAddItems = (items: Item[]) => {
+    setCollection(c => {
+      const existing = new Set(c.map(x => x.hashtag));
+      return [...items.filter(x => !existing.has(x.hashtag)), ...c];
+    });
+  };
+
   if (viewport === "desktop") {
     return (
       <div style={{ minHeight: "100vh", background: "var(--nh-bg)" }}>
@@ -168,7 +178,7 @@ export default function NhdbApp({ initialItems }: { initialItems: Item[] }) {
           addOpen={addOpen} setAddOpen={setAddOpen}
           view={view} setView={setView}
           onTagClick={onTagClick} onChipClick={onChipClick} onDelete={onDelete} onRead={onRead}
-          onAlterName={onAlterName} recentAdds={recentAdds} density="comfortable"
+          onAlterName={onAlterName} recentAdds={recentAdds} density="comfortable" onAddItems={onAddItems}
         />
       </div>
     );
@@ -230,7 +240,7 @@ export default function NhdbApp({ initialItems }: { initialItems: Item[] }) {
         onAlterName={onAlterName}
         allItems={collection}
       />
-      <AddModal open={addOpen} onClose={() => setAddOpen(false)} recentAdds={recentAdds} />
+      <AddModal open={addOpen} onClose={() => setAddOpen(false)} recentAdds={recentAdds} onAdd={onAddItems} />
     </div>
   );
 }

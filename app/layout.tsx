@@ -15,7 +15,7 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "nhdb · personal collection",
+  title: "nhdb",
   description: "Local hentai collection database",
 };
 
