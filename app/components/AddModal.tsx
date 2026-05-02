@@ -12,12 +12,13 @@ export function AddModal({ open, onClose, recentAdds, embedded, onAdd }: {
   const [scraping, setScraping] = useState(false);
   const [previews, setPreviews] = useState<Item[]>([]);
   const [adding, setAdding] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const prevOpenRef = useRef(open);
   useEffect(() => {
     const wasOpen = prevOpenRef.current;
     prevOpenRef.current = open;
-    if (wasOpen && !open) { setInput(""); setScraping(false); setPreviews([]); setAdding(false); }
+    if (wasOpen && !open) { setInput(""); setScraping(false); setPreviews([]); setAdding(false); setError(null); }
   }, [open]);
 
   const onConfirmAdd = async () => {
@@ -49,6 +50,7 @@ export function AddModal({ open, onClose, recentAdds, embedded, onAdd }: {
     if (inputs.length === 0) return;
     setScraping(true);
     setPreviews([]);
+    setError(null);
     try {
       const results = await Promise.all(
         inputs.map(async (raw) => {
@@ -91,7 +93,7 @@ export function AddModal({ open, onClose, recentAdds, embedded, onAdd }: {
       );
       setPreviews(results);
     } catch (e) {
-      console.error("scrape error:", e);
+      setError(e instanceof Error ? e.message : "scrape failed");
     } finally {
       setScraping(false);
     }
@@ -150,6 +152,17 @@ export function AddModal({ open, onClose, recentAdds, embedded, onAdd }: {
               boxSizing: "border-box",
             }}
           />
+          {error && (
+            <div style={{
+              marginTop: 10, padding: "8px 10px", borderRadius: 7,
+              background: "rgba(255,60,60,0.08)", border: "1px solid rgba(255,60,60,0.25)",
+              fontFamily: "var(--nh-font-mono)", fontSize: 11, color: "#ff6b6b",
+              display: "flex", alignItems: "flex-start", gap: 6,
+            }}>
+              <span style={{ flexShrink: 0 }}>✕</span>
+              <span>{error}</span>
+            </div>
+          )}
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
             <div style={{ fontFamily: "var(--nh-font-mono)", fontSize: 10, color: "var(--nh-text-3)", letterSpacing: "0.04em", flex: 1 }}>{inputs.length} {inputs.length === 1 ? "entry" : "entries"} detected</div>
             <button onClick={onScrape} disabled={inputs.length === 0 || scraping} style={{

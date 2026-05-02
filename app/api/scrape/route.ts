@@ -18,6 +18,31 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Missing 'input' field" }, { status: 400 });
   }
 
+  const scraperUrl = process.env.SCRAPER_SERVICE_URL;
+  if (scraperUrl) {
+    let upstream: Response;
+    try {
+      upstream = await fetch(`${scraperUrl.replace(/\/$/, "")}/scrape`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(process.env.SCRAPER_SECRET
+            ? { Authorization: `Bearer ${process.env.SCRAPER_SECRET}` }
+            : {}),
+        },
+        body: JSON.stringify({ input }),
+      });
+    } catch {
+      return NextResponse.json({ error: "Scraper service unreachable" }, { status: 503 });
+    }
+    const upstreamData = await upstream.json();
+    if (!upstream.ok) return NextResponse.json(upstreamData, { status: upstream.status });
+    const { scraped } = upstreamData;
+    if (body.persist === false) return NextResponse.json({ scraped });
+    const saved = await upsertScrapedTitle(scraped);
+    return NextResponse.json({ scraped, saved });
+  }
+
   try {
     const scraped = await scrapeTitle(input);
     if (body.persist === false) {

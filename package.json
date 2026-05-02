@@ -6,16 +6,20 @@
     "dev": "next dev",
     "build": "prisma generate && next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "scraper": "tsx scraper-server.ts"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",
     "@prisma/adapter-neon": "^7.8.0",
     "@prisma/client": "^7.8.0",
+    "@sparticuz/chromium": "^148.0.0",
     "cheerio": "^1.2.0",
     "next": "16.2.4",
     "playwright": "^1.59.1",
+    "playwright-extra": "^4.3.6",
     "prisma": "^7.8.0",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "tsx": "^4.21.0"

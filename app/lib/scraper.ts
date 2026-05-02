@@ -1,8 +1,20 @@
 // nhentai scraper — extracted from the standalone scrape.ts CLI.
-// Uses Playwright (Chromium) to bypass Cloudflare + cheerio to parse #info.
+// playwright-extra + stealth are loaded lazily so Vercel (proxy mode) never imports them.
 
-import { chromium, type Browser } from "playwright";
 import * as cheerio from "cheerio";
+
+type PlaywrightExtraChromium = typeof import("playwright-extra")["chromium"];
+let _chromium: PlaywrightExtraChromium | null = null;
+
+async function getChromium(): Promise<PlaywrightExtraChromium> {
+  if (!_chromium) {
+    const { chromium } = await import("playwright-extra");
+    const { default: stealth } = await import("puppeteer-extra-plugin-stealth");
+    chromium.use(stealth());
+    _chromium = chromium;
+  }
+  return _chromium;
+}
 
 export interface ScrapeEntity {
   name: string;
@@ -106,9 +118,20 @@ export async function scrapeTitle(input: string | number): Promise<ScrapeResult>
 
   const url = `https://nhentai.net/g/${hashtag}/`;
 
-  const browser: Browser = await chromium.launch({
+  const isProduction = process.env.NODE_ENV === "production";
+  let executablePath: string | undefined;
+  let lambdaArgs: string[] = [];
+  if (isProduction) {
+    const chromiumLambda = (await import("@sparticuz/chromium")).default;
+    executablePath = await chromiumLambda.executablePath();
+    lambdaArgs = chromiumLambda.args;
+  }
+
+  const chromium = await getChromium();
+  const browser = await chromium.launch({
     headless: true,
-    args: ["--disable-blink-features=AutomationControlled"],
+    executablePath,
+    args: [...lambdaArgs, "--disable-blink-features=AutomationControlled"],
   });
 
   try {
@@ -121,13 +144,9 @@ export async function scrapeTitle(input: string | number): Promise<ScrapeResult>
       extraHTTPHeaders: { "Accept-Language": "en-US,en;q=0.9" },
     });
 
-    await context.addInitScript(() => {
-      Object.defineProperty(navigator, "webdriver", { get: () => undefined });
-    });
-
     const page = await context.newPage();
 
-    await page.route("**/*", (route) => {
+    await page.route("**/*", (route: import("playwright").Route) => {
       if (["image", "media", "font", "stylesheet"].includes(route.request().resourceType())) {
         route.abort();
       } else {
