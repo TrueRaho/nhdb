@@ -424,7 +424,7 @@ function CenteredModal({ children, onClose, width, maxHeight }: { children: Reac
       padding: 32,
     }}>
       <div onClick={e => e.stopPropagation()} style={{
-        width, maxWidth: "95vw", maxHeight,
+        width, maxWidth: "95vw", height: maxHeight, maxHeight,
         background: "var(--nh-surface)",
         borderRadius: 14,
         border: "1px solid var(--nh-border)",

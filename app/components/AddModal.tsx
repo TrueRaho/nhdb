@@ -137,7 +137,7 @@ export function AddModal({ open, onClose, recentAdds, embedded, onAdd }: {
           </button>
         </div>
 
-        <div style={{ flex: 1, overflow: "auto", padding: "16px" }}>
+        <div style={{ flex: 1, overflow: "auto", minHeight: 0, padding: "16px" }}>
           <div style={{ fontFamily: "var(--nh-font-mono)", fontSize: 9.5, color: "var(--nh-text-3)", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 6 }}>nhentai url or hashtag · supports comma-separated</div>
           <textarea value={input} onChange={e => setInput(e.target.value)}
             placeholder={"177013\nnhentai.net/g/895243\n820175, 831895, 563281"}

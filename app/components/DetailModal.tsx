@@ -96,7 +96,7 @@ export function DetailModal({ item, onClose, onTagClick, onDelete, onRead, onOpe
         <NhIcon name="close" size={14} color="rgba(255,255,255,0.9)" stroke={2}/>
       </button>
 
-      <div style={{ flex: 1, overflow: "auto", paddingBottom: 90 }}>
+      <div style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
         <div style={{ padding: "12px 16px 0", display: "flex", gap: 12 }}>
           <div style={{ width: 130, flexShrink: 0 }}>
             <NhCover item={item} size="large" />
@@ -176,9 +176,9 @@ export function DetailModal({ item, onClose, onTagClick, onDelete, onRead, onOpe
       </div>
 
       <div style={{
-        position: "absolute", bottom: 0, left: 0, right: 0,
+        flexShrink: 0,
         padding: "10px 14px 14px",
-        background: "linear-gradient(180deg, transparent, var(--nh-surface) 24%)",
+        background: "linear-gradient(to bottom, transparent, var(--nh-surface) 30%)",
         display: "flex", gap: 8,
       }}>
         <button onClick={onDelete} style={{
