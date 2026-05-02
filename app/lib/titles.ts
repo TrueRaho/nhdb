@@ -134,13 +134,53 @@ export async function getTitle(hashtag: number) {
 }
 
 export async function deleteTitle(hashtag: number) {
-  return prisma.title.delete({ where: { hashtag } });
+  const title = await prisma.title.findUnique({
+    where: { hashtag },
+    include: titleInclude,
+  });
+  if (!title) return;
+
+  const artistIds = title.artists.map(r => r.id_artist);
+  const groupIds = title.groups.map(r => r.id_group);
+  const characterIds = title.characters.map(r => r.id_character);
+  const parodyIds = title.parodies.map(r => r.id_parodie);
+  const tagIds = title.tags.map(r => r.id_tag);
+
+  await prisma.title.delete({ where: { hashtag } });
+
+  await Promise.all([
+    artistIds.length && prisma.artist.deleteMany({
+      where: { id_artist: { in: artistIds }, titles: { none: {} } },
+    }),
+    groupIds.length && prisma.group.deleteMany({
+      where: { id_group: { in: groupIds }, titles: { none: {} } },
+    }),
+    characterIds.length && prisma.character.deleteMany({
+      where: { id_character: { in: characterIds }, titles: { none: {} } },
+    }),
+    parodyIds.length && prisma.parody.deleteMany({
+      where: { id_parodie: { in: parodyIds }, titles: { none: {} } },
+    }),
+    tagIds.length && prisma.tag.deleteMany({
+      where: { id_tag: { in: tagIds }, titles: { none: {} } },
+    }),
+  ]);
 }
 
 export async function markRead(hashtag: number) {
-  return prisma.title.update({
-    where: { hashtag },
-    data: { readCount: { increment: 1 }, lastReadAt: new Date() },
+  return prisma.$transaction([
+    prisma.title.update({
+      where: { hashtag },
+      data: { readCount: { increment: 1 }, lastReadAt: new Date() },
+    }),
+    prisma.readLog.create({ data: { hashtag } }),
+  ]);
+}
+
+export async function getReadLogs() {
+  return prisma.readLog.findMany({
+    orderBy: { readAt: "desc" },
+    select: { hashtag: true, readAt: true },
   });
 }
 

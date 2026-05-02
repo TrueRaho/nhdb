@@ -6,7 +6,7 @@ import { GalleryCard } from "./Gallery";
 import { StatsView } from "./Stats";
 import { DetailModal } from "./DetailModal";
 import { AddModal } from "./AddModal";
-import type { Item } from "../lib/data";
+import type { Item, ReadLog } from "../lib/data";
 import type { Filters, Dataset } from "./HeaderFilter";
 
 export function NhdbDesktop({
@@ -14,7 +14,7 @@ export function NhdbDesktop({
   search, setSearch, filters, setFilters,
   detailItem, setDetailItem, addOpen, setAddOpen,
   view, setView, onTagClick, onChipClick, onDelete, onRead, onAlterName,
-  recentAdds, density, onAddItems,
+  recentAdds, density, onAddItems, readLogs,
 }: {
   collection: Item[]; filtered: Item[]; dataset: Dataset;
   search: string; setSearch: (s: string) => void;
@@ -29,6 +29,7 @@ export function NhdbDesktop({
   onAlterName: (value: string) => void;
   recentAdds: Item[]; density: "comfortable" | "compact";
   onAddItems: (items: Item[]) => void;
+  readLogs: ReadLog[];
 }) {
   const activeFilterCount =
     filters.tags.length + filters.characters.length +
@@ -51,7 +52,7 @@ export function NhdbDesktop({
               filters={filters} onOpen={setDetailItem} onTagClick={onTagClick}
               density={density} />
           )}
-          {view === "stats" && <StatsView collection={collection} dataset={dataset} onTagClick={onTagClick} />}
+          {view === "stats" && <StatsView collection={collection} dataset={dataset} onTagClick={onTagClick} readLogs={readLogs} />}
         </div>
       </div>
 

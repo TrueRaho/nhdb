@@ -1,5 +1,10 @@
 // Mock collection data for nhdb. Generic placeholder titles + abstract gradients.
 
+export type ReadLog = {
+  hashtag: number;
+  readAt: string; // ISO 8601
+};
+
 export type Item = {
   hashtag: number;
   titleName: string;

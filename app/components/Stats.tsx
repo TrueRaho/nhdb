@@ -2,11 +2,11 @@
 
 import { useState } from "react";
 import { NhCover } from "./Primitives";
-import type { Item } from "../lib/data";
+import type { Item, ReadLog } from "../lib/data";
 import type { Dataset } from "./HeaderFilter";
 
-export function StatsView({ collection, dataset, onTagClick }: {
-  collection: Item[]; dataset: Dataset; onTagClick: (t: string) => void;
+export function StatsView({ collection, dataset, onTagClick, readLogs }: {
+  collection: Item[]; dataset: Dataset; onTagClick: (t: string) => void; readLogs: ReadLog[];
 }) {
   const [tagsDir, setTagsDir] = useState<"desc" | "asc">("desc");
   const [tagsShowAll, setTagsShowAll] = useState(false);
@@ -48,12 +48,36 @@ export function StatsView({ collection, dataset, onTagClick }: {
   ].map(b => ({ ...b, count: collection.filter(c => c.pages >= b.min && c.pages <= b.max).length }));
   const bucketMax = Math.max(...buckets.map(b => b.count), 1);
 
+  const now = Date.now();
   const months = Array.from({ length: 12 }, (_, i) => {
-    const days = (11 - i) * 30;
-    const count = collection.filter(c => c.lastReadAt != null && c.lastReadAt >= days && c.lastReadAt < days + 30).length;
+    const msStart = now - (12 - i) * 30 * 86400000;
+    const msEnd = now - (11 - i) * 30 * 86400000;
+    const count = readLogs.filter(l => {
+      const t = new Date(l.readAt).getTime();
+      return t >= msStart && t < msEnd;
+    }).length;
     return { idx: i, count };
   });
   const monthMax = Math.max(...months.map(m => m.count), 1);
+
+  const hourBins = Array.from({ length: 24 }, (_, h) => ({
+    h,
+    count: readLogs.filter(l => new Date(l.readAt).getHours() === h).length,
+  }));
+  const hourMax = Math.max(...hourBins.map(b => b.count), 1);
+
+  const DOW_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  const dowBins = Array.from({ length: 7 }, (_, d) => ({
+    label: DOW_LABELS[d],
+    count: readLogs.filter(l => {
+      const day = new Date(l.readAt).getDay();
+      return (day === 0 ? 6 : day - 1) === d;
+    }).length,
+  }));
+  const dowMax = Math.max(...dowBins.map(b => b.count), 1);
+
+  const titleMap = new Map(collection.map(c => [c.hashtag, c.alterName || c.titleName]));
+  const recentSessions = readLogs.slice(0, 20);
 
   const adds = Array.from({ length: 6 }, (_, i) => {
     const start = (5 - i) * 60;
@@ -100,10 +124,79 @@ export function StatsView({ collection, dataset, onTagClick }: {
           ))}
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", fontFamily: "var(--nh-font-mono)", fontSize: 10, color: "var(--nh-text-3)", marginTop: 2 }}>
-          <span>peak: {monthMax} reads</span>
-          <span>avg: {(totalReads / 12).toFixed(1)}/mo</span>
+          <span>peak: {monthMax} sessions</span>
+          <span>{readLogs.length} total sessions</span>
         </div>
       </Section>
+
+      <Section title="by time of day">
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 56, padding: "4px 0 0" }}>
+          {hourBins.map(b => (
+            <div key={b.h} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+              <div style={{
+                width: "100%",
+                height: `${(b.count / hourMax) * 44 + 2}px`,
+                background: b.count > 0 ? "var(--nh-accent)" : "var(--nh-border-strong)",
+                borderRadius: 2,
+                opacity: b.count > 0 ? 0.5 + (b.count / hourMax) * 0.5 : 0.25,
+              }} />
+              {b.h % 6 === 0 && (
+                <div style={{ fontFamily: "var(--nh-font-mono)", fontSize: 7.5, color: "var(--nh-text-3)", letterSpacing: "0.02em" }}>{b.h}h</div>
+              )}
+            </div>
+          ))}
+        </div>
+        {readLogs.length === 0 && (
+          <div style={{ fontFamily: "var(--nh-font-mono)", fontSize: 11, color: "var(--nh-text-3)", paddingTop: 6 }}>no sessions yet</div>
+        )}
+      </Section>
+
+      <Section title="by day of week">
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 6, height: 60 }}>
+          {dowBins.map(b => (
+            <div key={b.label} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+              <div style={{
+                width: "100%",
+                height: `${(b.count / dowMax) * 40 + 2}px`,
+                background: b.count > 0 ? "var(--nh-accent)" : "var(--nh-border-strong)",
+                borderRadius: 2,
+                opacity: b.count > 0 ? 0.5 + (b.count / dowMax) * 0.5 : 0.25,
+              }} />
+              <div style={{ fontFamily: "var(--nh-font-mono)", fontSize: 8.5, color: "var(--nh-text-3)", letterSpacing: "0.02em" }}>{b.label}</div>
+            </div>
+          ))}
+        </div>
+        {readLogs.length === 0 && (
+          <div style={{ fontFamily: "var(--nh-font-mono)", fontSize: 11, color: "var(--nh-text-3)" }}>no sessions yet</div>
+        )}
+      </Section>
+
+      {recentSessions.length > 0 && (
+        <Section title={`recent sessions · last ${recentSessions.length}`}>
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            {recentSessions.map((s, i) => {
+              const d = new Date(s.readAt);
+              const dateStr = d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+              const timeStr = d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+              const name = titleMap.get(s.hashtag);
+              return (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderBottom: i < recentSessions.length - 1 ? "1px solid var(--nh-border)" : "none" }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    {name && (
+                      <div style={{ fontFamily: "var(--nh-font-display)", fontSize: 12, fontWeight: 600, color: "var(--nh-text-1)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</div>
+                    )}
+                    <div style={{ fontFamily: "var(--nh-font-mono)", fontSize: 9.5, color: "var(--nh-text-3)" }}>#{s.hashtag}</div>
+                  </div>
+                  <div style={{ textAlign: "right", flexShrink: 0 }}>
+                    <div style={{ fontFamily: "var(--nh-font-mono)", fontSize: 10, color: "var(--nh-text-2)" }}>{timeStr}</div>
+                    <div style={{ fontFamily: "var(--nh-font-mono)", fontSize: 9.5, color: "var(--nh-text-3)" }}>{dateStr}</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </Section>
+      )}
 
       <Section title="page count distribution">
         <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>

@@ -24,6 +24,7 @@ model Title {
   characters TitleCharacter[]
   parodies   TitleParody[]
   tags       TitleTag[]
+  readLogs   ReadLog[]
 
   @@map("titles")
 }
@@ -131,4 +132,13 @@ model TitleTag {
 
   @@id([hashtag, id_tag])
   @@map("titlestotags")
+}
+
+model ReadLog {
+  id      Int      @id @default(autoincrement())
+  hashtag Int
+  readAt  DateTime @default(now()) @map("read_at")
+  title   Title    @relation(fields: [hashtag], references: [hashtag], onDelete: Cascade)
+
+  @@map("read_logs")
 }

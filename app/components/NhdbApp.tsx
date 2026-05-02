@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { Item } from "../lib/data";
+import type { Item, ReadLog } from "../lib/data";
 import { GalleryGrid } from "./Gallery";
 import { GalleryHeader, FilterSheet, type Filters, type Dataset } from "./HeaderFilter";
 import { DetailModal } from "./DetailModal";
@@ -21,8 +21,9 @@ function useViewport(): "mobile" | "desktop" {
   return vp;
 }
 
-export default function NhdbApp({ initialItems }: { initialItems: Item[] }) {
+export default function NhdbApp({ initialItems, initialReadLogs }: { initialItems: Item[]; initialReadLogs: ReadLog[] }) {
   const [collection, setCollection] = useState<Item[]>(initialItems);
+  const [readLogs, setReadLogs] = useState<ReadLog[]>(initialReadLogs);
   const [search, setSearch] = useState("");
   const [filters, setFilters] = useState<Filters>(() => ({
     tags: [], characters: [], parodies: [], artists: [], groups: [],
@@ -140,6 +141,7 @@ export default function NhdbApp({ initialItems }: { initialItems: Item[] }) {
     const updated = { ...detailItem, readCount: detailItem.readCount + 1, lastReadAt: 0 };
     setDetailItem(updated);
     setCollection(c => c.map(x => x.hashtag === hashtag ? updated : x));
+    setReadLogs(l => [{ hashtag, readAt: new Date().toISOString() }, ...l]);
     fetch(`/api/titles/${hashtag}`, { method: "PATCH" }).catch(err => {
       console.error("Failed to update read count:", err);
     });
@@ -179,6 +181,7 @@ export default function NhdbApp({ initialItems }: { initialItems: Item[] }) {
           view={view} setView={setView}
           onTagClick={onTagClick} onChipClick={onChipClick} onDelete={onDelete} onRead={onRead}
           onAlterName={onAlterName} recentAdds={recentAdds} density="comfortable" onAddItems={onAddItems}
+          readLogs={readLogs}
         />
       </div>
     );
@@ -222,7 +225,7 @@ export default function NhdbApp({ initialItems }: { initialItems: Item[] }) {
             )}
           </>
         )}
-        {view === "stats" && <StatsView collection={collection} dataset={dataset} onTagClick={onTagClick} />}
+        {view === "stats" && <StatsView collection={collection} dataset={dataset} onTagClick={onTagClick} readLogs={readLogs} />}
       </div>
 
       <FilterSheet
