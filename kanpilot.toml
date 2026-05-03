@@ -5,7 +5,17 @@ skipFiles = [ ".gitignore", "package.json" ]
 [[processes]]
 id = "process1"
 name = "To Do"
-tasks = [ ]
+
+  [[processes.tasks]]
+  id = "kofh1sjr5fqy243fvpqvcckr"
+  title = "Приклеить кнопки удалить и read on nhentai в Desktop режиме при detail modal, потому что сейчас при открытии тайтла со множеством тегов эти кнопки просто пропадают"
+  description = ""
+  tag = "backlog"
+  linkFiles = [ ]
+  dueDate = ""
+  checkList = [ ]
+  priority = ""
+  linkCommits = [ ]
 
 [[processes]]
 id = "process2"

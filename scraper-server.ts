@@ -1,7 +1,7 @@
 import http from "node:http";
 import { spawn } from "node:child_process";
 import { config } from "dotenv";
-import { scrapeTitle, ScrapeError } from "./app/lib/scraper";
+import { scrapeTitle, ScrapeError } from "./lib/scraper";
 
 config({ path: ".env.local" });
 

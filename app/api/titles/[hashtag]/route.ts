@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { deleteTitle, getTitle, markRead, updateAlterName } from "@/app/lib/titles";
+import { deleteTitle, getTitle, markRead, updateAlterName } from "@/lib/titles";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

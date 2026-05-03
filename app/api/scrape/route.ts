@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { scrapeTitle, ScrapeError } from "@/app/lib/scraper";
-import { upsertScrapedTitle } from "@/app/lib/titles";
+import { scrapeTitle, ScrapeError } from "@/lib/scraper";
+import { upsertScrapedTitle } from "@/lib/titles";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

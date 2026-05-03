@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { ArrowUpDown } from "lucide-react";
 import type { Item, ReadLog } from "../lib/data";
 import { GalleryGrid } from "./Gallery";
 import { GalleryHeader, FilterSheet, type Filters, type Dataset } from "./HeaderFilter";
@@ -8,7 +9,6 @@ import { DetailModal } from "./DetailModal";
 import { AddModal } from "./AddModal";
 import { StatsView } from "./Stats";
 import { NhdbDesktop } from "./Desktop";
-import { NhIcon } from "./Primitives";
 
 function useViewport(): "mobile" | "desktop" {
   const [vp, setVp] = useState<"mobile" | "desktop">("desktop");
@@ -59,7 +59,7 @@ export default function NhdbApp({ initialItems, initialReadLogs }: { initialItem
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    let out = collection.filter(c => {
+    const out = collection.filter(c => {
       if (q && !(
         c.titleName.toLowerCase().includes(q) ||
         c.alterName.toLowerCase().includes(q) ||
@@ -171,7 +171,7 @@ export default function NhdbApp({ initialItems, initialReadLogs }: { initialItem
 
   if (viewport === "desktop") {
     return (
-      <div style={{ minHeight: "100vh", background: "var(--nh-bg)" }}>
+      <div className="min-h-screen bg-nh-bg">
         <NhdbDesktop
           collection={collection} filtered={filtered} dataset={dataset}
           search={search} setSearch={setSearch}
@@ -188,14 +188,8 @@ export default function NhdbApp({ initialItems, initialReadLogs }: { initialItem
   }
 
   return (
-    <div style={{
-      width: "100%", minHeight: "100vh",
-      background: "var(--nh-bg)",
-      color: "var(--nh-text-1)",
-      position: "relative", overflow: "hidden",
-      display: "flex", flexDirection: "column",
-    }}>
-      <div style={{ flex: 1, position: "relative" }}>
+    <div className="w-full min-h-screen flex flex-col bg-nh-bg text-nh-text-1 relative overflow-hidden">
+      <div className="flex-1 relative">
         <GalleryHeader
           search={search} setSearch={setSearch}
           onAdd={() => setAddOpen(true)}
@@ -204,13 +198,13 @@ export default function NhdbApp({ initialItems, initialReadLogs }: { initialItem
           onOpenFilters={() => setFilterOpen(true)}
           activeFilterCount={activeFilterCount}
         />
-        <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 12px 8px" }}>
-          <div style={{ fontFamily: "var(--nh-font-mono)", fontSize: 10, color: "var(--nh-text-3)", letterSpacing: "0.06em", textTransform: "uppercase" }}>
+        <div className="flex items-center gap-1.5 px-3 pt-2.5 pb-2">
+          <div className="font-mono text-[10px] uppercase tracking-wider text-nh-text-3">
             {filtered.length} of {collection.length} titles
           </div>
-          <div style={{ flex: 1 }} />
-          <div style={{ fontFamily: "var(--nh-font-mono)", fontSize: 10, color: "var(--nh-text-3)", display: "flex", alignItems: "center", gap: 4 }}>
-            <NhIcon name="sort" size={11} color="var(--nh-text-3)"/>
+          <div className="flex-1" />
+          <div className="font-mono text-[10px] text-nh-text-3 flex items-center gap-1">
+            <ArrowUpDown className="size-3 text-nh-text-3" />
             {filters.sortField.replace(/-/g, " ")} · {filters.sortDir}
           </div>
         </div>
@@ -219,7 +213,7 @@ export default function NhdbApp({ initialItems, initialReadLogs }: { initialItem
           <>
             <GalleryGrid items={filtered} onOpen={setDetailItem} onTagClick={onTagClick} density="comfortable" />
             {filtered.length === 0 && (
-              <div style={{ padding: 40, textAlign: "center", color: "var(--nh-text-3)", fontFamily: "var(--nh-font-mono)", fontSize: 12 }}>
+              <div className="p-10 text-center font-mono text-xs text-nh-text-3">
                 no results · adjust filters
               </div>
             )}

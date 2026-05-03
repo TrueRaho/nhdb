@@ -1,6 +1,6 @@
-import NhdbApp from "./components/NhdbApp";
-import { listTitles, getReadLogs } from "./lib/titles";
-import { dbTitleToItem } from "./lib/mappers";
+import NhdbApp from "../components/NhdbApp";
+import { listTitles, getReadLogs } from "../lib/titles";
+import { dbTitleToItem } from "../lib/mappers";
 
 export const dynamic = "force-dynamic";
 
