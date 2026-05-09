@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { BarChart3, ChevronDown, ChevronRight, LayoutGrid, Plus, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,17 +29,17 @@ import { GalleryCard } from "./Gallery";
 import { StatsView } from "./Stats";
 import { DetailModal } from "./DetailModal";
 import { AddModal } from "./AddModal";
-import type { Item, ReadLog } from "../lib/data";
+import type { Item } from "../lib/data";
 import type { Filters, Dataset } from "./HeaderFilter";
 
 export function NhdbDesktop({
-  collection, filtered, dataset,
+  items, total, totalEver, dataset,
   search, setSearch, filters, setFilters,
   detailItem, setDetailItem, addOpen, setAddOpen,
   view, setView, onTagClick, onChipClick, onDelete, onRead, onAlterName,
-  recentAdds, density, onAddItems, readLogs,
+  recentAdds, density, onAddItems, loading, onLoadMore,
 }: {
-  collection: Item[]; filtered: Item[]; dataset: Dataset;
+  items: Item[]; total: number; totalEver: number; dataset: Dataset;
   search: string; setSearch: (s: string) => void;
   filters: Filters; setFilters: React.Dispatch<React.SetStateAction<Filters>>;
   detailItem: Item | null; setDetailItem: (i: Item | null) => void;
@@ -52,12 +52,13 @@ export function NhdbDesktop({
   onAlterName: (value: string) => void;
   recentAdds: Item[]; density: "comfortable" | "compact";
   onAddItems: (items: Item[]) => void;
-  readLogs: ReadLog[];
+  loading: boolean; onLoadMore: () => void;
 }) {
-  const activeFilterCount =
+  const activeFilterCount = useMemo(() =>
     filters.tags.length + filters.characters.length +
     filters.parodies.length + filters.artists.length + filters.groups.length +
-    ((filters.pageMin > dataset.pageMin || filters.pageMax < dataset.pageMax) ? 1 : 0);
+    ((filters.pageMin > dataset.pageMin || filters.pageMax < dataset.pageMax) ? 1 : 0),
+  [filters, dataset.pageMin, dataset.pageMax]);
 
   return (
     <div className="w-full min-h-screen flex flex-col bg-nh-bg text-nh-text-1">
@@ -67,15 +68,15 @@ export function NhdbDesktop({
         <DesktopSidebar
           filters={filters} setFilters={setFilters}
           dataset={dataset} activeFilterCount={activeFilterCount}
-          matchingCount={filtered.length} totalCount={collection.length}
+          matchingCount={total} totalCount={totalEver}
         />
         <div className="flex-1 overflow-auto px-7 pt-5 pb-16 min-w-0">
           {view === "gallery" && (
-            <DesktopGallery filtered={filtered} totalCount={collection.length}
+            <DesktopGallery items={items} total={total} totalCount={totalEver}
               filters={filters} onOpen={setDetailItem} onTagClick={onTagClick}
-              density={density} />
+              density={density} loading={loading} onLoadMore={onLoadMore} />
           )}
-          {view === "stats" && <StatsView collection={collection} dataset={dataset} onTagClick={onTagClick} readLogs={readLogs} />}
+          {view === "stats" && <StatsView dataset={dataset} onTagClick={onTagClick} />}
         </div>
       </div>
 
@@ -95,7 +96,6 @@ export function NhdbDesktop({
               onRead={onRead}
               onOpen={setDetailItem}
               onAlterName={onAlterName}
-              allItems={collection}
               embedded
             />
           )}
@@ -322,8 +322,14 @@ function SidebarMulti({ options, counts, selected, onToggle, placeholder, defaul
 }) {
   const [search, setSearch] = useState("");
   const [showAll, setShowAll] = useState(false);
-  const sorted = [...options].sort((a, b) => (counts[b] || 0) - (counts[a] || 0));
-  const filtered = sorted.filter(o => o.toLowerCase().includes(search.toLowerCase()));
+  const sorted = useMemo(
+    () => [...options].sort((a, b) => (counts[b] || 0) - (counts[a] || 0)),
+    [options, counts]
+  );
+  const filtered = useMemo(() => {
+    const q = search.toLowerCase();
+    return q ? sorted.filter(o => o.toLowerCase().includes(q)) : sorted;
+  }, [sorted, search]);
   const limit = showAll ? 999 : defaultLimit;
   const visible = filtered.slice(0, limit);
 
@@ -436,10 +442,11 @@ function SortControl({ filters, setFilters }: { filters: Filters; setFilters: Re
   );
 }
 
-function DesktopGallery({ filtered, totalCount, filters, onOpen, onTagClick, density }: {
-  filtered: Item[]; totalCount: number; filters: Filters;
+function DesktopGallery({ items, total, totalCount, filters, onOpen, onTagClick, density, loading, onLoadMore }: {
+  items: Item[]; total: number; totalCount: number; filters: Filters;
   onOpen: (i: Item) => void; onTagClick: (t: string) => void;
   density: "comfortable" | "compact";
+  loading: boolean; onLoadMore: () => void;
 }) {
   const cols = density === "compact" ? "grid-cols-6" : "grid-cols-5";
   return (
@@ -452,15 +459,26 @@ function DesktopGallery({ filtered, totalCount, filters, onOpen, onTagClick, den
           library
         </h1>
         <span className="font-mono text-[11px] tracking-wide text-nh-text-3">
-          {filtered.length} of {totalCount} · sort {filters.sortField.replace(/-/g, " ")} · {filters.sortDir}
+          {total} of {totalCount} · sort {filters.sortField.replace(/-/g, " ")} · {filters.sortDir}
         </span>
       </div>
       <div className={`grid ${cols} gap-3.5`}>
-        {filtered.map(item => (
+        {items.map(item => (
           <GalleryCard key={item.hashtag} item={item} onOpen={onOpen} onTagClick={onTagClick} density="comfortable" />
         ))}
       </div>
-      {filtered.length === 0 && (
+      {items.length < total && (
+        <div className="flex justify-center mt-6">
+          <button
+            onClick={onLoadMore}
+            disabled={loading}
+            className="px-4 py-2 rounded-lg bg-nh-pill font-mono text-[11px] text-nh-text-2 disabled:opacity-60"
+          >
+            {loading ? "loading…" : `load more (${total - items.length})`}
+          </button>
+        </div>
+      )}
+      {items.length === 0 && !loading && (
         <div className="py-16 text-center font-mono text-xs text-nh-text-3">no results · adjust filters</div>
       )}
     </>

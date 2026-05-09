@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import { BookOpen, Eye } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { NhCover } from "./Primitives";
@@ -10,7 +11,7 @@ type Density = "comfortable" | "compact";
 const overlayBadgeClass =
   "h-auto rounded-sm border-0 px-1.5 py-[3px] font-mono text-[9.5px] font-medium leading-none tracking-wider text-white/90 backdrop-blur-[4px] [&>svg]:size-[9px]! [&>svg]:opacity-85";
 
-export function GalleryCard({ item, onOpen, onTagClick, density }: {
+export const GalleryCard = memo(function GalleryCard({ item, onOpen, onTagClick, density }: {
   item: Item; onOpen: (i: Item) => void; onTagClick: (t: string) => void; density: Density;
 }) {
   const lastReadStr = item.lastReadAt != null
@@ -21,7 +22,11 @@ export function GalleryCard({ item, onOpen, onTagClick, density }: {
   const tagsToShow = isCompact ? item.tags.slice(0, 3) : item.tags.slice(0, 4);
 
   return (
-    <div onClick={() => onOpen(item)} className="flex flex-col gap-1.5 cursor-pointer min-w-0">
+    <div
+      onClick={() => onOpen(item)}
+      className="flex flex-col gap-1.5 cursor-pointer min-w-0"
+      style={{ contentVisibility: "auto", containIntrinsicSize: "0 300px" } as React.CSSProperties}
+    >
       <div className="relative">
         <NhCover item={item} size={isCompact ? "sm" : "card"} />
         <div className="absolute top-1.5 right-1.5 flex flex-col items-end gap-1">
@@ -78,7 +83,7 @@ export function GalleryCard({ item, onOpen, onTagClick, density }: {
       </div>
     </div>
   );
-}
+});
 
 export function GalleryGrid({ items, onOpen, onTagClick, density }: {
   items: Item[]; onOpen: (i: Item) => void; onTagClick: (t: string) => void; density: Density;

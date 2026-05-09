@@ -26,6 +26,11 @@ model Title {
   tags       TitleTag[]
   readLogs   ReadLog[]
 
+  @@index([createdAt(sort: Desc)])
+  @@index([lastReadAt(sort: Desc)])
+  @@index([readCount(sort: Desc)])
+  @@index([uploadedAt(sort: Desc)])
+  @@index([pages])
   @@map("titles")
 }
 
@@ -91,6 +96,7 @@ model TitleArtist {
   artist    Artist @relation(fields: [id_artist], references: [id_artist], onDelete: Cascade, onUpdate: NoAction)
 
   @@id([hashtag, id_artist])
+  @@index([id_artist])
   @@map("titlestoartists")
 }
 
@@ -101,6 +107,7 @@ model TitleGroup {
   group    Group @relation(fields: [id_group], references: [id_group], onDelete: Cascade, onUpdate: NoAction)
 
   @@id([hashtag, id_group])
+  @@index([id_group])
   @@map("titlestogroups")
 }
 
@@ -111,6 +118,7 @@ model TitleCharacter {
   character    Character @relation(fields: [id_character], references: [id_character], onDelete: Cascade, onUpdate: NoAction)
 
   @@id([hashtag, id_character])
+  @@index([id_character])
   @@map("titlestocharacters")
 }
 
@@ -121,6 +129,7 @@ model TitleParody {
   parody     Parody @relation(fields: [id_parodie], references: [id_parodie], onDelete: Cascade, onUpdate: NoAction)
 
   @@id([hashtag, id_parodie])
+  @@index([id_parodie])
   @@map("titlestoparodies")
 }
 
@@ -131,6 +140,7 @@ model TitleTag {
   tag     Tag   @relation(fields: [id_tag], references: [id_tag], onDelete: Cascade, onUpdate: NoAction)
 
   @@id([hashtag, id_tag])
+  @@index([id_tag])
   @@map("titlestotags")
 }
 
@@ -140,5 +150,7 @@ model ReadLog {
   readAt  DateTime @default(now()) @map("read_at")
   title   Title    @relation(fields: [hashtag], references: [hashtag], onDelete: Cascade)
 
+  @@index([readAt(sort: Desc)])
+  @@index([hashtag])
   @@map("read_logs")
 }

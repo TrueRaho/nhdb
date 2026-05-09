@@ -1,21 +1,25 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Image from "next/image";
 import { BookOpen, Eye, ExternalLink, Pencil, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { NhCover } from "./Primitives";
 import type { Item } from "../lib/data";
+import type { SimilarItem } from "../lib/titles";
+import { getSimilarAction, getTitleAction } from "../app/actions";
 
-export function DetailModal({ item, onClose, onTagClick, onDelete, onRead, onOpen, onAlterName, allItems, embedded }: {
+export function DetailModal({ item, onClose, onTagClick, onDelete, onRead, onOpen, onAlterName, embedded }: {
   item: Item | null; onClose: () => void;
   onTagClick: (group: string, val: string) => void;
   onDelete: () => void; onRead: () => void; onOpen: (item: Item) => void;
-  onAlterName: (value: string) => void; allItems: Item[]; embedded?: boolean;
+  onAlterName: (value: string) => void; embedded?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
+  const [similar, setSimilar] = useState<SimilarItem[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
   const dragStartY = useRef<number | null>(null);
@@ -35,6 +39,16 @@ export function DetailModal({ item, onClose, onTagClick, onDelete, onRead, onOpe
       return () => { document.body.style.overflow = ""; };
     }
   }, [embedded, item]);
+
+  const itemHashtag = item?.hashtag;
+  useEffect(() => {
+    if (itemHashtag == null) return;
+    let cancelled = false;
+    getSimilarAction(itemHashtag, 8)
+      .then((r) => { if (!cancelled) setSimilar(r); })
+      .catch(console.error);
+    return () => { cancelled = true; setSimilar([]); };
+  }, [itemHashtag]);
 
   const onDragStart = (e: React.TouchEvent) => {
     dragStartY.current = e.touches[0].clientY;
@@ -78,14 +92,6 @@ export function DetailModal({ item, onClose, onTagClick, onDelete, onRead, onOpe
     if (d < 365) return `${Math.floor(d / 30)} months ago`;
     return `${(d / 365).toFixed(1)} years ago`;
   };
-
-  const similar = allItems
-    .filter(t => t.hashtag !== item.hashtag)
-    .map(t => ({ t, score: t.tags.filter(x => item.tags.includes(x)).length }))
-    .filter(x => x.score >= 2)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 8)
-    .map(x => x.t);
 
   const ChipGroup = ({ label, items, color }: { label: string; items: string[]; color?: string }) =>
     items.length === 0 ? null : (
@@ -215,11 +221,24 @@ export function DetailModal({ item, onClose, onTagClick, onDelete, onRead, onOpe
             </div>
             <div className="flex gap-2 px-4 pb-3 overflow-x-auto">
               {similar.map(s => (
-                <div key={s.hashtag} onClick={() => onOpen(s)} className="w-[104px] shrink-0 cursor-pointer">
-                  <NhCover item={s} size="sm" />
-                  <div className="mt-1 font-display font-semibold text-[11px] text-nh-text-1 truncate">{s.titleName}</div>
+                <div
+                  key={s.hashtag}
+                  onClick={async () => {
+                    const full = await getTitleAction(s.hashtag);
+                    if (full) onOpen(full);
+                  }}
+                  className="w-[104px] shrink-0 cursor-pointer"
+                >
+                  <div className="relative w-full aspect-[350/500] rounded-[var(--nh-radius-card)] overflow-hidden bg-nh-pill">
+                    {s.imageLink && (
+                      <Image src={s.imageLink} alt="" fill sizes="104px" unoptimized className="object-cover object-top" />
+                    )}
+                  </div>
+                  <div className="mt-1 font-display font-semibold text-[11px] text-nh-text-1 truncate">
+                    {s.alterName || s.titleName}
+                  </div>
                   <div className="font-mono text-[9px] text-nh-text-3">
-                    {s.tags.filter(x => item.tags.includes(x)).length} shared tags
+                    {s.shared} shared tags
                   </div>
                 </div>
               ))}

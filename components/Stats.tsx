@@ -1,15 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { NhCover } from "./Primitives";
-import type { Item, ReadLog } from "../lib/data";
 import type { Dataset } from "./HeaderFilter";
+import type { StatsPayload } from "../lib/titles";
+import { getStatsAction } from "../app/actions";
 
-export function StatsView({ collection, dataset, onTagClick, readLogs }: {
-  collection: Item[]; dataset: Dataset; onTagClick: (t: string) => void; readLogs: ReadLog[];
+export function StatsView({ dataset, onTagClick }: {
+  dataset: Dataset; onTagClick: (t: string) => void;
 }) {
+  const [stats, setStats] = useState<StatsPayload | null>(null);
   const [tagsDir, setTagsDir] = useState<"desc" | "asc">("desc");
   const [tagsShowAll, setTagsShowAll] = useState(false);
   const [artistsDir, setArtistsDir] = useState<"desc" | "asc">("desc");
@@ -17,16 +19,18 @@ export function StatsView({ collection, dataset, onTagClick, readLogs }: {
   const [groupsDir, setGroupsDir] = useState<"desc" | "asc">("desc");
   const [groupsShowAll, setGroupsShowAll] = useState(false);
 
-  const total = collection.length;
-  const totalPages = collection.reduce((s, c) => s + c.pages, 0);
-  const totalReads = collection.reduce((s, c) => s + c.readCount, 0);
-  const readPages = collection.reduce((s, c) => s + (c.readCount > 0 ? c.pages * c.readCount : 0), 0);
-  const unread = collection.filter(c => c.readCount === 0).length;
-  const avgPages = total ? Math.round(totalPages / total) : 0;
-  const longestStreak = total ? Math.max(...collection.map(c => c.pages)) : 0;
-  const mostRead = [...collection].sort((a, b) => b.readCount - a.readCount).slice(0, 5);
+  useEffect(() => {
+    let cancelled = false;
+    getStatsAction().then((s) => { if (!cancelled) setStats(s); }).catch(console.error);
+    return () => { cancelled = true; };
+  }, []);
 
-  const topN = (counts: Record<string, number>, n: number) => Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, n);
+  if (!stats) {
+    return <div className="p-10 text-center font-mono text-xs text-nh-text-3">loading analysis…</div>;
+  }
+
+  const topN = (counts: Record<string, number>, n: number) =>
+    Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, n);
   const topParodies = topN(dataset.parodyCounts, 6);
 
   const allTagEntries = Object.entries(dataset.tagCounts).sort((a, b) => tagsDir === "desc" ? b[1] - a[1] : a[1] - b[1]);
@@ -41,52 +45,14 @@ export function StatsView({ collection, dataset, onTagClick, readLogs }: {
   const topGroups = groupsShowAll ? allGroupEntries : allGroupEntries.slice(0, 10);
   const topMaxGroup = Math.max(...Object.values(dataset.groupCounts), 1);
 
-  const buckets = [
-    { label: "<25", min: 0, max: 24 },
-    { label: "25–49", min: 25, max: 49 },
-    { label: "50–99", min: 50, max: 99 },
-    { label: "100–149", min: 100, max: 149 },
-    { label: "150+", min: 150, max: 9e9 },
-  ].map(b => ({ ...b, count: collection.filter(c => c.pages >= b.min && c.pages <= b.max).length }));
-  const bucketMax = Math.max(...buckets.map(b => b.count), 1);
-
-  const now = Date.now();
-  const months = Array.from({ length: 12 }, (_, i) => {
-    const msStart = now - (12 - i) * 30 * 86400000;
-    const msEnd = now - (11 - i) * 30 * 86400000;
-    const count = readLogs.filter(l => {
-      const t = new Date(l.readAt).getTime();
-      return t >= msStart && t < msEnd;
-    }).length;
-    return { idx: i, count };
-  });
-  const monthMax = Math.max(...months.map(m => m.count), 1);
-
-  const hourBins = Array.from({ length: 24 }, (_, h) => ({
-    h,
-    count: readLogs.filter(l => new Date(l.readAt).getHours() === h).length,
-  }));
-  const hourMax = Math.max(...hourBins.map(b => b.count), 1);
+  const monthMax = Math.max(...stats.monthlyReads.map(m => m.count), 1);
+  const hourMax = Math.max(...stats.hourlyReads.map(b => b.count), 1);
+  const dowMax = Math.max(...stats.dowReads.map(b => b.count), 1);
+  const bucketMax = Math.max(...stats.pageBuckets.map(b => b.count), 1);
+  const addMax = Math.max(...stats.additions.map(a => a.count), 1);
 
   const DOW_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-  const dowBins = Array.from({ length: 7 }, (_, d) => ({
-    label: DOW_LABELS[d],
-    count: readLogs.filter(l => {
-      const day = new Date(l.readAt).getDay();
-      return (day === 0 ? 6 : day - 1) === d;
-    }).length,
-  }));
-  const dowMax = Math.max(...dowBins.map(b => b.count), 1);
-
-  const titleMap = new Map(collection.map(c => [c.hashtag, c.alterName || c.titleName]));
-  const recentSessions = readLogs.slice(0, 20);
-
-  const adds = Array.from({ length: 6 }, (_, i) => {
-    const start = (5 - i) * 60;
-    const count = collection.filter(c => c.addedAt >= start && c.addedAt < start + 60).length;
-    return { count, label: `${start + 60}d` };
-  });
-  const addMax = Math.max(...adds.map(a => a.count), 1);
+  const totalSessions = stats.monthlyReads.reduce((s, m) => s + m.count, 0);
 
   return (
     <div className="pb-16">
@@ -104,15 +70,15 @@ export function StatsView({ collection, dataset, onTagClick, readLogs }: {
         className="grid grid-cols-2 gap-px mx-3 rounded-[10px] overflow-hidden border border-nh-border"
         style={{ background: "var(--nh-border)" }}
       >
-        <BigStat label="titles" value={total} sub="total" />
-        <BigStat label="pages" value={totalPages.toLocaleString()} sub="archived" />
-        <BigStat label="reads" value={totalReads} sub={`${readPages.toLocaleString()} pages traversed`} accent />
-        <BigStat label="unread" value={unread} sub={`${total ? Math.round(unread / total * 100) : 0}% of library`} />
+        <BigStat label="titles" value={stats.total} sub="total" />
+        <BigStat label="pages" value={stats.totalPages.toLocaleString()} sub="archived" />
+        <BigStat label="reads" value={stats.totalReads} sub={`${stats.readPages.toLocaleString()} pages traversed`} accent />
+        <BigStat label="unread" value={stats.unread} sub={`${stats.total ? Math.round(stats.unread / stats.total * 100) : 0}% of library`} />
       </div>
 
       <Section title="reading activity · last 12 months">
         <div className="flex items-end gap-1 h-16 pt-1 pb-2">
-          {months.map(m => (
+          {stats.monthlyReads.map(m => (
             <div key={m.idx} className="flex-1 flex flex-col items-center gap-1">
               <div
                 className="w-full rounded-sm"
@@ -130,13 +96,13 @@ export function StatsView({ collection, dataset, onTagClick, readLogs }: {
         </div>
         <div className="flex justify-between font-mono text-[10px] text-nh-text-3 mt-0.5">
           <span>peak: {monthMax} sessions</span>
-          <span>{readLogs.length} total sessions</span>
+          <span>{totalSessions} total sessions</span>
         </div>
       </Section>
 
       <Section title="by time of day">
         <div className="flex items-end gap-0.5 h-14 pt-1">
-          {hourBins.map(b => (
+          {stats.hourlyReads.map(b => (
             <div key={b.h} className="flex-1 flex flex-col items-center gap-[3px]">
               <div
                 className="w-full rounded-sm"
@@ -152,15 +118,15 @@ export function StatsView({ collection, dataset, onTagClick, readLogs }: {
             </div>
           ))}
         </div>
-        {readLogs.length === 0 && (
+        {totalSessions === 0 && (
           <div className="font-mono text-[11px] text-nh-text-3 pt-1.5">no sessions yet</div>
         )}
       </Section>
 
       <Section title="by day of week">
         <div className="flex items-end gap-1.5 h-[60px]">
-          {dowBins.map(b => (
-            <div key={b.label} className="flex-1 flex flex-col items-center gap-1">
+          {stats.dowReads.map((b, i) => (
+            <div key={i} className="flex-1 flex flex-col items-center gap-1">
               <div
                 className="w-full rounded-sm"
                 style={{
@@ -169,33 +135,30 @@ export function StatsView({ collection, dataset, onTagClick, readLogs }: {
                   opacity: b.count > 0 ? 0.5 + (b.count / dowMax) * 0.5 : 0.25,
                 }}
               />
-              <div className="font-mono text-[8.5px] text-nh-text-3">{b.label}</div>
+              <div className="font-mono text-[8.5px] text-nh-text-3">{DOW_LABELS[i]}</div>
             </div>
           ))}
         </div>
-        {readLogs.length === 0 && (
+        {totalSessions === 0 && (
           <div className="font-mono text-[11px] text-nh-text-3">no sessions yet</div>
         )}
       </Section>
 
-      {recentSessions.length > 0 && (
-        <Section title={`recent sessions · last ${recentSessions.length}`}>
+      {stats.recentSessions.length > 0 && (
+        <Section title={`recent sessions · last ${stats.recentSessions.length}`}>
           <div className="flex flex-col">
-            {recentSessions.map((s, i) => {
+            {stats.recentSessions.map((s, i) => {
               const d = new Date(s.readAt);
               const dateStr = d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
               const timeStr = d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-              const name = titleMap.get(s.hashtag);
               return (
                 <div
                   key={i}
                   className="flex items-center gap-2.5 py-1.5"
-                  style={{ borderBottom: i < recentSessions.length - 1 ? "1px solid var(--nh-border)" : undefined }}
+                  style={{ borderBottom: i < stats.recentSessions.length - 1 ? "1px solid var(--nh-border)" : undefined }}
                 >
                   <div className="flex-1 min-w-0">
-                    {name && (
-                      <div className="font-display font-semibold text-xs text-nh-text-1 truncate">{name}</div>
-                    )}
+                    <div className="font-display font-semibold text-xs text-nh-text-1 truncate">{s.name}</div>
                     <div className="font-mono text-[9.5px] text-nh-text-3">#{s.hashtag}</div>
                   </div>
                   <div className="text-right shrink-0">
@@ -211,7 +174,7 @@ export function StatsView({ collection, dataset, onTagClick, readLogs }: {
 
       <Section title="page count distribution">
         <div className="flex flex-col gap-[7px]">
-          {buckets.map(b => (
+          {stats.pageBuckets.map(b => (
             <div key={b.label} className="flex items-center gap-2">
               <div className="w-14 shrink-0 font-mono text-[10px] text-nh-text-3 text-right">{b.label}p</div>
               <div className="flex-1 h-3.5 relative bg-nh-pill rounded-sm">
@@ -236,9 +199,9 @@ export function StatsView({ collection, dataset, onTagClick, readLogs }: {
           ))}
         </div>
         <div className="mt-2.5 pt-2.5 border-t border-nh-border flex justify-between font-mono text-[10px] text-nh-text-3">
-          <span>avg <span className="text-nh-text-1">{avgPages}p</span></span>
-          <span>median ~ <span className="text-nh-text-1">{[...collection].sort((a, b) => a.pages - b.pages)[Math.floor(total / 2)]?.pages || 0}p</span></span>
-          <span>longest <span className="text-nh-accent">{longestStreak}p</span></span>
+          <span>avg <span className="text-nh-text-1">{stats.avgPages}p</span></span>
+          <span>median ~ <span className="text-nh-text-1">{stats.medianPages}p</span></span>
+          <span>longest <span className="text-nh-accent">{stats.longestPages}p</span></span>
         </div>
       </Section>
 
@@ -336,18 +299,20 @@ export function StatsView({ collection, dataset, onTagClick, readLogs }: {
 
       <Section title="most-read titles">
         <div className="flex flex-col">
-          {mostRead.filter(m => m.readCount > 0).map((m, i) => (
+          {stats.mostRead.map((m, i) => (
             <div
               key={m.hashtag}
               className="flex items-center gap-2.5 py-2"
-              style={{ borderBottom: i < mostRead.length - 1 ? "1px solid var(--nh-border)" : undefined }}
+              style={{ borderBottom: i < stats.mostRead.length - 1 ? "1px solid var(--nh-border)" : undefined }}
             >
-              <div className="w-[30px] h-[42px] shrink-0 rounded-sm overflow-hidden">
-                <NhCover item={m} size="sm" />
+              <div className="w-[30px] h-[42px] shrink-0 rounded-sm overflow-hidden relative">
+                {m.imageLink && (
+                  <Image src={m.imageLink} alt="" fill sizes="30px" unoptimized className="object-cover object-top" />
+                )}
               </div>
               <div className="flex-1 min-w-0">
-                <div className="font-display font-semibold text-xs text-nh-text-1 truncate">{m.titleName}</div>
-                <div className="font-mono text-[10px] text-nh-text-3">{m.artists[0]} · {m.pages}p</div>
+                <div className="font-display font-semibold text-xs text-nh-text-1 truncate">{m.alterName || m.titleName}</div>
+                <div className="font-mono text-[10px] text-nh-text-3">{m.firstArtist} · {m.pages}p</div>
               </div>
               <div
                 className="font-display font-extrabold text-[18px] text-nh-accent"
@@ -358,7 +323,7 @@ export function StatsView({ collection, dataset, onTagClick, readLogs }: {
               </div>
             </div>
           ))}
-          {mostRead.filter(m => m.readCount > 0).length === 0 && (
+          {stats.mostRead.length === 0 && (
             <div className="font-mono text-[11px] text-nh-text-3 py-2">nothing read yet</div>
           )}
         </div>
@@ -366,7 +331,7 @@ export function StatsView({ collection, dataset, onTagClick, readLogs }: {
 
       <Section title="additions · last 360 days">
         <div className="flex items-end gap-1.5 h-[50px]">
-          {adds.map((a, i) => (
+          {stats.additions.map((a, i) => (
             <div key={i} className="flex-1 flex flex-col items-center gap-[3px]">
               <div
                 className="w-full rounded-sm bg-nh-accent"

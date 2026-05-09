@@ -7,7 +7,19 @@ import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { NhCover } from "./Primitives";
-import { PALETTES, type Item } from "../lib/data";
+import type { Item } from "../lib/data";
+
+type RawScraped = {
+  hashtag: number; title_name: string; alter_name: string | null;
+  title_link: string; image_link: string; pages: number; uploaded_at: string;
+  tags: { name: string; link: string; total_works: number }[];
+  artists: { name: string; link: string; total_works: number }[];
+  groups: { name: string; link: string; total_works: number }[];
+  characters: { name: string; link: string; total_works: number }[];
+  parodies: { name: string; link: string; total_works: number }[];
+};
+
+type Preview = { item: Item; raw: RawScraped };
 
 export function AddModal({ open, onClose, recentAdds, embedded, onAdd }: {
   open: boolean; onClose: () => void; recentAdds: Item[]; embedded?: boolean;
@@ -15,7 +27,7 @@ export function AddModal({ open, onClose, recentAdds, embedded, onAdd }: {
 }) {
   const [input, setInput] = useState("");
   const [scraping, setScraping] = useState(false);
-  const [previews, setPreviews] = useState<Item[]>([]);
+  const [previews, setPreviews] = useState<Preview[]>([]);
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -35,11 +47,11 @@ export function AddModal({ open, onClose, recentAdds, embedded, onAdd }: {
           fetch("/api/scrape", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ input: String(p.hashtag) }),
+            body: JSON.stringify({ scraped: p.raw, persist: true }),
           })
         )
       );
-      onAdd?.(previews);
+      onAdd?.(previews.map(p => p.item));
       onClose();
     } catch (e) {
       console.error("add error:", e);
@@ -68,19 +80,9 @@ export function AddModal({ open, onClose, recentAdds, embedded, onAdd }: {
             const err = await res.json().catch(() => ({ error: res.statusText }));
             throw new Error(err.error ?? res.statusText);
           }
-          const { scraped } = await res.json() as {
-            scraped: {
-              hashtag: number; title_name: string; alter_name: string | null;
-              image_link: string; pages: number; uploaded_at: string;
-              tags: { name: string }[]; artists: { name: string }[];
-              groups: { name: string }[]; characters: { name: string }[];
-              parodies: { name: string }[];
-            };
-          };
-          const seed = scraped.hashtag;
-          const palette = PALETTES[seed % PALETTES.length];
+          const { scraped } = await res.json() as { scraped: RawScraped };
           const uploadedAt = Math.floor((Date.now() - new Date(scraped.uploaded_at).getTime()) / 86400000);
-          return {
+          const item: Item = {
             hashtag: scraped.hashtag,
             titleName: scraped.title_name,
             alterName: scraped.alter_name ?? "",
@@ -92,8 +94,8 @@ export function AddModal({ open, onClose, recentAdds, embedded, onAdd }: {
             characters: scraped.characters.map(c => c.name),
             parodies: scraped.parodies.map(p => p.name),
             uploadedAt, addedAt: 0, readCount: 0, lastReadAt: null,
-            palette, seed,
-          } satisfies Item;
+          };
+          return { item, raw: scraped } satisfies Preview;
         })
       );
       setPreviews(results);
@@ -199,7 +201,7 @@ export function AddModal({ open, onClose, recentAdds, embedded, onAdd }: {
                 <span className="text-nh-accent">{previews.length} ready</span>
               </div>
               <div className="flex flex-col gap-2">
-                {previews.map(p => <PreviewRow key={p.hashtag} item={p} />)}
+                {previews.map(p => <PreviewRow key={p.item.hashtag} item={p.item} />)}
               </div>
               <Button
                 onClick={onConfirmAdd}

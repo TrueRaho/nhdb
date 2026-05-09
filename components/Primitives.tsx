@@ -1,16 +1,28 @@
 "use client";
 
+import Image from "next/image";
 import { mulberry32, type Item } from "../lib/data";
+
+function paletteFor(hashtag: number): [string, string] {
+  const rng = mulberry32(hashtag);
+  const toHex = (n: number) =>
+    "#" + Math.floor(n * 0xffffff).toString(16).padStart(6, "0");
+  return [toHex(rng()), toHex(rng())];
+}
+
+const SIZE_PX = { sm: 140, card: 280, large: 360 } as const;
 
 export function NhCover({ item, size = "card" }: { item: Item; size?: "card" | "large" | "sm" }) {
   const hasImage = !!item.imageLink;
-  const [a, b] = item.palette;
-  const rng = mulberry32(item.seed);
+  const [a, b] = paletteFor(item.hashtag);
+  const rng = mulberry32(item.hashtag);
+  rng(); rng();
   const angle = Math.floor(rng() * 360);
   const ringCount = 3 + Math.floor(rng() * 3);
   const accent = a;
   const fontPx = size === "large" ? 22 : size === "sm" ? 11 : 14;
   const subPx = size === "large" ? 11 : 9;
+  const px = SIZE_PX[size];
 
   return (
     <div
@@ -38,13 +50,14 @@ export function NhCover({ item, size = "card" }: { item: Item; size?: "card" | "
       )}
 
       {hasImage && (
-        <div
-          className="absolute inset-0"
-          style={{
-            backgroundImage: `url(${item.imageLink})`,
-            backgroundSize: "cover",
-            backgroundPosition: "center top",
-          }}
+        <Image
+          src={item.imageLink}
+          alt=""
+          fill
+          sizes={`${px}px`}
+          loading="lazy"
+          unoptimized
+          className="object-cover object-top"
         />
       )}
 
@@ -75,7 +88,7 @@ export function NhCover({ item, size = "card" }: { item: Item; size?: "card" | "
               className="font-mono uppercase opacity-90"
               style={{ fontSize: subPx, color: accent, letterSpacing: "0.06em" }}
             >
-              vol.{1 + (item.seed % 4)} · {item.pages}p
+              vol.{1 + (item.hashtag % 4)} · {item.pages}p
             </div>
           </div>
         </>

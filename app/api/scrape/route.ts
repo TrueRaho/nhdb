@@ -1,16 +1,33 @@
 import { NextResponse } from "next/server";
-import { scrapeTitle, ScrapeError } from "@/lib/scraper";
+import { updateTag } from "next/cache";
+import { scrapeTitle, ScrapeError, type ScrapeResult } from "@/lib/scraper";
 import { upsertScrapedTitle } from "@/lib/titles";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
+function invalidateAfterUpsert(hashtag: number) {
+  updateTag("titles-list");
+  updateTag("dataset");
+  updateTag("stats");
+  updateTag(`title-${hashtag}`);
+  updateTag(`similar-${hashtag}`);
+}
 
 export async function POST(req: Request) {
-  let body: { input?: string; persist?: boolean };
+  let body: { input?: string; persist?: boolean; scraped?: ScrapeResult };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  if (body.scraped && body.persist !== false) {
+    try {
+      const saved = await upsertScrapedTitle(body.scraped);
+      invalidateAfterUpsert(body.scraped.hashtag);
+      return NextResponse.json({ scraped: body.scraped, saved });
+    } catch (e) {
+      console.error("commit failed:", e);
+      return NextResponse.json({ error: "Internal commit error" }, { status: 500 });
+    }
   }
 
   const input = body.input?.trim();
@@ -40,6 +57,7 @@ export async function POST(req: Request) {
     const { scraped } = upstreamData;
     if (body.persist === false) return NextResponse.json({ scraped });
     const saved = await upsertScrapedTitle(scraped);
+    invalidateAfterUpsert(scraped.hashtag);
     return NextResponse.json({ scraped, saved });
   }
 
@@ -49,6 +67,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ scraped });
     }
     const saved = await upsertScrapedTitle(scraped);
+    invalidateAfterUpsert(scraped.hashtag);
     return NextResponse.json({ scraped, saved });
   } catch (e) {
     if (e instanceof ScrapeError) {

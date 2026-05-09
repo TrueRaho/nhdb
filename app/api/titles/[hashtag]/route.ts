@@ -1,9 +1,6 @@
 import { NextResponse } from "next/server";
 import { deleteTitle, getTitle, markRead, updateAlterName } from "@/lib/titles";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
-
 export async function GET(_req: Request, ctx: { params: Promise<{ hashtag: string }> }) {
   const { hashtag } = await ctx.params;
   const id = parseInt(hashtag, 10);

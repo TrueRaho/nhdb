@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { BarChart3, Plus, Search, SlidersHorizontal, X, Clock, Eye, BookOpen, Shuffle, ArrowUpDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -248,7 +248,10 @@ function FilterMulti({ options, selected, onToggle, counts, placeholder, search:
   const [searchLocal, setSearchLocal] = useState("");
   const search = searchProp !== undefined ? searchProp : searchLocal;
   const setSearch = setSearchProp || setSearchLocal;
-  const filtered = options.filter(o => o.toLowerCase().includes(search.toLowerCase()));
+  const filtered = useMemo(() => {
+    const q = search.toLowerCase();
+    return q ? options.filter(o => o.toLowerCase().includes(q)) : options;
+  }, [options, search]);
   return (
     <div className="flex flex-col gap-2.5">
       <div className="relative">
