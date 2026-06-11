@@ -1,77 +1,95 @@
 import { cacheLife, cacheTag } from "next/cache";
-import { Prisma } from "@prisma/client";
+import { Prisma } from "./generated/prisma/client";
 import { prisma } from "./db";
 import type { ScrapeEntity, ScrapeResult } from "./scraper";
 
-async function batchUpsertArtists(items: ScrapeEntity[]): Promise<number[]> {
+// One generic batch-upsert for all five entity kinds. `createMany` inserts the
+// scraped rows (skipDuplicates), `findIdsByName` maps entity names back to ids.
+async function batchUpsertEntities(
+  items: ScrapeEntity[],
+  createMany: (items: ScrapeEntity[]) => Promise<unknown>,
+  findIdsByName: (names: string[]) => Promise<Map<string, number>>,
+): Promise<number[]> {
   if (items.length === 0) return [];
-  await prisma.artist.createMany({
-    data: items.map((e) => ({ artist_name: e.name, artist_link: e.link, total_works: e.total_works })),
-    skipDuplicates: true,
-  });
-  const rows = await prisma.artist.findMany({
-    where: { artist_name: { in: items.map((e) => e.name) } },
-    select: { id_artist: true, artist_name: true },
-  });
-  const map = new Map(rows.map((r) => [r.artist_name, r.id_artist]));
+  await createMany(items);
+  const map = await findIdsByName(items.map((e) => e.name));
   return items.map((e) => map.get(e.name)!).filter(Boolean);
 }
 
-async function batchUpsertGroups(items: ScrapeEntity[]): Promise<number[]> {
-  if (items.length === 0) return [];
-  await prisma.group.createMany({
-    data: items.map((e) => ({ group_name: e.name, group_link: e.link, total_works: e.total_works })),
-    skipDuplicates: true,
-  });
-  const rows = await prisma.group.findMany({
-    where: { group_name: { in: items.map((e) => e.name) } },
-    select: { id_group: true, group_name: true },
-  });
-  const map = new Map(rows.map((r) => [r.group_name, r.id_group]));
-  return items.map((e) => map.get(e.name)!).filter(Boolean);
-}
+const batchUpsertArtists = (items: ScrapeEntity[]) =>
+  batchUpsertEntities(
+    items,
+    (es) => prisma.artist.createMany({
+      data: es.map((e) => ({ artist_name: e.name, artist_link: e.link, total_works: e.total_works })),
+      skipDuplicates: true,
+    }),
+    async (names) => new Map(
+      (await prisma.artist.findMany({
+        where: { artist_name: { in: names } },
+        select: { id_artist: true, artist_name: true },
+      })).map((r) => [r.artist_name, r.id_artist])
+    ),
+  );
 
-async function batchUpsertCharacters(items: ScrapeEntity[]): Promise<number[]> {
-  if (items.length === 0) return [];
-  await prisma.character.createMany({
-    data: items.map((e) => ({ character_name: e.name, character_link: e.link, total_works: e.total_works })),
-    skipDuplicates: true,
-  });
-  const rows = await prisma.character.findMany({
-    where: { character_name: { in: items.map((e) => e.name) } },
-    select: { id_character: true, character_name: true },
-  });
-  const map = new Map(rows.map((r) => [r.character_name, r.id_character]));
-  return items.map((e) => map.get(e.name)!).filter(Boolean);
-}
+const batchUpsertGroups = (items: ScrapeEntity[]) =>
+  batchUpsertEntities(
+    items,
+    (es) => prisma.group.createMany({
+      data: es.map((e) => ({ group_name: e.name, group_link: e.link, total_works: e.total_works })),
+      skipDuplicates: true,
+    }),
+    async (names) => new Map(
+      (await prisma.group.findMany({
+        where: { group_name: { in: names } },
+        select: { id_group: true, group_name: true },
+      })).map((r) => [r.group_name, r.id_group])
+    ),
+  );
 
-async function batchUpsertParodies(items: ScrapeEntity[]): Promise<number[]> {
-  if (items.length === 0) return [];
-  await prisma.parody.createMany({
-    data: items.map((e) => ({ parodie_name: e.name, parodie_link: e.link, total_works: e.total_works })),
-    skipDuplicates: true,
-  });
-  const rows = await prisma.parody.findMany({
-    where: { parodie_name: { in: items.map((e) => e.name) } },
-    select: { id_parodie: true, parodie_name: true },
-  });
-  const map = new Map(rows.map((r) => [r.parodie_name, r.id_parodie]));
-  return items.map((e) => map.get(e.name)!).filter(Boolean);
-}
+const batchUpsertCharacters = (items: ScrapeEntity[]) =>
+  batchUpsertEntities(
+    items,
+    (es) => prisma.character.createMany({
+      data: es.map((e) => ({ character_name: e.name, character_link: e.link, total_works: e.total_works })),
+      skipDuplicates: true,
+    }),
+    async (names) => new Map(
+      (await prisma.character.findMany({
+        where: { character_name: { in: names } },
+        select: { id_character: true, character_name: true },
+      })).map((r) => [r.character_name, r.id_character])
+    ),
+  );
 
-async function batchUpsertTags(items: ScrapeEntity[]): Promise<number[]> {
-  if (items.length === 0) return [];
-  await prisma.tag.createMany({
-    data: items.map((e) => ({ tag_name: e.name, tag_link: e.link, total_works: e.total_works })),
-    skipDuplicates: true,
-  });
-  const rows = await prisma.tag.findMany({
-    where: { tag_name: { in: items.map((e) => e.name) } },
-    select: { id_tag: true, tag_name: true },
-  });
-  const map = new Map(rows.map((r) => [r.tag_name, r.id_tag]));
-  return items.map((e) => map.get(e.name)!).filter(Boolean);
-}
+const batchUpsertParodies = (items: ScrapeEntity[]) =>
+  batchUpsertEntities(
+    items,
+    (es) => prisma.parody.createMany({
+      data: es.map((e) => ({ parodie_name: e.name, parodie_link: e.link, total_works: e.total_works })),
+      skipDuplicates: true,
+    }),
+    async (names) => new Map(
+      (await prisma.parody.findMany({
+        where: { parodie_name: { in: names } },
+        select: { id_parodie: true, parodie_name: true },
+      })).map((r) => [r.parodie_name, r.id_parodie])
+    ),
+  );
+
+const batchUpsertTags = (items: ScrapeEntity[]) =>
+  batchUpsertEntities(
+    items,
+    (es) => prisma.tag.createMany({
+      data: es.map((e) => ({ tag_name: e.name, tag_link: e.link, total_works: e.total_works })),
+      skipDuplicates: true,
+    }),
+    async (names) => new Map(
+      (await prisma.tag.findMany({
+        where: { tag_name: { in: names } },
+        select: { id_tag: true, tag_name: true },
+      })).map((r) => [r.tag_name, r.id_tag])
+    ),
+  );
 
 export async function upsertScrapedTitle(s: ScrapeResult) {
   const [artistIds, groupIds, characterIds, parodyIds, tagIds] = await Promise.all([
@@ -95,7 +113,8 @@ export async function upsertScrapedTitle(s: ScrapeResult) {
     await tx.title.upsert({
       where: { hashtag: s.hashtag },
       create: { hashtag: s.hashtag, ...titleData },
-      update: titleData,
+      // alterName doubles as the user's custom name — never clobber it on re-scrape
+      update: { ...titleData, alterName: undefined },
     });
 
     await Promise.all([
@@ -144,15 +163,7 @@ const titleInclude = {
   tags: { include: { tag: true } },
 } as const;
 
-export async function listTitles() {
-  "use cache";
-  cacheTag("titles-list");
-  cacheLife("max");
-  return prisma.title.findMany({
-    orderBy: { createdAt: "desc" },
-    include: titleInclude,
-  });
-}
+export type TitleWithRelations = Prisma.TitleGetPayload<{ include: typeof titleInclude }>;
 
 export type SortField =
   | "added-at" | "last-read-at" | "uploaded-at" | "read-count" | "pages"
@@ -167,8 +178,11 @@ export type QueryParams = {
   parodies?: string[];
   pageMin?: number;
   pageMax?: number;
+  read?: "read" | "unread";
   sortField?: SortField;
   sortDir?: "asc" | "desc";
+  /** Shuffle seed for sortField "random" — keeps pagination stable within one shuffle. */
+  seed?: number;
   limit?: number;
   offset?: number;
 };
@@ -196,6 +210,8 @@ function buildWhere(p: QueryParams): Prisma.TitleWhereInput {
   }
   if (p.pageMin != null && p.pageMin > 0) and.push({ pages: { gte: p.pageMin } });
   if (p.pageMax != null) and.push({ pages: { lte: p.pageMax } });
+  if (p.read === "unread") and.push({ readCount: 0 });
+  if (p.read === "read") and.push({ readCount: { gt: 0 } });
 
   if (p.search && p.search.trim()) {
     const q = p.search.trim();
@@ -213,26 +229,33 @@ function buildWhere(p: QueryParams): Prisma.TitleWhereInput {
   return where;
 }
 
+// "desc" consistently means newest / most / biggest first, matching the UI labels.
 function buildOrderBy(field: SortField, dir: "asc" | "desc"): Prisma.TitleOrderByWithRelationInput[] {
-  const reverseDays = field === "added-at" || field === "last-read-at" || field === "uploaded-at";
-  const effective: "asc" | "desc" = reverseDays ? (dir === "asc" ? "desc" : "asc") : dir;
   switch (field) {
-    case "added-at": return [{ createdAt: effective }];
-    case "last-read-at": return [{ lastReadAt: { sort: effective, nulls: "last" } }];
-    case "uploaded-at": return [{ uploadedAt: effective }];
-    case "read-count": return [{ readCount: effective }];
-    case "pages": return [{ pages: effective }];
-    case "hashtag": return [{ hashtag: effective }];
-    case "title": return [{ titleName: effective }];
-    case "tag-count": return [{ tags: { _count: effective } }];
+    case "added-at": return [{ createdAt: dir }];
+    case "last-read-at": return [{ lastReadAt: { sort: dir, nulls: "last" } }];
+    case "uploaded-at": return [{ uploadedAt: dir }];
+    case "read-count": return [{ readCount: dir }];
+    case "pages": return [{ pages: dir }];
+    case "hashtag": return [{ hashtag: dir }];
+    case "title": return [{ titleName: dir }];
+    case "tag-count": return [{ tags: { _count: dir } }];
     default: return [{ createdAt: "desc" }];
   }
 }
 
 export type QueryResult = {
-  items: Awaited<ReturnType<typeof listTitles>>;
+  items: TitleWithRelations[];
   total: number;
 };
+
+// mulberry32-style integer mix — stable shuffle key for (hashtag, seed).
+function hashMix(h: number, seed: number): number {
+  let t = (h ^ seed) >>> 0;
+  t = Math.imul(t ^ (t >>> 15), t | 1);
+  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+  return (t ^ (t >>> 14)) >>> 0;
+}
 
 export async function queryTitles(p: QueryParams): Promise<QueryResult> {
   "use cache";
@@ -246,19 +269,24 @@ export async function queryTitles(p: QueryParams): Promise<QueryResult> {
   const sortDir = p.sortDir ?? "desc";
 
   if (sortField === "random") {
-    const rows = await prisma.$queryRaw<{ hashtag: number }[]>(Prisma.sql`
-      SELECT hashtag FROM titles ORDER BY random() LIMIT ${limit} OFFSET ${offset}
-    `);
-    const hashtags = rows.map((r) => r.hashtag);
-    const total = await prisma.title.count({ where });
-    if (hashtags.length === 0) return { items: [], total };
+    // Deterministic per-seed shuffle of the *filtered* set: "load more" pages stay
+    // consistent, a new seed (per client query) reshuffles, and filters apply.
+    // Plain ORDER BY random() would be frozen by "use cache".
+    const seed = p.seed ?? 0;
+    const matching = await prisma.title.findMany({ where, select: { hashtag: true } });
+    const shuffled = matching
+      .map(({ hashtag }) => ({ hashtag, key: hashMix(hashtag, seed) }))
+      .sort((a, b) => a.key - b.key)
+      .slice(offset, offset + limit)
+      .map((r) => r.hashtag);
+    if (shuffled.length === 0) return { items: [], total: matching.length };
     const items = await prisma.title.findMany({
-      where: { hashtag: { in: hashtags } },
+      where: { hashtag: { in: shuffled } },
       include: titleInclude,
     });
-    const order = new Map(hashtags.map((h, i) => [h, i]));
+    const order = new Map(shuffled.map((h, i) => [h, i]));
     items.sort((a, b) => (order.get(a.hashtag) ?? 0) - (order.get(b.hashtag) ?? 0));
-    return { items, total };
+    return { items, total: matching.length };
   }
 
   const [items, total] = await Promise.all([
@@ -326,16 +354,6 @@ export async function markRead(hashtag: number) {
     }),
     prisma.readLog.create({ data: { hashtag } }),
   ]);
-}
-
-export async function getReadLogs() {
-  "use cache";
-  cacheTag("read-logs");
-  cacheLife("max");
-  return prisma.readLog.findMany({
-    orderBy: { readAt: "desc" },
-    select: { hashtag: true, readAt: true },
-  });
 }
 
 export type DatasetPayload = {

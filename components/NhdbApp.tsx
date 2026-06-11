@@ -7,7 +7,7 @@ import type { Item } from "../lib/data";
 import { GalleryGrid } from "./Gallery";
 import { GalleryHeader, FilterSheet, type Filters, type Dataset } from "./HeaderFilter";
 import {
-  deleteTitleAction, markReadAction, updateAlterNameAction, queryTitlesAction,
+  deleteTitleAction, markReadAction, updateAlterNameAction, queryTitlesAction, commitScrapedAction,
 } from "../app/actions";
 import type { DatasetPayload } from "../lib/titles";
 
@@ -16,8 +16,10 @@ const AddModal = dynamic(() => import("./AddModal").then((m) => ({ default: m.Ad
 const StatsView = dynamic(() => import("./Stats").then((m) => ({ default: m.StatsView })), { ssr: false });
 const NhdbDesktop = dynamic(() => import("./Desktop").then((m) => ({ default: m.NhdbDesktop })), { ssr: false });
 
-function useViewport(): "mobile" | "desktop" {
-  const [vp, setVp] = useState<"mobile" | "desktop">("desktop");
+// null until mounted: the server renders neither layout, so a phone never
+// downloads the desktop chunk and there is no hydration mismatch.
+function useViewport(): "mobile" | "desktop" | null {
+  const [vp, setVp] = useState<"mobile" | "desktop" | null>(null);
   useEffect(() => {
     const mql = window.matchMedia("(min-width: 900px)");
     const apply = () => setVp(mql.matches ? "desktop" : "mobile");
@@ -65,9 +67,11 @@ export default function NhdbApp({
     tags: [], characters: [], parodies: [], artists: [], groups: [],
     pageMin: datasetPayload.pageMin,
     pageMax: datasetPayload.pageMax || 999,
+    read: "all",
     sortField: "added-at", sortDir: "desc",
   }));
   const [filterOpen, setFilterOpen] = useState(false);
+  const [filterSection, setFilterSection] = useState("sort");
   const [detailItem, setDetailItem] = useState<Item | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [view, setView] = useState<"gallery" | "stats">("gallery");
@@ -82,9 +86,14 @@ export default function NhdbApp({
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   }, [searchInput]);
 
+  const seedRef = useRef(0);
   const runQuery = useCallback((offset: number, append: boolean, currentSearch: string, currentFilters: Filters) => {
     const id = ++queryIdRef.current;
     setLoading(true);
+    // Fresh seed per new random query; "load more" keeps the seed so pages don't overlap.
+    if (currentFilters.sortField === "random" && !append) {
+      seedRef.current = Math.floor(Math.random() * 1_000_000_000);
+    }
     queryTitlesAction({
       search: currentSearch || undefined,
       tags: currentFilters.tags,
@@ -94,8 +103,10 @@ export default function NhdbApp({
       parodies: currentFilters.parodies,
       pageMin: currentFilters.pageMin,
       pageMax: currentFilters.pageMax,
-      sortField: currentFilters.sortField as never,
+      read: currentFilters.read === "all" ? undefined : currentFilters.read,
+      sortField: currentFilters.sortField,
       sortDir: currentFilters.sortDir,
+      seed: currentFilters.sortField === "random" ? seedRef.current : undefined,
       limit: pageSize,
       offset,
     }).then((res) => {
@@ -126,8 +137,14 @@ export default function NhdbApp({
   const activeFilterCount = useMemo(() =>
     filters.tags.length + filters.characters.length +
     filters.parodies.length + filters.artists.length + filters.groups.length +
-    ((filters.pageMin > dataset.pageMin || filters.pageMax < dataset.pageMax) ? 1 : 0),
+    ((filters.pageMin > dataset.pageMin || filters.pageMax < dataset.pageMax) ? 1 : 0) +
+    (filters.read !== "all" ? 1 : 0),
   [filters, dataset.pageMin, dataset.pageMax]);
+
+  const openFilters = (section: string) => {
+    setFilterSection(section);
+    setFilterOpen(true);
+  };
 
   const onTagClick = (t: string) =>
     setFilters(f => f.tags.includes(t) ? f : { ...f, tags: [...f.tags, t] });
@@ -169,6 +186,25 @@ export default function NhdbApp({
     updateAlterNameAction(hashtag, value).catch(err => console.error("Failed to update alter name:", err));
   };
 
+  // Re-scrape the open title from nhentai and refresh it in place.
+  const onRefresh = async () => {
+    if (!detailItem) return;
+    const hashtag = detailItem.hashtag;
+    const res = await fetch("/api/scrape", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ input: String(hashtag), persist: false }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error ?? "refresh failed");
+    }
+    const { scraped } = await res.json();
+    const fresh = await commitScrapedAction(scraped);
+    setDetailItem(fresh);
+    setItems(c => c.map(x => x.hashtag === hashtag ? fresh : x));
+  };
+
   const recentAdds = useMemo(() => items.filter(c => c.addedAt < 14).slice(0, 5), [items]);
 
   const onAddItems = (newItems: Item[]) => {
@@ -180,18 +216,24 @@ export default function NhdbApp({
     startTransition(() => runQuery(0, false, search, filters));
   };
 
+  if (viewport === null) {
+    return <div className="min-h-screen bg-nh-bg" />;
+  }
+
   if (viewport === "desktop") {
     return (
       <div className="min-h-screen bg-nh-bg">
         <NhdbDesktop
           items={items} total={total} totalEver={totalEver} dataset={dataset}
+          activeFilterCount={activeFilterCount}
           search={searchInput} setSearch={setSearchInput}
           filters={filters} setFilters={setFilters}
           detailItem={detailItem} setDetailItem={setDetailItem}
           addOpen={addOpen} setAddOpen={setAddOpen}
           view={view} setView={setView}
           onTagClick={onTagClick} onChipClick={onChipClick} onDelete={onDelete} onRead={onRead}
-          onAlterName={onAlterName} recentAdds={recentAdds} density="comfortable" onAddItems={onAddItems}
+          onAlterName={onAlterName} onRefresh={onRefresh}
+          recentAdds={recentAdds} density="comfortable" onAddItems={onAddItems}
           loading={loading} onLoadMore={onLoadMore}
         />
       </div>
@@ -206,18 +248,23 @@ export default function NhdbApp({
           onAdd={() => setAddOpen(true)}
           onStats={() => setView(v => v === "stats" ? "gallery" : "stats")}
           statsActive={view === "stats"}
-          onOpenFilters={() => setFilterOpen(true)}
+          onOpenFilters={() => openFilters("tags")}
+          onOpenSort={() => openFilters("sort")}
           activeFilterCount={activeFilterCount}
+          sortLabel={filters.sortField.replace(/-/g, " ")}
         />
         <div className="flex items-center gap-1.5 px-3 pt-2.5 pb-2">
           <div className="font-mono text-[10px] uppercase tracking-wider text-nh-text-3">
             {total} of {totalEver} titles
           </div>
           <div className="flex-1" />
-          <div className="font-mono text-[10px] text-nh-text-3 flex items-center gap-1">
+          <button
+            onClick={() => openFilters("sort")}
+            className="font-mono text-[10px] text-nh-text-3 flex items-center gap-1"
+          >
             <ArrowUpDown className="size-3 text-nh-text-3" />
             {filters.sortField.replace(/-/g, " ")} · {filters.sortDir}
-          </div>
+          </button>
         </div>
 
         {view === "gallery" && (
@@ -248,6 +295,7 @@ export default function NhdbApp({
         open={filterOpen} onClose={() => setFilterOpen(false)}
         filters={filters} setFilters={setFilters}
         dataset={{ ...dataset, matchingCount: total }}
+        activeSection={filterSection} setActiveSection={setFilterSection}
       />
       <DetailModal
         item={detailItem}
@@ -257,6 +305,7 @@ export default function NhdbApp({
         onRead={onRead}
         onOpen={setDetailItem}
         onAlterName={onAlterName}
+        onRefresh={onRefresh}
       />
       <AddModal open={addOpen} onClose={() => setAddOpen(false)} recentAdds={recentAdds} onAdd={onAddItems} />
     </div>

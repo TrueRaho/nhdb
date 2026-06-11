@@ -80,7 +80,7 @@ function parseInfoDiv(html: string, hashtag: number, pageUrl: string): ScrapeRes
       .filter((_, el) => $(el).text().trimStart().startsWith(label));
 
     const entities: ScrapeEntity[] = [];
-    container.find("a.tag").each((_, el) => {
+    container.find("a.tag, a.tagchip").each((_, el) => {
       const name = $(el).find(".name").text().trim();
       const total_works = parseCount($(el).find(".count").text());
       const href = $(el).attr("href") || "";
@@ -118,10 +118,12 @@ export async function scrapeTitle(input: string | number): Promise<ScrapeResult>
 
   const url = `https://nhentai.net/g/${hashtag}/`;
 
-  const isProduction = process.env.NODE_ENV === "production";
+  // @sparticuz/chromium ships a Linux binary — only use it in actual serverless
+  // environments, not for any production build (next start on macOS would ENOEXEC).
+  const isServerless = !!(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
   let executablePath: string | undefined;
   let lambdaArgs: string[] = [];
-  if (isProduction) {
+  if (isServerless) {
     const chromiumLambda = (await import("@sparticuz/chromium")).default;
     executablePath = await chromiumLambda.executablePath();
     lambdaArgs = chromiumLambda.args;
@@ -165,7 +167,7 @@ export async function scrapeTitle(input: string | number): Promise<ScrapeResult>
       await page.waitForSelector("#info", { timeout: 10_000 });
     } catch {
       const bodyText = await page.locator("body").innerText().catch(() => "");
-      if (bodyText.includes("404")) {
+      if (title.includes("404") || bodyText.includes("Page not found") || bodyText.includes("404")) {
         throw new ScrapeError(`Title #${hashtag} not found on nhentai (404)`, "NOT_FOUND");
       }
       throw new ScrapeError("#info element not found — page did not load", "TIMEOUT");

@@ -2,12 +2,14 @@
   "name": "nhdb",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "pnpm@11.2.2",
   "scripts": {
     "dev": "next dev",
     "build": "prisma generate && next build",
     "start": "next start",
     "lint": "eslint",
-    "scraper": "tsx scraper-server.ts"
+    "scraper": "tsx scripts/scraper-server.ts",
+    "rescrape": "tsx scripts/rescrape.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",

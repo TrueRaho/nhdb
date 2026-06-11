@@ -1,7 +1,7 @@
 import type { Item } from "./data";
-import type { listTitles } from "./titles";
+import type { TitleWithRelations } from "./titles";
 
-export type DbTitle = Awaited<ReturnType<typeof listTitles>>[number];
+export type DbTitle = TitleWithRelations;
 
 function daysAgo(date: Date): number {
   return Math.floor((Date.now() - date.getTime()) / 86400000);

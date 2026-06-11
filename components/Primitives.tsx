@@ -1,7 +1,17 @@
 "use client";
 
 import Image from "next/image";
-import { mulberry32, type Item } from "../lib/data";
+import type { Item } from "../lib/data";
+
+// Deterministic PRNG for procedural cover art (titles without an image).
+function mulberry32(seed: number) {
+  return function () {
+    let t = (seed += 0x6d2b79f5);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
 
 function paletteFor(hashtag: number): [string, string] {
   const rng = mulberry32(hashtag);
@@ -56,7 +66,6 @@ export function NhCover({ item, size = "card" }: { item: Item; size?: "card" | "
           fill
           sizes={`${px}px`}
           loading="lazy"
-          unoptimized
           className="object-cover object-top"
         />
       )}

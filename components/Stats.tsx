@@ -307,7 +307,7 @@ export function StatsView({ dataset, onTagClick }: {
             >
               <div className="w-[30px] h-[42px] shrink-0 rounded-sm overflow-hidden relative">
                 {m.imageLink && (
-                  <Image src={m.imageLink} alt="" fill sizes="30px" unoptimized className="object-cover object-top" />
+                  <Image src={m.imageLink} alt="" fill sizes="30px" className="object-cover object-top" />
                 )}
               </div>
               <div className="flex-1 min-w-0">

@@ -4,22 +4,8 @@ const nextConfig: NextConfig = {
   serverExternalPackages: ["playwright-extra", "puppeteer-extra-plugin-stealth"],
   cacheComponents: true,
   images: {
-    remotePatterns: [
-      { protocol: "https", hostname: "t.nhentai.net" },
-      { protocol: "https", hostname: "t1.nhentai.net" },
-      { protocol: "https", hostname: "t2.nhentai.net" },
-      { protocol: "https", hostname: "t3.nhentai.net" },
-      { protocol: "https", hostname: "t4.nhentai.net" },
-      { protocol: "https", hostname: "t5.nhentai.net" },
-      { protocol: "https", hostname: "t6.nhentai.net" },
-      { protocol: "https", hostname: "t7.nhentai.net" },
-      { protocol: "https", hostname: "i.nhentai.net" },
-      { protocol: "https", hostname: "i1.nhentai.net" },
-      { protocol: "https", hostname: "i2.nhentai.net" },
-      { protocol: "https", hostname: "i3.nhentai.net" },
-      { protocol: "https", hostname: "i4.nhentai.net" },
-      { protocol: "https", hostname: "i5.nhentai.net" },
-    ],
+    // covers t.nhentai.net, t1–t7, i, i1–i5 — any single-label subdomain
+    remotePatterns: [{ protocol: "https", hostname: "*.nhentai.net" }],
   },
 };
 

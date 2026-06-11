@@ -1,10 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { BarChart3, ChevronDown, ChevronRight, LayoutGrid, Plus, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Slider } from "@/components/ui/slider";
 import {
@@ -30,16 +29,18 @@ import { StatsView } from "./Stats";
 import { DetailModal } from "./DetailModal";
 import { AddModal } from "./AddModal";
 import type { Item } from "../lib/data";
-import type { Filters, Dataset } from "./HeaderFilter";
+import type { SortField } from "../lib/titles";
+import { READ_OPTIONS, type Filters, type Dataset } from "./HeaderFilter";
 
 export function NhdbDesktop({
-  items, total, totalEver, dataset,
+  items, total, totalEver, dataset, activeFilterCount,
   search, setSearch, filters, setFilters,
   detailItem, setDetailItem, addOpen, setAddOpen,
-  view, setView, onTagClick, onChipClick, onDelete, onRead, onAlterName,
+  view, setView, onTagClick, onChipClick, onDelete, onRead, onAlterName, onRefresh,
   recentAdds, density, onAddItems, loading, onLoadMore,
 }: {
   items: Item[]; total: number; totalEver: number; dataset: Dataset;
+  activeFilterCount: number;
   search: string; setSearch: (s: string) => void;
   filters: Filters; setFilters: React.Dispatch<React.SetStateAction<Filters>>;
   detailItem: Item | null; setDetailItem: (i: Item | null) => void;
@@ -50,16 +51,11 @@ export function NhdbDesktop({
   onDelete: () => void;
   onRead: () => void;
   onAlterName: (value: string) => void;
+  onRefresh: () => Promise<void>;
   recentAdds: Item[]; density: "comfortable" | "compact";
   onAddItems: (items: Item[]) => void;
   loading: boolean; onLoadMore: () => void;
 }) {
-  const activeFilterCount = useMemo(() =>
-    filters.tags.length + filters.characters.length +
-    filters.parodies.length + filters.artists.length + filters.groups.length +
-    ((filters.pageMin > dataset.pageMin || filters.pageMax < dataset.pageMax) ? 1 : 0),
-  [filters, dataset.pageMin, dataset.pageMax]);
-
   return (
     <div className="w-full min-h-screen flex flex-col bg-nh-bg text-nh-text-1">
       <DesktopHeader search={search} setSearch={setSearch} onAdd={() => setAddOpen(true)} view={view} setView={setView} />
@@ -96,6 +92,7 @@ export function NhdbDesktop({
               onRead={onRead}
               onOpen={setDetailItem}
               onAlterName={onAlterName}
+              onRefresh={onRefresh}
               embedded
             />
           )}
@@ -120,6 +117,19 @@ function DesktopHeader({ search, setSearch, onAdd, view, setView }: {
   search: string; setSearch: (s: string) => void; onAdd: () => void;
   view: "gallery" | "stats"; setView: (v: "gallery" | "stats") => void;
 }) {
+  const searchRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        searchRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   return (
     <div
       className="h-14 shrink-0 flex items-center gap-4 px-6 border-b border-nh-border sticky top-0 z-30"
@@ -135,11 +145,6 @@ function DesktopHeader({ search, setSearch, onAdd, view, setView }: {
         <span>nh</span>
         <span className="text-nh-accent">db</span>
       </div>
-      <Badge
-        variant="secondary"
-        className="h-auto rounded-sm border-0 bg-nh-pill px-1.5 py-[3px] font-mono text-[9px] font-medium uppercase tracking-wider text-nh-text-3"
-      >
-      </Badge>
 
       <div className="flex gap-1 ml-4">
         {([
@@ -171,6 +176,7 @@ function DesktopHeader({ search, setSearch, onAdd, view, setView }: {
       <div className="relative w-[360px]">
         <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-nh-text-3 pointer-events-none" />
         <Input
+          ref={searchRef}
           value={search}
           onChange={e => setSearch(e.target.value)}
           placeholder="search title, artist, tag, hashtag…"
@@ -196,7 +202,7 @@ function DesktopSidebar({ filters, setFilters, dataset, activeFilterCount, match
   dataset: Dataset; activeFilterCount: number; matchingCount: number; totalCount: number;
 }) {
   const [openSection, setOpenSection] = useState<Record<string, boolean>>({
-    sort: true, tags: true, artists: false, groups: false, characters: false, parodies: false, pages: true,
+    sort: true, status: true, tags: true, artists: false, groups: false, characters: false, parodies: false, pages: true,
   });
   const tog = (k: string) => setOpenSection(s => ({ ...s, [k]: !s[k] }));
 
@@ -209,7 +215,8 @@ function DesktopSidebar({ filters, setFilters, dataset, activeFilterCount, match
 
   const clearAll = () => setFilters({
     tags: [], characters: [], parodies: [], artists: [], groups: [],
-    pageMin: 0, pageMax: dataset.pageMax,
+    pageMin: dataset.pageMin, pageMax: dataset.pageMax,
+    read: "all",
     sortField: "added-at", sortDir: "desc",
   });
 
@@ -237,6 +244,28 @@ function DesktopSidebar({ filters, setFilters, dataset, activeFilterCount, match
 
       <SidebarGroup title="sort" open={openSection.sort} onToggle={() => tog("sort")}>
         <SortControl filters={filters} setFilters={setFilters} />
+      </SidebarGroup>
+
+      <SidebarGroup title={filters.read === "all" ? "status" : `status · ${filters.read}`} open={openSection.status} onToggle={() => tog("status")}>
+        <div className="grid grid-cols-3 rounded-md border border-nh-border bg-nh-input p-0.5">
+          {READ_OPTIONS.map(o => {
+            const sel = filters.read === o.id;
+            return (
+              <Button
+                key={o.id}
+                onClick={() => setFilters(f => ({ ...f, read: o.id }))}
+                variant="ghost"
+                className="h-[26px] rounded-sm font-mono text-[10px] font-semibold tracking-wide hover:bg-transparent"
+                style={{
+                  background: sel ? "var(--nh-accent)" : "transparent",
+                  color: sel ? "#0a0a0a" : "var(--nh-text-2)",
+                }}
+              >
+                {o.label}
+              </Button>
+            );
+          })}
+        </div>
       </SidebarGroup>
 
       <SidebarGroup title={`tags · ${filters.tags.length}`} open={openSection.tags} onToggle={() => tog("tags")}>
@@ -278,7 +307,7 @@ function DesktopSidebar({ filters, setFilters, dataset, activeFilterCount, match
             <span className="font-mono text-[9px] text-nh-text-3">pages</span>
           </div>
           <Slider
-            min={0}
+            min={dataset.pageMin}
             max={dataset.pageMax || 1}
             value={[filters.pageMin, filters.pageMax]}
             onValueChange={(v: number | readonly number[]) => {
@@ -330,8 +359,7 @@ function SidebarMulti({ options, counts, selected, onToggle, placeholder, defaul
     const q = search.toLowerCase();
     return q ? sorted.filter(o => o.toLowerCase().includes(q)) : sorted;
   }, [sorted, search]);
-  const limit = showAll ? 999 : defaultLimit;
-  const visible = filtered.slice(0, limit);
+  const visible = showAll ? filtered : filtered.slice(0, defaultLimit);
 
   return (
     <div className="flex flex-col gap-1.5">
@@ -384,7 +412,7 @@ function SidebarMulti({ options, counts, selected, onToggle, placeholder, defaul
 }
 
 function SortControl({ filters, setFilters }: { filters: Filters; setFilters: React.Dispatch<React.SetStateAction<Filters>> }) {
-  const fields = [
+  const fields: { id: SortField; label: string }[] = [
     { id: "added-at", label: "date added" },
     { id: "last-read-at", label: "last read" },
     { id: "uploaded-at", label: "upload date" },
@@ -392,16 +420,13 @@ function SortControl({ filters, setFilters }: { filters: Filters; setFilters: Re
     { id: "pages", label: "pages" },
     { id: "tag-count", label: "tag count" },
     { id: "title", label: "title (a→z)" },
-    { id: "artist", label: "artist" },
-    { id: "group", label: "group" },
-    { id: "parody", label: "parody" },
     { id: "hashtag", label: "hashtag" },
     { id: "random", label: "random" },
   ];
   const isRandom = filters.sortField === "random";
   return (
     <div className="flex flex-col gap-2">
-      <Select value={filters.sortField} onValueChange={(v) => v && setFilters(f => ({ ...f, sortField: v }))}>
+      <Select value={filters.sortField} onValueChange={(v) => v && setFilters(f => ({ ...f, sortField: v as SortField }))}>
         <SelectTrigger className="h-[30px] w-full rounded-md bg-nh-input border-nh-border font-mono text-[11px] text-nh-text-1">
           <SelectValue />
         </SelectTrigger>

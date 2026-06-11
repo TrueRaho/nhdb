@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
-import { BookOpen, Eye, ExternalLink, Pencil, Trash2, X } from "lucide-react";
+import { BookOpen, Eye, ExternalLink, Pencil, RefreshCw, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -11,44 +11,61 @@ import type { Item } from "../lib/data";
 import type { SimilarItem } from "../lib/titles";
 import { getSimilarAction, getTitleAction } from "../app/actions";
 
-export function DetailModal({ item, onClose, onTagClick, onDelete, onRead, onOpen, onAlterName, embedded }: {
+type DetailModalProps = {
   item: Item | null; onClose: () => void;
   onTagClick: (group: string, val: string) => void;
   onDelete: () => void; onRead: () => void; onOpen: (item: Item) => void;
-  onAlterName: (value: string) => void; embedded?: boolean;
-}) {
+  onAlterName: (value: string) => void;
+  onRefresh: () => Promise<void>;
+  embedded?: boolean;
+};
+
+// Keying the inner component by hashtag resets editing/draft/similar state on
+// every item switch without effects.
+export function DetailModal({ item, ...rest }: DetailModalProps) {
+  if (!item) return null;
+  return <DetailModalInner key={item.hashtag} item={item} {...rest} />;
+}
+
+function DetailModalInner({ item, onClose, onTagClick, onDelete, onRead, onOpen, onAlterName, onRefresh, embedded }: DetailModalProps & { item: Item }) {
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useState(item.alterName ?? "");
   const [similar, setSimilar] = useState<SimilarItem[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const handleRefresh = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await onRefresh();
+    } catch (e) {
+      console.error("refresh failed:", e);
+    } finally {
+      setRefreshing(false);
+    }
+  };
   const inputRef = useRef<HTMLInputElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
   const dragStartY = useRef<number | null>(null);
-
-  useEffect(() => {
-    setDraft(item?.alterName ?? "");
-    setEditing(false);
-  }, [item?.hashtag, item?.alterName]);
 
   useEffect(() => {
     if (editing) inputRef.current?.focus();
   }, [editing]);
 
   useEffect(() => {
-    if (!embedded && item) {
+    if (!embedded) {
       document.body.style.overflow = "hidden";
       return () => { document.body.style.overflow = ""; };
     }
-  }, [embedded, item]);
+  }, [embedded]);
 
-  const itemHashtag = item?.hashtag;
   useEffect(() => {
-    if (itemHashtag == null) return;
     let cancelled = false;
-    getSimilarAction(itemHashtag, 8)
+    getSimilarAction(item.hashtag, 8)
       .then((r) => { if (!cancelled) setSimilar(r); })
       .catch(console.error);
-    return () => { cancelled = true; setSimilar([]); };
-  }, [itemHashtag]);
+    return () => { cancelled = true; };
+  }, [item.hashtag]);
 
   const onDragStart = (e: React.TouchEvent) => {
     dragStartY.current = e.touches[0].clientY;
@@ -73,8 +90,6 @@ export function DetailModal({ item, onClose, onTagClick, onDelete, onRead, onOpe
     }
   };
 
-  if (!item) return null;
-
   const displayName = item.alterName || item.titleName;
   const origName = item.alterName ? item.titleName : null;
 
@@ -92,26 +107,6 @@ export function DetailModal({ item, onClose, onTagClick, onDelete, onRead, onOpe
     if (d < 365) return `${Math.floor(d / 30)} months ago`;
     return `${(d / 365).toFixed(1)} years ago`;
   };
-
-  const ChipGroup = ({ label, items, color }: { label: string; items: string[]; color?: string }) =>
-    items.length === 0 ? null : (
-      <div className="flex flex-col gap-1.5">
-        <div className="font-mono text-[9.5px] uppercase tracking-widest text-nh-text-3">{label}</div>
-        <div className="flex flex-wrap gap-1">
-          {items.map(v => (
-            <Badge
-              key={v}
-              variant="secondary"
-              onClick={() => onTagClick(label, v)}
-              className="h-auto cursor-pointer rounded-sm border-0 bg-nh-pill px-2 py-1 font-mono text-[11px] font-medium tracking-wide hover:bg-nh-pill/80"
-              style={{ color: color || "var(--nh-text-2)" }}
-            >
-              {v}
-            </Badge>
-          ))}
-        </div>
-      </div>
-    );
 
   const inner = (
     <div
@@ -207,11 +202,11 @@ export function DetailModal({ item, onClose, onTagClick, onDelete, onRead, onOpe
         </div>
 
         <div className="flex flex-col gap-3.5 p-4">
-          <ChipGroup label="parodies" items={item.parodies} color="var(--nh-text-1)" />
-          <ChipGroup label="characters" items={item.characters} color="var(--nh-text-1)" />
-          <ChipGroup label="artists" items={item.artists} color="var(--nh-accent)" />
-          <ChipGroup label="groups" items={item.groups} color="var(--nh-text-2)" />
-          <ChipGroup label="tags" items={item.tags} color="var(--nh-text-2)" />
+          <ChipGroup label="parodies" items={item.parodies} color="var(--nh-text-1)" onTagClick={onTagClick} />
+          <ChipGroup label="characters" items={item.characters} color="var(--nh-text-1)" onTagClick={onTagClick} />
+          <ChipGroup label="artists" items={item.artists} color="var(--nh-accent)" onTagClick={onTagClick} />
+          <ChipGroup label="groups" items={item.groups} color="var(--nh-text-2)" onTagClick={onTagClick} />
+          <ChipGroup label="tags" items={item.tags} color="var(--nh-text-2)" onTagClick={onTagClick} />
         </div>
 
         {similar.length > 0 && (
@@ -231,7 +226,7 @@ export function DetailModal({ item, onClose, onTagClick, onDelete, onRead, onOpe
                 >
                   <div className="relative w-full aspect-[350/500] rounded-[var(--nh-radius-card)] overflow-hidden bg-nh-pill">
                     {s.imageLink && (
-                      <Image src={s.imageLink} alt="" fill sizes="104px" unoptimized className="object-cover object-top" />
+                      <Image src={s.imageLink} alt="" fill sizes="104px" className="object-cover object-top" />
                     )}
                   </div>
                   <div className="mt-1 font-display font-semibold text-[11px] text-nh-text-1 truncate">
@@ -260,6 +255,17 @@ export function DetailModal({ item, onClose, onTagClick, onDelete, onRead, onOpe
         >
           <Trash2 className="size-4 text-nh-text-3" />
         </Button>
+        <Button
+          onClick={handleRefresh}
+          disabled={refreshing}
+          variant="outline"
+          size="icon"
+          title="re-scrape metadata from nhentai"
+          className="size-11 rounded-[10px] border bg-nh-input shrink-0"
+          style={{ borderColor: "var(--nh-border-strong)" }}
+        >
+          <RefreshCw className={`size-4 text-nh-text-3 ${refreshing ? "animate-spin" : ""}`} />
+        </Button>
         <a
           href={`https://nhentai.net/g/${item.hashtag}/`}
           target="_blank"
@@ -283,6 +289,31 @@ export function DetailModal({ item, onClose, onTagClick, onDelete, onRead, onOpe
       style={{ background: "rgba(0,0,0,0.6)", animation: "nhFadeIn 200ms ease" }}
     >
       {inner}
+    </div>
+  );
+}
+
+function ChipGroup({ label, items, color, onTagClick }: {
+  label: string; items: string[]; color?: string;
+  onTagClick: (group: string, val: string) => void;
+}) {
+  if (items.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="font-mono text-[9.5px] uppercase tracking-widest text-nh-text-3">{label}</div>
+      <div className="flex flex-wrap gap-1">
+        {items.map(v => (
+          <Badge
+            key={v}
+            variant="secondary"
+            onClick={() => onTagClick(label, v)}
+            className="h-auto cursor-pointer rounded-sm border-0 bg-nh-pill px-2 py-1 font-mono text-[11px] font-medium tracking-wide hover:bg-nh-pill/80"
+            style={{ color: color || "var(--nh-text-2)" }}
+          >
+            {v}
+          </Badge>
+        ))}
+      </div>
     </div>
   );
 }

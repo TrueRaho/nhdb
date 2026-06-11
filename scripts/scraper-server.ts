@@ -1,9 +1,9 @@
 import http from "node:http";
 import { spawn } from "node:child_process";
 import { config } from "dotenv";
-import { scrapeTitle, ScrapeError } from "./lib/scraper";
+import { scrapeTitle, ScrapeError } from "../lib/scraper";
 
-config({ path: ".env.local" });
+config({ path: [".env.local", ".env"] });
 
 const PORT = Number(process.env.SCRAPER_PORT ?? 3333);
 const SECRET = process.env.SCRAPER_SECRET;

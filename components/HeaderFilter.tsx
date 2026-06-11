@@ -13,11 +13,15 @@ import {
   SheetTitle,
   SheetDescription,
 } from "@/components/ui/sheet";
+import type { SortField } from "../lib/titles";
+
+export type ReadFilter = "all" | "unread" | "read";
 
 export type Filters = {
   tags: string[]; characters: string[]; parodies: string[]; artists: string[]; groups: string[];
   pageMin: number; pageMax: number;
-  sortField: string; sortDir: "asc" | "desc";
+  read: ReadFilter;
+  sortField: SortField; sortDir: "asc" | "desc";
 };
 
 export type Dataset = {
@@ -27,10 +31,11 @@ export type Dataset = {
   pageMin: number; pageMax: number; matchingCount?: number;
 };
 
-export function GalleryHeader({ search, setSearch, onAdd, onStats, statsActive, onOpenFilters, activeFilterCount }: {
+export function GalleryHeader({ search, setSearch, onAdd, onStats, statsActive, onOpenFilters, onOpenSort, activeFilterCount, sortLabel }: {
   search: string; setSearch: (s: string) => void;
   onAdd: () => void; onStats: () => void; statsActive: boolean;
-  onOpenFilters: () => void; activeFilterCount: number;
+  onOpenFilters: () => void; onOpenSort: () => void; activeFilterCount: number;
+  sortLabel: string;
 }) {
   return (
     <div
@@ -48,11 +53,6 @@ export function GalleryHeader({ search, setSearch, onAdd, onStats, statsActive, 
         >
           <span>nh</span>
           <span className="text-nh-accent">db</span>
-          <Badge
-            variant="secondary"
-            className="ml-1 h-auto rounded-sm border-0 bg-nh-pill px-1.5 py-0.5 font-mono text-[9px] font-medium uppercase tracking-wider text-nh-text-3"
-          >
-          </Badge>
         </div>
         <div className="flex-1" />
         <Button
@@ -95,6 +95,15 @@ export function GalleryHeader({ search, setSearch, onAdd, onStats, statsActive, 
           )}
         </div>
         <Button
+          onClick={onOpenSort}
+          variant="secondary"
+          className="h-8 rounded-lg border border-nh-border bg-nh-input px-2.5 gap-1.5 font-mono text-[11px] tracking-wide hover:bg-nh-input/80 max-w-[110px]"
+          style={{ color: "var(--nh-text-2)" }}
+        >
+          <ArrowUpDown className="size-3.5 shrink-0" />
+          <span className="truncate">{sortLabel}</span>
+        </Button>
+        <Button
           onClick={onOpenFilters}
           variant="secondary"
           className="h-8 rounded-lg border border-nh-border bg-nh-input px-2.5 gap-1.5 font-mono text-[11px] tracking-wide hover:bg-nh-input/80"
@@ -108,22 +117,23 @@ export function GalleryHeader({ search, setSearch, onAdd, onStats, statsActive, 
   );
 }
 
-export function FilterSheet({ open, onClose, filters, setFilters, dataset }: {
+export function FilterSheet({ open, onClose, filters, setFilters, dataset, activeSection, setActiveSection }: {
   open: boolean; onClose: () => void;
   filters: Filters; setFilters: React.Dispatch<React.SetStateAction<Filters>>;
   dataset: Dataset;
+  activeSection: string; setActiveSection: (s: string) => void;
 }) {
-  const [activeSection, setActiveSection] = useState<string>("tags");
   const [tagSearch, setTagSearch] = useState("");
 
   const sections = [
+    { id: "sort", label: "sort", count: filters.sortField !== "added-at" || filters.sortDir !== "desc" ? 1 : 0 },
+    { id: "status", label: "status", count: filters.read !== "all" ? 1 : 0 },
     { id: "tags", label: "tags", count: filters.tags.length },
     { id: "characters", label: "chars", count: filters.characters.length },
     { id: "parodies", label: "parodies", count: filters.parodies.length },
     { id: "artists", label: "artists", count: filters.artists.length },
     { id: "groups", label: "groups", count: filters.groups.length },
     { id: "pages", label: "pages", count: (filters.pageMin > dataset.pageMin || filters.pageMax < dataset.pageMax) ? 1 : 0 },
-    { id: "sort", label: "sort", count: filters.sortField !== "added-at" || filters.sortDir !== "desc" ? 1 : 0 },
   ];
 
   const toggle = (key: keyof Filters, val: string) => {
@@ -153,7 +163,7 @@ export function FilterSheet({ open, onClose, filters, setFilters, dataset }: {
           <div className="flex-1" />
           <Button
             variant="ghost"
-            onClick={() => setFilters({ tags: [], characters: [], parodies: [], artists: [], groups: [], pageMin: 0, pageMax: dataset.pageMax, sortField: "added-at", sortDir: "desc" })}
+            onClick={() => setFilters({ tags: [], characters: [], parodies: [], artists: [], groups: [], pageMin: dataset.pageMin, pageMax: dataset.pageMax, read: "all", sortField: "added-at", sortDir: "desc" })}
             className="h-auto p-0 font-mono text-[10px] uppercase tracking-wider text-nh-text-3 hover:bg-transparent hover:text-nh-text-2"
           >
             clear all
@@ -223,7 +233,8 @@ export function FilterSheet({ open, onClose, filters, setFilters, dataset }: {
             <FilterMulti options={dataset.allGroups} selected={filters.groups}
               onToggle={(v) => toggle("groups", v)} counts={dataset.groupCounts} placeholder="search groups…" />
           )}
-          {activeSection === "pages" && <FilterPageRange filters={filters} setFilters={setFilters} min={0} max={dataset.pageMax} />}
+          {activeSection === "pages" && <FilterPageRange filters={filters} setFilters={setFilters} min={dataset.pageMin} max={dataset.pageMax} />}
+          {activeSection === "status" && <FilterStatus filters={filters} setFilters={setFilters} />}
           {activeSection === "sort" && <FilterSort filters={filters} setFilters={setFilters} />}
         </div>
         <div className="sticky bottom-0 px-3.5 py-2.5 bg-nh-surface border-t border-nh-border">
@@ -332,8 +343,47 @@ function FilterPageRange({ filters, setFilters, min, max }: {
   );
 }
 
+export const READ_OPTIONS: { id: ReadFilter; label: string; sub: string }[] = [
+  { id: "all", label: "all", sub: "everything" },
+  { id: "unread", label: "unread", sub: "never opened" },
+  { id: "read", label: "read", sub: "opened before" },
+];
+
+function FilterStatus({ filters, setFilters }: { filters: Filters; setFilters: React.Dispatch<React.SetStateAction<Filters>> }) {
+  return (
+    <div className="py-1">
+      <div className="font-mono text-[9.5px] uppercase tracking-widest text-nh-text-3 mb-1.5">read status</div>
+      <div className="grid grid-cols-3 rounded-lg border border-nh-border bg-nh-input p-[3px]">
+        {READ_OPTIONS.map(o => {
+          const sel = filters.read === o.id;
+          return (
+            <Button
+              key={o.id}
+              onClick={() => setFilters(f => ({ ...f, read: o.id }))}
+              variant="ghost"
+              className="flex flex-col items-start gap-0.5 h-auto px-2.5 py-2 rounded-md text-left whitespace-normal"
+              style={{
+                background: sel ? "var(--nh-accent)" : "transparent",
+                color: sel ? "#0a0a0a" : "var(--nh-text-2)",
+              }}
+            >
+              <span className="font-display font-bold text-xs" style={{ letterSpacing: "-0.01em" }}>{o.label}</span>
+              <span
+                className="font-mono text-[9px]"
+                style={{ color: sel ? "rgba(0,0,0,0.55)" : "var(--nh-text-3)", letterSpacing: "0.02em" }}
+              >
+                {o.sub}
+              </span>
+            </Button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function FilterSort({ filters, setFilters }: { filters: Filters; setFilters: React.Dispatch<React.SetStateAction<Filters>> }) {
-  const fields = [
+  const fields: { id: SortField; label: string; icon: typeof Clock }[] = [
     { id: "added-at", label: "date added", icon: Clock },
     { id: "last-read-at", label: "last read date", icon: Eye },
     { id: "uploaded-at", label: "upload date", icon: Clock },
@@ -341,9 +391,6 @@ function FilterSort({ filters, setFilters }: { filters: Filters; setFilters: Rea
     { id: "pages", label: "page count", icon: BookOpen },
     { id: "tag-count", label: "tag count", icon: SlidersHorizontal },
     { id: "title", label: "title (a→z)", icon: ArrowUpDown },
-    { id: "artist", label: "artist name", icon: ArrowUpDown },
-    { id: "group", label: "group name", icon: ArrowUpDown },
-    { id: "parody", label: "parody", icon: ArrowUpDown },
     { id: "hashtag", label: "hashtag id", icon: ArrowUpDown },
     { id: "random", label: "random", icon: Shuffle },
   ];

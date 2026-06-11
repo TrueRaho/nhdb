@@ -1,8 +1,9 @@
-ignoredBuiltDependencies:
-  - sharp
-  - unrs-resolver
-onlyBuiltDependencies:
-  - prisma
-  - "@prisma/engines"
-  - "@prisma/client"
-  - esbuild
+allowBuilds:
+  prisma: true
+  '@prisma/engines': true
+  '@prisma/client': true
+  esbuild: true
+  # prebuilt binaries are used for these; their build scripts are not needed
+  msw: false
+  sharp: false
+  unrs-resolver: false

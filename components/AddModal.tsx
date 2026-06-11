@@ -8,18 +8,10 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { NhCover } from "./Primitives";
 import type { Item } from "../lib/data";
+import type { ScrapeResult } from "../lib/scraper";
+import { commitScrapedAction } from "../app/actions";
 
-type RawScraped = {
-  hashtag: number; title_name: string; alter_name: string | null;
-  title_link: string; image_link: string; pages: number; uploaded_at: string;
-  tags: { name: string; link: string; total_works: number }[];
-  artists: { name: string; link: string; total_works: number }[];
-  groups: { name: string; link: string; total_works: number }[];
-  characters: { name: string; link: string; total_works: number }[];
-  parodies: { name: string; link: string; total_works: number }[];
-};
-
-type Preview = { item: Item; raw: RawScraped };
+type Preview = { item: Item; raw: ScrapeResult };
 
 export function AddModal({ open, onClose, recentAdds, embedded, onAdd }: {
   open: boolean; onClose: () => void; recentAdds: Item[]; embedded?: boolean;
@@ -41,21 +33,26 @@ export function AddModal({ open, onClose, recentAdds, embedded, onAdd }: {
   const onConfirmAdd = async () => {
     if (previews.length === 0) return;
     setAdding(true);
-    try {
-      await Promise.all(
-        previews.map(p =>
-          fetch("/api/scrape", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ scraped: p.raw, persist: true }),
-          })
-        )
-      );
-      onAdd?.(previews.map(p => p.item));
-      onClose();
-    } catch (e) {
-      console.error("add error:", e);
+    setError(null);
+    const results = await Promise.allSettled(
+      previews.map(async (p) => {
+        try {
+          return await commitScrapedAction(p.raw);
+        } catch (e) {
+          throw new Error(`#${p.item.hashtag}: ${e instanceof Error ? e.message : "save failed"}`);
+        }
+      })
+    );
+    const saved = results.filter((r) => r.status === "fulfilled").map((r) => r.value);
+    const failed = results.filter((r) => r.status === "rejected");
+    if (saved.length > 0) onAdd?.(saved);
+    if (failed.length > 0) {
+      const savedTags = new Set(saved.map((s) => s.hashtag));
+      setPreviews((prev) => prev.filter((p) => !savedTags.has(p.item.hashtag)));
+      setError(failed.map((f) => f.reason instanceof Error ? f.reason.message : "save failed").join(" · "));
       setAdding(false);
+    } else {
+      onClose();
     }
   };
 
@@ -80,7 +77,7 @@ export function AddModal({ open, onClose, recentAdds, embedded, onAdd }: {
             const err = await res.json().catch(() => ({ error: res.statusText }));
             throw new Error(err.error ?? res.statusText);
           }
-          const { scraped } = await res.json() as { scraped: RawScraped };
+          const { scraped } = await res.json() as { scraped: ScrapeResult };
           const uploadedAt = Math.floor((Date.now() - new Date(scraped.uploaded_at).getTime()) / 86400000);
           const item: Item = {
             hashtag: scraped.hashtag,

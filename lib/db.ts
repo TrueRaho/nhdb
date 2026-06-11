@@ -1,7 +1,7 @@
 // Prisma 7 client. Uses the Neon HTTP driver via @prisma/adapter-neon
 // so it works in serverless environments. Singleton across hot reloads in dev.
 
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient } from "./generated/prisma/client";
 import { PrismaNeon } from "@prisma/adapter-neon";
 import { env } from "./env";
 

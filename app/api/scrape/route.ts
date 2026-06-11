@@ -1,14 +1,16 @@
 import { NextResponse } from "next/server";
-import { updateTag } from "next/cache";
+import { revalidateTag } from "next/cache";
 import { scrapeTitle, ScrapeError, type ScrapeResult } from "@/lib/scraper";
 import { upsertScrapedTitle } from "@/lib/titles";
 
+// Route Handlers may not call updateTag — revalidateTag(tag, "max") marks the
+// entries stale instead (the UI goes through commitScrapedAction for instant reads).
 function invalidateAfterUpsert(hashtag: number) {
-  updateTag("titles-list");
-  updateTag("dataset");
-  updateTag("stats");
-  updateTag(`title-${hashtag}`);
-  updateTag(`similar-${hashtag}`);
+  revalidateTag("titles-list", "max");
+  revalidateTag("dataset", "max");
+  revalidateTag("stats", "max");
+  revalidateTag(`title-${hashtag}`, "max");
+  revalidateTag(`similar-${hashtag}`, "max");
 }
 
 export async function POST(req: Request) {
@@ -52,9 +54,21 @@ export async function POST(req: Request) {
     } catch {
       return NextResponse.json({ error: "Scraper service unreachable" }, { status: 503 });
     }
-    const upstreamData = await upstream.json();
+    // ngrok/proxies return HTML error pages when the tunnel is down — don't 500 on them
+    let upstreamData: { scraped?: ScrapeResult; error?: string };
+    try {
+      upstreamData = await upstream.json();
+    } catch {
+      return NextResponse.json(
+        { error: `Scraper service returned an invalid response (HTTP ${upstream.status}) — is the tunnel up?` },
+        { status: 502 },
+      );
+    }
     if (!upstream.ok) return NextResponse.json(upstreamData, { status: upstream.status });
     const { scraped } = upstreamData;
+    if (!scraped) {
+      return NextResponse.json({ error: "Scraper service returned no data" }, { status: 502 });
+    }
     if (body.persist === false) return NextResponse.json({ scraped });
     const saved = await upsertScrapedTitle(scraped);
     invalidateAfterUpsert(scraped.hashtag);
