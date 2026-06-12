@@ -2,6 +2,9 @@
 // playwright-extra + stealth are loaded lazily so Vercel (proxy mode) never imports them.
 
 import * as cheerio from "cheerio";
+import { extractHashtag } from "./utils";
+
+export { extractHashtag };
 
 type PlaywrightExtraChromium = typeof import("playwright-extra")["chromium"];
 let _chromium: PlaywrightExtraChromium | null = null;
@@ -22,10 +25,11 @@ export interface ScrapeEntity {
   total_works: number;
 }
 
+// alter_name is intentionally absent: it is a user-managed custom name,
+// never collected by the scraper.
 export interface ScrapeResult {
   hashtag: number;
   title_name: string;
-  alter_name: string | null;
   title_link: string;
   image_link: string;
   pages: number;
@@ -37,16 +41,6 @@ export interface ScrapeResult {
   parodies: ScrapeEntity[];
 }
 
-export function extractHashtag(input: string): number | null {
-  const t = input.trim();
-  if (/^\d+$/.test(t)) return parseInt(t, 10);
-  const urlMatch = t.match(/nhentai\.net\/g\/(\d+)/);
-  if (urlMatch) return parseInt(urlMatch[1], 10);
-  const hashMatch = t.match(/^#?(\d+)$/);
-  if (hashMatch) return parseInt(hashMatch[1], 10);
-  return null;
-}
-
 function parseCount(raw: string): number {
   return parseInt(raw.replace(/,/g, ""), 10) || 0;
 }
@@ -56,7 +50,6 @@ function parseInfoDiv(html: string, hashtag: number, pageUrl: string): ScrapeRes
   const info = $("#info");
 
   const title_name = info.find("h1 .pretty").text().trim();
-  const alter_name = info.find("h2.title").text().trim() || null;
 
   const image_link =
     $("div#cover img").attr("data-src") ||
@@ -92,7 +85,6 @@ function parseInfoDiv(html: string, hashtag: number, pageUrl: string): ScrapeRes
   return {
     hashtag,
     title_name,
-    alter_name,
     title_link: pageUrl,
     image_link,
     pages,

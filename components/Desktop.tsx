@@ -79,7 +79,9 @@ export function NhdbDesktop({
       <Dialog open={!!detailItem} onOpenChange={(o: boolean) => { if (!o) setDetailItem(null); }}>
         <DialogContent
           showCloseButton={false}
-          className="bg-nh-surface border-nh-border p-0 max-w-none w-[920px] sm:max-w-[920px] h-[88vh] max-h-[88vh] rounded-2xl overflow-hidden gap-0"
+          // flex (not the default grid): a grid auto track sizes to the content's
+          // max-content width and overflows the fixed-width popup, clipping edges
+          className="flex flex-col bg-nh-surface border-nh-border p-0 max-w-none w-[920px] sm:max-w-[920px] h-[88vh] max-h-[88vh] rounded-2xl overflow-hidden gap-0"
         >
           <DialogTitle className="sr-only">Title detail</DialogTitle>
           <DialogDescription className="sr-only">Detailed information about the selected title.</DialogDescription>
@@ -102,7 +104,7 @@ export function NhdbDesktop({
       <Dialog open={addOpen} onOpenChange={(o: boolean) => { if (!o) setAddOpen(false); }}>
         <DialogContent
           showCloseButton={false}
-          className="bg-nh-surface border-nh-border p-0 max-w-none w-[620px] sm:max-w-[620px] h-[80vh] max-h-[80vh] rounded-2xl overflow-hidden gap-0"
+          className="flex flex-col bg-nh-surface border-nh-border p-0 max-w-none w-[620px] sm:max-w-[620px] h-[80vh] max-h-[80vh] rounded-2xl overflow-hidden gap-0"
         >
           <DialogTitle className="sr-only">Add titles</DialogTitle>
           <DialogDescription className="sr-only">Add new titles to your collection.</DialogDescription>

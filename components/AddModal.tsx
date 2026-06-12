@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ArrowRight, Check, X } from "lucide-react";
+import { ArrowRight, Check, Database, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -9,9 +9,12 @@ import { Badge } from "@/components/ui/badge";
 import { NhCover } from "./Primitives";
 import type { Item } from "../lib/data";
 import type { ScrapeResult } from "../lib/scraper";
-import { commitScrapedAction } from "../app/actions";
+import { extractHashtag } from "../lib/utils";
+import { commitScrapedAction, findExistingTitlesAction } from "../app/actions";
 
-type Preview = { item: Item; raw: ScrapeResult };
+type Preview =
+  | { kind: "new"; item: Item; raw: ScrapeResult }
+  | { kind: "duplicate"; item: Item };
 
 export function AddModal({ open, onClose, recentAdds, embedded, onAdd }: {
   open: boolean; onClose: () => void; recentAdds: Item[]; embedded?: boolean;
@@ -31,11 +34,12 @@ export function AddModal({ open, onClose, recentAdds, embedded, onAdd }: {
   }, [open]);
 
   const onConfirmAdd = async () => {
-    if (previews.length === 0) return;
+    const toSave = previews.filter((p) => p.kind === "new");
+    if (toSave.length === 0) return;
     setAdding(true);
     setError(null);
     const results = await Promise.allSettled(
-      previews.map(async (p) => {
+      toSave.map(async (p) => {
         try {
           return await commitScrapedAction(p.raw);
         } catch (e) {
@@ -48,7 +52,7 @@ export function AddModal({ open, onClose, recentAdds, embedded, onAdd }: {
     if (saved.length > 0) onAdd?.(saved);
     if (failed.length > 0) {
       const savedTags = new Set(saved.map((s) => s.hashtag));
-      setPreviews((prev) => prev.filter((p) => !savedTags.has(p.item.hashtag)));
+      setPreviews((prev) => prev.filter((p) => p.kind === "new" && !savedTags.has(p.item.hashtag)));
       setError(failed.map((f) => f.reason instanceof Error ? f.reason.message : "save failed").join(" · "));
       setAdding(false);
     } else {
@@ -66,8 +70,28 @@ export function AddModal({ open, onClose, recentAdds, embedded, onAdd }: {
     setPreviews([]);
     setError(null);
     try {
+      // Resolve hashtags locally and ask the server which are already saved —
+      // those get a stub row in the results instead of a pointless re-scrape.
+      const parsed = inputs.map((raw) => ({ raw, hashtag: extractHashtag(raw) }));
+      const hashtags = [...new Set(parsed.map((p) => p.hashtag).filter((h): h is number => h != null))];
+      const existing = hashtags.length > 0 ? await findExistingTitlesAction(hashtags) : [];
+      const existingByTag = new Map(existing.map((i) => [i.hashtag, i]));
+
+      const seen = new Set<number>();
+      const duplicates: Preview[] = [];
+      const toScrape: string[] = [];
+      for (const p of parsed) {
+        if (p.hashtag != null) {
+          if (seen.has(p.hashtag)) continue;
+          seen.add(p.hashtag);
+          const known = existingByTag.get(p.hashtag);
+          if (known) { duplicates.push({ kind: "duplicate", item: known }); continue; }
+        }
+        toScrape.push(p.raw);
+      }
+
       const results = await Promise.all(
-        inputs.map(async (raw) => {
+        toScrape.map(async (raw) => {
           const res = await fetch("/api/scrape", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -82,7 +106,7 @@ export function AddModal({ open, onClose, recentAdds, embedded, onAdd }: {
           const item: Item = {
             hashtag: scraped.hashtag,
             titleName: scraped.title_name,
-            alterName: scraped.alter_name ?? "",
+            alterName: "",
             imageLink: scraped.image_link,
             pages: scraped.pages,
             tags: scraped.tags.map(t => t.name),
@@ -92,10 +116,10 @@ export function AddModal({ open, onClose, recentAdds, embedded, onAdd }: {
             parodies: scraped.parodies.map(p => p.name),
             uploadedAt, addedAt: 0, readCount: 0, lastReadAt: null,
           };
-          return { item, raw: scraped } satisfies Preview;
+          return { kind: "new", item, raw: scraped } satisfies Preview;
         })
       );
-      setPreviews(results);
+      setPreviews([...results, ...duplicates]);
     } catch (e) {
       setError(e instanceof Error ? e.message : "scrape failed");
     } finally {
@@ -191,25 +215,37 @@ export function AddModal({ open, onClose, recentAdds, embedded, onAdd }: {
             </Button>
           </div>
 
-          {previews.length > 0 && (
-            <div className="mt-4">
-              <div className="flex justify-between font-mono text-[9.5px] uppercase tracking-widest text-nh-text-3 mb-2">
-                <span>scraped · review before adding</span>
-                <span className="text-nh-accent">{previews.length} ready</span>
+          {previews.length > 0 && (() => {
+            const newCount = previews.filter(p => p.kind === "new").length;
+            const dupCount = previews.length - newCount;
+            return (
+              <div className="mt-4">
+                <div className="flex justify-between font-mono text-[9.5px] uppercase tracking-widest text-nh-text-3 mb-2">
+                  <span>scraped · review before adding</span>
+                  <span className="text-nh-accent">
+                    {newCount} ready{dupCount > 0 ? ` · ${dupCount} already in db` : ""}
+                  </span>
+                </div>
+                <div className="flex flex-col gap-2">
+                  {previews.map(p =>
+                    p.kind === "duplicate"
+                      ? <DuplicateRow key={p.item.hashtag} item={p.item} />
+                      : <PreviewRow key={p.item.hashtag} item={p.item} />
+                  )}
+                </div>
+                {newCount > 0 && (
+                  <Button
+                    onClick={onConfirmAdd}
+                    disabled={adding}
+                    className="mt-3 w-full h-[42px] rounded-lg bg-nh-accent text-[#0a0a0a] font-display font-extrabold text-[13px] gap-1.5 disabled:opacity-70 hover:bg-nh-accent/90"
+                    style={{ letterSpacing: "-0.01em" }}
+                  >
+                    {adding ? <><span className="nh-dot-pulse"/> saving…</> : `add ${newCount} title${newCount > 1 ? "s" : ""} to collection`}
+                  </Button>
+                )}
               </div>
-              <div className="flex flex-col gap-2">
-                {previews.map(p => <PreviewRow key={p.item.hashtag} item={p.item} />)}
-              </div>
-              <Button
-                onClick={onConfirmAdd}
-                disabled={adding}
-                className="mt-3 w-full h-[42px] rounded-lg bg-nh-accent text-[#0a0a0a] font-display font-extrabold text-[13px] gap-1.5 disabled:opacity-70 hover:bg-nh-accent/90"
-                style={{ letterSpacing: "-0.01em" }}
-              >
-                {adding ? <><span className="nh-dot-pulse"/> saving…</> : `add ${previews.length} title${previews.length > 1 ? "s" : ""} to collection`}
-              </Button>
-            </div>
-          )}
+            );
+          })()}
 
           {previews.length === 0 && !scraping && (
             <div className="mt-6">
@@ -232,6 +268,32 @@ export function AddModal({ open, onClose, recentAdds, embedded, onAdd }: {
             </div>
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// Stub row for a title that is already in the collection — scrape was skipped.
+function DuplicateRow({ item }: { item: Item }) {
+  return (
+    <div className="flex gap-2.5 p-2 rounded-lg bg-nh-surface-2 border border-nh-border border-dashed opacity-75">
+      <div className="w-14 shrink-0">
+        <NhCover item={item} size="sm"/>
+      </div>
+      <div className="flex-1 min-w-0 flex flex-col gap-1">
+        <div className="font-mono text-[9.5px] tracking-wider text-nh-text-3">#{item.hashtag}</div>
+        <div
+          className="font-display font-bold text-[13px] text-nh-text-2 truncate"
+          style={{ letterSpacing: "-0.01em" }}
+        >
+          {item.titleName}
+        </div>
+        <div className="font-mono text-[10px] text-nh-text-3">
+          already in collection · added {item.addedAt === 0 ? "today" : `${item.addedAt}d ago`} · scrape skipped
+        </div>
+      </div>
+      <div className="flex items-center px-1 text-nh-text-3">
+        <Database className="size-4" strokeWidth={2} />
       </div>
     </div>
   );

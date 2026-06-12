@@ -207,13 +207,17 @@ export default function NhdbApp({
 
   const recentAdds = useMemo(() => items.filter(c => c.addedAt < 14).slice(0, 5), [items]);
 
+  // The committed items returned by the server action are complete and fresh,
+  // so prepending them is enough (matches the default added-at desc sort).
+  // Deliberately no immediate re-query: tag invalidation can lag behind the
+  // write (notably on Vercel), and a stale cached page would clobber the
+  // just-added titles off the top of the list.
   const onAddItems = (newItems: Item[]) => {
     setItems(c => {
       const existing = new Set(c.map(x => x.hashtag));
       return [...newItems.filter(x => !existing.has(x.hashtag)), ...c];
     });
     setTotal(t => t + newItems.length);
-    startTransition(() => runQuery(0, false, search, filters));
   };
 
   if (viewport === null) {

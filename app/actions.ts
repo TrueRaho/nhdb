@@ -3,7 +3,7 @@
 import { updateTag } from "next/cache";
 import {
   deleteTitle, markRead, updateAlterName, upsertScrapedTitle,
-  queryTitles, getStats, getSimilar, getTitle,
+  queryTitles, getStats, getSimilar, getTitle, getTitlesByHashtags,
   type QueryParams,
 } from "../lib/titles";
 import { dbTitleToItem } from "../lib/mappers";
@@ -60,4 +60,11 @@ export async function getSimilarAction(hashtag: number, limit = 8) {
 export async function getTitleAction(hashtag: number): Promise<Item | null> {
   const t = await getTitle(hashtag);
   return t ? dbTitleToItem(t) : null;
+}
+
+// Which of these hashtags are already in the collection? Uncached read —
+// the add flow uses it to skip re-scraping known titles.
+export async function findExistingTitlesAction(hashtags: number[]): Promise<Item[]> {
+  const titles = await getTitlesByHashtags(hashtags);
+  return titles.map(dbTitleToItem);
 }

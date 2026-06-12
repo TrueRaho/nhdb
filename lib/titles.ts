@@ -101,9 +101,10 @@ export async function upsertScrapedTitle(s: ScrapeResult) {
   ]);
 
   return prisma.$transaction(async (tx) => {
+    // alterName is user-managed (set manually via updateAlterName) — the
+    // scrape path never writes it, neither on create nor on re-scrape.
     const titleData = {
       titleName: s.title_name,
-      alterName: s.alter_name,
       titleLink: s.title_link,
       imageLink: s.image_link,
       pages: s.pages,
@@ -113,8 +114,7 @@ export async function upsertScrapedTitle(s: ScrapeResult) {
     await tx.title.upsert({
       where: { hashtag: s.hashtag },
       create: { hashtag: s.hashtag, ...titleData },
-      // alterName doubles as the user's custom name — never clobber it on re-scrape
-      update: { ...titleData, alterName: undefined },
+      update: titleData,
     });
 
     await Promise.all([
@@ -300,6 +300,16 @@ export async function queryTitles(p: QueryParams): Promise<QueryResult> {
     prisma.title.count({ where }),
   ]);
   return { items, total };
+}
+
+// Deliberately uncached: the add flow uses this to decide whether to skip a
+// re-scrape, so it must always reflect the current DB state.
+export async function getTitlesByHashtags(hashtags: number[]) {
+  if (hashtags.length === 0) return [];
+  return prisma.title.findMany({
+    where: { hashtag: { in: hashtags } },
+    include: titleInclude,
+  });
 }
 
 export async function getTitle(hashtag: number) {
