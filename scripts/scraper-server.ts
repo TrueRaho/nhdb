@@ -1,14 +1,22 @@
 import http from "node:http";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { config } from "dotenv";
-import { scrapeTitle, ScrapeError } from "../lib/scraper";
+import { scrapeTitle, ScrapeError, closeScraper } from "../lib/scraper";
 
 config({ path: [".env.local", ".env"] });
 
-const PORT = Number(process.env.SCRAPER_PORT ?? 3333);
+// Render injects PORT; locally fall back to SCRAPER_PORT or 3333.
+const PORT = Number(process.env.PORT ?? process.env.SCRAPER_PORT ?? 3333);
 const SECRET = process.env.SCRAPER_SECRET;
 
 const server = http.createServer(async (req, res) => {
+  // Health check — Render pings this, and it's a quick "is the tunnel up?" probe.
+  // Kept before the auth check so the platform can reach it without the secret.
+  if (req.method === "GET" && (req.url === "/" || req.url === "/healthz")) {
+    res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ ok: true }));
+    return;
+  }
+
   if (req.method !== "POST" || req.url !== "/scrape") {
     res.writeHead(404).end();
     return;
@@ -32,9 +40,9 @@ const server = http.createServer(async (req, res) => {
   }
 
   try {
-    const scraped = await scrapeTitle(input);
+    const { scraped, via } = await scrapeTitle(input);
     res.writeHead(200, { "Content-Type": "application/json" })
-       .end(JSON.stringify({ scraped }));
+       .end(JSON.stringify({ scraped, via }));
   } catch (e) {
     if (e instanceof ScrapeError) {
       const status = e.code === "BAD_INPUT" ? 400 : e.code === "NOT_FOUND" ? 404 : 502;
@@ -48,12 +56,27 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, () => {
-  console.log(`Scraper listening on http://localhost:${PORT}`);
+// On Render the platform gives a public HTTPS URL, so ngrok is neither needed
+// nor available — RENDER is set there automatically. Locally we tunnel through
+// ngrok unless explicitly disabled.
+const useNgrok = !process.env.RENDER && process.env.DISABLE_NGROK !== "1";
+let ngrok: ChildProcess | undefined;
 
-  const domain = process.env.NGROK_DOMAIN;
-  const args = ["http", String(PORT), ...(domain ? ["--domain", domain] : [])];
-  const ngrok = spawn("ngrok", args, { stdio: "inherit" });
-  ngrok.on("error", () => console.error("ngrok not found — run: brew install ngrok"));
-  process.on("SIGINT", () => { ngrok.kill(); process.exit(0); });
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(`Scraper listening on port ${PORT}`);
+
+  if (useNgrok) {
+    const domain = process.env.NGROK_DOMAIN;
+    const args = ["http", String(PORT), ...(domain ? ["--domain", domain] : [])];
+    ngrok = spawn("ngrok", args, { stdio: "inherit" });
+    ngrok.on("error", () => console.error("ngrok not found — run: brew install ngrok"));
+  }
 });
+
+// Render sends SIGTERM on deploy/stop; close the warm browser cleanly either way.
+function shutdown() {
+  ngrok?.kill();
+  void closeScraper().finally(() => process.exit(0));
+}
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);

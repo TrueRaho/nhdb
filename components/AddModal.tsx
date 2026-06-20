@@ -1,19 +1,19 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ArrowRight, Check, Database, X } from "lucide-react";
+import { ArrowRight, Check, Database, X, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { NhCover } from "./Primitives";
 import type { Item } from "../lib/data";
-import type { ScrapeResult } from "../lib/scraper";
+import type { ScrapeResult, ScrapeVia } from "../lib/scraper";
 import { extractHashtag } from "../lib/utils";
 import { commitScrapedAction, findExistingTitlesAction } from "../app/actions";
 
 type Preview =
-  | { kind: "new"; item: Item; raw: ScrapeResult }
+  | { kind: "new"; item: Item; raw: ScrapeResult; via?: ScrapeVia }
   | { kind: "duplicate"; item: Item };
 
 export function AddModal({ open, onClose, recentAdds, embedded, onAdd }: {
@@ -101,7 +101,7 @@ export function AddModal({ open, onClose, recentAdds, embedded, onAdd }: {
             const err = await res.json().catch(() => ({ error: res.statusText }));
             throw new Error(err.error ?? res.statusText);
           }
-          const { scraped } = await res.json() as { scraped: ScrapeResult };
+          const { scraped, via } = await res.json() as { scraped: ScrapeResult; via?: ScrapeVia };
           const uploadedAt = Math.floor((Date.now() - new Date(scraped.uploaded_at).getTime()) / 86400000);
           const item: Item = {
             hashtag: scraped.hashtag,
@@ -116,7 +116,7 @@ export function AddModal({ open, onClose, recentAdds, embedded, onAdd }: {
             parodies: scraped.parodies.map(p => p.name),
             uploadedAt, addedAt: 0, readCount: 0, lastReadAt: null,
           };
-          return { kind: "new", item, raw: scraped } satisfies Preview;
+          return { kind: "new", item, raw: scraped, via } satisfies Preview;
         })
       );
       setPreviews([...results, ...duplicates]);
@@ -218,6 +218,7 @@ export function AddModal({ open, onClose, recentAdds, embedded, onAdd }: {
           {previews.length > 0 && (() => {
             const newCount = previews.filter(p => p.kind === "new").length;
             const dupCount = previews.length - newCount;
+            const fallbackCount = previews.filter(p => p.kind === "new" && p.via === "fallback").length;
             return (
               <div className="mt-4">
                 <div className="flex justify-between font-mono text-[9.5px] uppercase tracking-widest text-nh-text-3 mb-2">
@@ -226,11 +227,20 @@ export function AddModal({ open, onClose, recentAdds, embedded, onAdd }: {
                     {newCount} ready{dupCount > 0 ? ` · ${dupCount} already in db` : ""}
                   </span>
                 </div>
+                {fallbackCount > 0 && (
+                  <div
+                    className="flex items-center gap-1.5 mb-2 font-mono text-[10px] rounded-md px-2 py-1.5"
+                    style={{ background: "rgba(224,162,58,0.08)", border: "1px solid rgba(224,162,58,0.25)", color: "#e0a23a" }}
+                  >
+                    <Zap className="size-3 shrink-0" strokeWidth={2.2} />
+                    {fallbackCount} of {newCount} scraped via browser fallback — impit was blocked
+                  </div>
+                )}
                 <div className="flex flex-col gap-2">
                   {previews.map(p =>
                     p.kind === "duplicate"
                       ? <DuplicateRow key={p.item.hashtag} item={p.item} />
-                      : <PreviewRow key={p.item.hashtag} item={p.item} />
+                      : <PreviewRow key={p.item.hashtag} item={p.item} via={p.via} />
                   )}
                 </div>
                 {newCount > 0 && (
@@ -299,14 +309,25 @@ function DuplicateRow({ item }: { item: Item }) {
   );
 }
 
-function PreviewRow({ item }: { item: Item }) {
+function PreviewRow({ item, via }: { item: Item; via?: ScrapeVia }) {
   return (
     <div className="flex gap-2.5 p-2 rounded-lg bg-nh-surface-2 border border-nh-border">
       <div className="w-14 shrink-0">
         <NhCover item={item} size="sm"/>
       </div>
       <div className="flex-1 min-w-0 flex flex-col gap-1">
-        <div className="font-mono text-[9.5px] tracking-wider text-nh-accent">#{item.hashtag}</div>
+        <div className="flex items-center gap-1.5">
+          <span className="font-mono text-[9.5px] tracking-wider text-nh-accent">#{item.hashtag}</span>
+          {via === "fallback" && (
+            <span
+              className="inline-flex items-center gap-0.5 font-mono text-[8.5px] uppercase tracking-wider rounded-sm px-1 py-0.5"
+              style={{ background: "rgba(224,162,58,0.12)", color: "#e0a23a" }}
+              title="impit was blocked — scraped via Playwright browser fallback"
+            >
+              <Zap className="size-2" strokeWidth={2.4} /> fallback
+            </span>
+          )}
+        </div>
         <div
           className="font-display font-bold text-[13px] text-nh-text-1 truncate"
           style={{ letterSpacing: "-0.01em" }}

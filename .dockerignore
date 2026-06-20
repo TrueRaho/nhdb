@@ -1,0 +1,27 @@
+# Installed fresh inside the image (host has darwin binaries — never copy them)
+node_modules
+# Build artifacts / caches
+.next
+out
+build
+.turbo
+*.tsbuildinfo
+next-env.d.ts
+lib/generated
+# Secrets — provided via Render env vars, never baked into the image
+.env
+.env.*
+.vercel
+# VCS / editor / OS cruft
+.git
+.gitignore
+.vscode
+.idea
+.DS_Store
+# Docs & local-only tooling not needed by the scraper at runtime
+README.md
+SCRAPER.md
+.claude
+.agents
+kanpilot.toml
+skills-lock.json

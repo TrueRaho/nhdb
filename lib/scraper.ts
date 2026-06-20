@@ -1,23 +1,16 @@
-// nhentai scraper — extracted from the standalone scrape.ts CLI.
-// playwright-extra + stealth are loaded lazily so Vercel (proxy mode) never imports them.
+// nhentai scraper — two layers:
+//   1. impit  — a TLS/HTTP2-impersonating HTTP client that passes Cloudflare's
+//      fingerprint gate without a browser (fast, ~200ms, no process launch).
+//   2. Playwright — a real (stealth) browser kept as a WARM session and only
+//      used as a fallback when impit gets challenged/blocked.
+//
+// Both impit and playwright-extra are imported lazily so Vercel (proxy mode)
+// never loads their native binaries when scrapeTitle is not actually called.
 
 import * as cheerio from "cheerio";
 import { extractHashtag } from "./utils";
 
 export { extractHashtag };
-
-type PlaywrightExtraChromium = typeof import("playwright-extra")["chromium"];
-let _chromium: PlaywrightExtraChromium | null = null;
-
-async function getChromium(): Promise<PlaywrightExtraChromium> {
-  if (!_chromium) {
-    const { chromium } = await import("playwright-extra");
-    const { default: stealth } = await import("puppeteer-extra-plugin-stealth");
-    chromium.use(stealth());
-    _chromium = chromium;
-  }
-  return _chromium;
-}
 
 export interface ScrapeEntity {
   name: string;
@@ -40,6 +33,30 @@ export interface ScrapeResult {
   characters: ScrapeEntity[];
   parodies: ScrapeEntity[];
 }
+
+export class ScrapeError extends Error {
+  constructor(message: string, public code: "BAD_INPUT" | "CLOUDFLARE" | "NOT_FOUND" | "TIMEOUT") {
+    super(message);
+    this.name = "ScrapeError";
+  }
+}
+
+// Which layer produced the result. "fallback" means impit was blocked and a
+// real browser had to take over — surfaced to the UI so the user knows.
+export type ScrapeVia = "impit" | "fallback";
+
+export interface ScrapeOutcome {
+  scraped: ScrapeResult;
+  via: ScrapeVia;
+}
+
+const USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+  "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+
+// ---------------------------------------------------------------------------
+// Parsing (shared by both layers)
+// ---------------------------------------------------------------------------
 
 function parseCount(raw: string): number {
   return parseInt(raw.replace(/,/g, ""), 10) || 0;
@@ -97,19 +114,104 @@ function parseInfoDiv(html: string, hashtag: number, pageUrl: string): ScrapeRes
   };
 }
 
-export class ScrapeError extends Error {
-  constructor(message: string, public code: "BAD_INPUT" | "CLOUDFLARE" | "NOT_FOUND" | "TIMEOUT") {
-    super(message);
-    this.name = "ScrapeError";
+// Cloudflare interstitials served instead of the real page.
+function looksLikeChallenge(html: string): boolean {
+  const head = html.slice(0, 4000).toLowerCase();
+  return (
+    head.includes("just a moment") ||
+    head.includes("attention required") ||
+    head.includes("cf-browser-verification") ||
+    head.includes("challenge-platform")
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Layer 1 — impit (TLS/HTTP2 impersonation, no browser)
+// ---------------------------------------------------------------------------
+
+// Which browser fingerprint impit emulates. Use the non-pinned alias "chrome"
+// (tracks the newest profile the installed impit ships) so upgrades need no
+// code change; override per-environment with SCRAPER_BROWSER_PROFILE.
+const IMPIT_PROFILE = process.env.SCRAPER_BROWSER_PROFILE || "chrome";
+
+type ImpitInstance = InstanceType<typeof import("impit").Impit>;
+let _impit: ImpitInstance | null = null;
+
+async function getImpit(): Promise<ImpitInstance> {
+  if (!_impit) {
+    const { Impit } = await import("impit");
+    // An invalid SCRAPER_BROWSER_PROFILE makes fetches throw, and we simply
+    // fall back to the browser layer — so the env value is trusted, not validated.
+    _impit = new Impit({
+      browser: IMPIT_PROFILE as import("impit").Browser,
+      timeout: 30_000,
+    });
+  }
+  return _impit;
+}
+
+// Returns a ScrapeResult on success, or null to signal "fall back to browser".
+// Throws ScrapeError only for a genuine 404 (which the browser would also hit).
+async function scrapeViaImpit(url: string, hashtag: number): Promise<ScrapeResult | null> {
+  let res: Awaited<ReturnType<ImpitInstance["fetch"]>>;
+  try {
+    const impit = await getImpit();
+    res = await impit.fetch(url);
+  } catch (e) {
+    console.warn(`[scraper] impit request failed for #${hashtag}, falling back:`, e instanceof Error ? e.message : e);
+    return null;
+  }
+
+  if (res.status === 404) {
+    throw new ScrapeError(`Title #${hashtag} not found on nhentai (404)`, "NOT_FOUND");
+  }
+
+  const html = await res.text().catch(() => "");
+  if (res.status !== 200 || looksLikeChallenge(html) || !html.includes('id="info"')) {
+    return null;
+  }
+
+  return parseInfoDiv(html, hashtag, url);
+}
+
+// ---------------------------------------------------------------------------
+// Layer 2 — Playwright warm session (fallback)
+// ---------------------------------------------------------------------------
+
+type PlaywrightExtraChromium = typeof import("playwright-extra")["chromium"];
+type PWBrowser = import("playwright").Browser;
+type PWBrowserContext = import("playwright").BrowserContext;
+
+let _chromium: PlaywrightExtraChromium | null = null;
+
+async function getChromium(): Promise<PlaywrightExtraChromium> {
+  if (!_chromium) {
+    const { chromium } = await import("playwright-extra");
+    const { default: stealth } = await import("puppeteer-extra-plugin-stealth");
+    chromium.use(stealth());
+    _chromium = chromium;
+  }
+  return _chromium;
+}
+
+// A single browser + context kept alive across scrapes. The first browser-layer
+// scrape launches it; subsequent ones reuse it (no per-title launch). An idle
+// timer closes it after inactivity so long-running servers don't hold a browser
+// forever; callers can also close it explicitly via closeScraper().
+let _warm: Promise<{ browser: PWBrowser; context: PWBrowserContext }> | null = null;
+
+const IDLE_MS = Number(process.env.SCRAPER_BROWSER_IDLE_MS ?? 60_000);
+let _idleTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleIdleClose(): void {
+  if (_idleTimer) clearTimeout(_idleTimer);
+  if (IDLE_MS > 0) {
+    _idleTimer = setTimeout(() => void closeScraper(), IDLE_MS);
+    _idleTimer.unref?.();
   }
 }
 
-export async function scrapeTitle(input: string | number): Promise<ScrapeResult> {
-  const hashtag = typeof input === "number" ? input : extractHashtag(input);
-  if (!hashtag) throw new ScrapeError(`Could not parse hashtag from: "${input}"`, "BAD_INPUT");
-
-  const url = `https://nhentai.net/g/${hashtag}/`;
-
+async function launchWarm(): Promise<{ browser: PWBrowser; context: PWBrowserContext }> {
   // @sparticuz/chromium ships a Linux binary — only use it in actual serverless
   // environments, not for any production build (next start on macOS would ENOEXEC).
   const isServerless = !!(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
@@ -121,33 +223,68 @@ export async function scrapeTitle(input: string | number): Promise<ScrapeResult>
     lambdaArgs = chromiumLambda.args;
   }
 
+  // Chromium refuses to run as root (Render / most Docker containers) unless
+  // sandboxing is disabled. RENDER is set automatically on Render.
+  const noSandbox = !!process.env.RENDER || process.env.SCRAPER_NO_SANDBOX === "1";
+
   const chromium = await getChromium();
   const browser = await chromium.launch({
     headless: true,
     executablePath,
-    args: [...lambdaArgs, "--disable-blink-features=AutomationControlled"],
+    args: [
+      ...lambdaArgs,
+      "--disable-blink-features=AutomationControlled",
+      ...(noSandbox ? ["--no-sandbox", "--disable-setuid-sandbox"] : []),
+    ],
   });
 
+  const context = await browser.newContext({
+    userAgent: USER_AGENT,
+    viewport: { width: 1280, height: 800 },
+    locale: "en-US",
+    extraHTTPHeaders: { "Accept-Language": "en-US,en;q=0.9" },
+  });
+
+  // Skip subresources for speed — we only need the server-rendered HTML.
+  await context.route("**/*", (route: import("playwright").Route) => {
+    if (["image", "media", "font", "stylesheet"].includes(route.request().resourceType())) {
+      route.abort();
+    } else {
+      route.continue();
+    }
+  });
+
+  return { browser, context };
+}
+
+function getWarm(): Promise<{ browser: PWBrowser; context: PWBrowserContext }> {
+  if (!_warm) {
+    _warm = launchWarm();
+    // A failed launch must not be cached forever.
+    _warm.catch(() => { _warm = null; });
+  }
+  return _warm;
+}
+
+// Closes the warm browser if one is open. Safe to call when nothing is running.
+// Long-running hosts (the scraper-server) should call this on shutdown.
+export async function closeScraper(): Promise<void> {
+  if (_idleTimer) { clearTimeout(_idleTimer); _idleTimer = null; }
+  const warm = _warm;
+  _warm = null;
+  if (!warm) return;
   try {
-    const context = await browser.newContext({
-      userAgent:
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-      viewport: { width: 1280, height: 800 },
-      locale: "en-US",
-      extraHTTPHeaders: { "Accept-Language": "en-US,en;q=0.9" },
-    });
+    const { browser } = await warm;
+    await browser.close();
+  } catch {
+    // already gone
+  }
+}
 
-    const page = await context.newPage();
-
-    await page.route("**/*", (route: import("playwright").Route) => {
-      if (["image", "media", "font", "stylesheet"].includes(route.request().resourceType())) {
-        route.abort();
-      } else {
-        route.continue();
-      }
-    });
-
+async function scrapeViaBrowser(url: string, hashtag: number): Promise<ScrapeResult> {
+  const { context } = await getWarm();
+  const page = await context.newPage();
+  try {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 });
 
     const title = await page.title();
@@ -168,6 +305,36 @@ export async function scrapeTitle(input: string | number): Promise<ScrapeResult>
     const html = await page.content();
     return parseInfoDiv(html, hashtag, url);
   } finally {
-    await browser.close();
+    await page.close().catch(() => {});
+    scheduleIdleClose();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Orchestrator
+// ---------------------------------------------------------------------------
+
+export async function scrapeTitle(input: string | number): Promise<ScrapeOutcome> {
+  const hashtag = typeof input === "number" ? input : extractHashtag(input);
+  if (!hashtag) throw new ScrapeError(`Could not parse hashtag from: "${input}"`, "BAD_INPUT");
+
+  const url = `https://nhentai.net/g/${hashtag}/`;
+
+  // Layer 1: cheap impersonated fetch. Returns null when challenged/blocked
+  // (a genuine 404 is thrown here and must NOT trigger the browser fallback).
+  const viaImpit = await scrapeViaImpit(url, hashtag);
+  if (viaImpit) return { scraped: viaImpit, via: "impit" };
+
+  // Layer 2: a real browser solves whatever impit couldn't get past.
+  console.warn(`[scraper] impit layer did not pass for #${hashtag}, using Playwright fallback`);
+  try {
+    const scraped = await scrapeViaBrowser(url, hashtag);
+    return { scraped, via: "fallback" };
+  } catch (e) {
+    // Both layers failed — make the message say so for the user.
+    if (e instanceof ScrapeError && e.code !== "NOT_FOUND") {
+      throw new ScrapeError(`impit was blocked and the browser fallback also failed: ${e.message}`, e.code);
+    }
+    throw e;
   }
 }

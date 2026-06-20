@@ -1,0 +1,23 @@
+# Render Blueprint for the nhentai scraper service.
+# Deploy: push this repo, then in Render → "New +" → "Blueprint" and pick it,
+# or create a Docker Web Service manually pointing at the Dockerfile.
+#
+# Render sets PORT and RENDER automatically — the server and scraper read them.
+services:
+  - type: web
+    name: nhdb-scraper
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    region: frankfurt          # pick the one closest to you / to Vercel
+    plan: free              # Chromium fallback wants RAM; free (512MB) may OOM
+    healthCheckPath: /
+    autoDeploy: true
+    envVars:
+      # Shared bearer secret — must match SCRAPER_SECRET on Vercel. Set in dashboard.
+      - key: SCRAPER_SECRET
+        sync: false
+      # impit fingerprint profile; "chrome" tracks the newest impit ships.
+      - key: SCRAPER_BROWSER_PROFILE
+        value: chrome
+      - key: NODE_ENV
+        value: production

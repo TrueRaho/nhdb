@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  serverExternalPackages: ["playwright-extra", "puppeteer-extra-plugin-stealth"],
+  serverExternalPackages: ["playwright-extra", "puppeteer-extra-plugin-stealth", "impit"],
   cacheComponents: true,
   images: {
     // covers t.nhentai.net, t1–t7, i, i1–i5 — any single-label subdomain
