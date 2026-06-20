@@ -28,6 +28,7 @@ import { GalleryCard } from "./Gallery";
 import { StatsView } from "./Stats";
 import { DetailModal } from "./DetailModal";
 import { AddModal } from "./AddModal";
+import { ScrapeBadge } from "./ScrapeBadge";
 import type { Item } from "../lib/data";
 import type { SortField } from "../lib/titles";
 import { READ_OPTIONS, type Filters, type Dataset } from "./HeaderFilter";
@@ -187,14 +188,17 @@ function DesktopHeader({ search, setSearch, onAdd, view, setView }: {
         <kbd className="absolute right-2.5 top-1/2 -translate-y-1/2 font-mono text-[9.5px] text-nh-text-3 px-1.5 py-0.5 rounded-sm bg-nh-pill border border-nh-border">⌘K</kbd>
       </div>
 
-      <Button
-        onClick={onAdd}
-        className="h-[34px] px-3.5 rounded-lg bg-nh-accent text-[#0a0a0a] gap-1.5 font-display font-bold text-xs hover:bg-nh-accent/90"
-        style={{ letterSpacing: "-0.01em" }}
-      >
-        <Plus className="size-3.5" strokeWidth={2.4} />
-        add titles
-      </Button>
+      <div className="relative">
+        <Button
+          onClick={onAdd}
+          className="h-[34px] px-3.5 rounded-lg bg-nh-accent text-[#0a0a0a] gap-1.5 font-display font-bold text-xs hover:bg-nh-accent/90"
+          style={{ letterSpacing: "-0.01em" }}
+        >
+          <Plus className="size-3.5" strokeWidth={2.4} />
+          add titles
+        </Button>
+        <ScrapeBadge />
+      </div>
     </div>
   );
 }
@@ -219,6 +223,7 @@ function DesktopSidebar({ filters, setFilters, dataset, activeFilterCount, match
     tags: [], characters: [], parodies: [], artists: [], groups: [],
     pageMin: dataset.pageMin, pageMax: dataset.pageMax,
     read: "all",
+    noAlter: false,
     sortField: "added-at", sortDir: "desc",
   });
 
@@ -248,7 +253,7 @@ function DesktopSidebar({ filters, setFilters, dataset, activeFilterCount, match
         <SortControl filters={filters} setFilters={setFilters} />
       </SidebarGroup>
 
-      <SidebarGroup title={filters.read === "all" ? "status" : `status · ${filters.read}`} open={openSection.status} onToggle={() => tog("status")}>
+      <SidebarGroup title={filters.read === "all" && !filters.noAlter ? "status" : `status · ${[filters.read !== "all" ? filters.read : null, filters.noAlter ? "no alter" : null].filter(Boolean).join(" · ")}`} open={openSection.status} onToggle={() => tog("status")}>
         <div className="grid grid-cols-3 rounded-md border border-nh-border bg-nh-input p-0.5">
           {READ_OPTIONS.map(o => {
             const sel = filters.read === o.id;
@@ -268,6 +273,17 @@ function DesktopSidebar({ filters, setFilters, dataset, activeFilterCount, match
             );
           })}
         </div>
+        <Button
+          onClick={() => setFilters(f => ({ ...f, noAlter: !f.noAlter }))}
+          variant="ghost"
+          className="mt-1.5 h-[28px] w-full justify-start rounded-md border border-nh-border font-mono text-[10px] font-semibold tracking-wide hover:bg-transparent"
+          style={{
+            background: filters.noAlter ? "var(--nh-accent)" : "transparent",
+            color: filters.noAlter ? "#0a0a0a" : "var(--nh-text-2)",
+          }}
+        >
+          only without alter name
+        </Button>
       </SidebarGroup>
 
       <SidebarGroup title={`tags · ${filters.tags.length}`} open={openSection.tags} onToggle={() => tog("tags")}>

@@ -1,131 +1,61 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ArrowRight, Check, Database, X, Zap } from "lucide-react";
+import { ArrowRight, Database, RotateCw, X, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { NhCover } from "./Primitives";
 import type { Item } from "../lib/data";
-import type { ScrapeResult, ScrapeVia } from "../lib/scraper";
-import { extractHashtag } from "../lib/utils";
-import { commitScrapedAction, findExistingTitlesAction } from "../app/actions";
-
-type Preview =
-  | { kind: "new"; item: Item; raw: ScrapeResult; via?: ScrapeVia }
-  | { kind: "duplicate"; item: Item };
+import { useScrapeJobs, type ScrapeJob } from "./ScrapeJobsProvider";
 
 export function AddModal({ open, onClose, recentAdds, embedded, onAdd }: {
   open: boolean; onClose: () => void; recentAdds: Item[]; embedded?: boolean;
   onAdd?: (items: Item[]) => void;
 }) {
+  const { jobs, scrapingCount, readyCount, startScrape, dismiss, retry, commitReady } = useScrapeJobs();
   const [input, setInput] = useState("");
-  const [scraping, setScraping] = useState(false);
-  const [previews, setPreviews] = useState<Preview[]>([]);
+  const [submitting, setSubmitting] = useState(false);
   const [adding, setAdding] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
+  // Jobs live in the provider, so they survive close/reopen. Only the transient
+  // commit state is local — clear it when the modal closes.
   const prevOpenRef = useRef(open);
   useEffect(() => {
     const wasOpen = prevOpenRef.current;
     prevOpenRef.current = open;
-    if (wasOpen && !open) { setInput(""); setScraping(false); setPreviews([]); setAdding(false); setError(null); }
+    if (wasOpen && !open) { setSaveError(null); setAdding(false); }
   }, [open]);
-
-  const onConfirmAdd = async () => {
-    const toSave = previews.filter((p) => p.kind === "new");
-    if (toSave.length === 0) return;
-    setAdding(true);
-    setError(null);
-    const results = await Promise.allSettled(
-      toSave.map(async (p) => {
-        try {
-          return await commitScrapedAction(p.raw);
-        } catch (e) {
-          throw new Error(`#${p.item.hashtag}: ${e instanceof Error ? e.message : "save failed"}`);
-        }
-      })
-    );
-    const saved = results.filter((r) => r.status === "fulfilled").map((r) => r.value);
-    const failed = results.filter((r) => r.status === "rejected");
-    if (saved.length > 0) onAdd?.(saved);
-    if (failed.length > 0) {
-      const savedTags = new Set(saved.map((s) => s.hashtag));
-      setPreviews((prev) => prev.filter((p) => p.kind === "new" && !savedTags.has(p.item.hashtag)));
-      setError(failed.map((f) => f.reason instanceof Error ? f.reason.message : "save failed").join(" · "));
-      setAdding(false);
-    } else {
-      onClose();
-    }
-  };
 
   if (!open) return null;
 
   const inputs = input.split(/[, \n]+/).map(s => s.trim()).filter(Boolean);
 
   const onScrape = async () => {
-    if (inputs.length === 0) return;
-    setScraping(true);
-    setPreviews([]);
-    setError(null);
+    if (inputs.length === 0 || submitting) return;
+    setSubmitting(true);
+    setSaveError(null);
     try {
-      // Resolve hashtags locally and ask the server which are already saved —
-      // those get a stub row in the results instead of a pointless re-scrape.
-      const parsed = inputs.map((raw) => ({ raw, hashtag: extractHashtag(raw) }));
-      const hashtags = [...new Set(parsed.map((p) => p.hashtag).filter((h): h is number => h != null))];
-      const existing = hashtags.length > 0 ? await findExistingTitlesAction(hashtags) : [];
-      const existingByTag = new Map(existing.map((i) => [i.hashtag, i]));
-
-      const seen = new Set<number>();
-      const duplicates: Preview[] = [];
-      const toScrape: string[] = [];
-      for (const p of parsed) {
-        if (p.hashtag != null) {
-          if (seen.has(p.hashtag)) continue;
-          seen.add(p.hashtag);
-          const known = existingByTag.get(p.hashtag);
-          if (known) { duplicates.push({ kind: "duplicate", item: known }); continue; }
-        }
-        toScrape.push(p.raw);
-      }
-
-      const results = await Promise.all(
-        toScrape.map(async (raw) => {
-          const res = await fetch("/api/scrape", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ input: raw, persist: false }),
-          });
-          if (!res.ok) {
-            const err = await res.json().catch(() => ({ error: res.statusText }));
-            throw new Error(err.error ?? res.statusText);
-          }
-          const { scraped, via } = await res.json() as { scraped: ScrapeResult; via?: ScrapeVia };
-          const uploadedAt = Math.floor((Date.now() - new Date(scraped.uploaded_at).getTime()) / 86400000);
-          const item: Item = {
-            hashtag: scraped.hashtag,
-            titleName: scraped.title_name,
-            alterName: "",
-            imageLink: scraped.image_link,
-            pages: scraped.pages,
-            tags: scraped.tags.map(t => t.name),
-            artists: scraped.artists.map(a => a.name),
-            groups: scraped.groups.map(g => g.name),
-            characters: scraped.characters.map(c => c.name),
-            parodies: scraped.parodies.map(p => p.name),
-            uploadedAt, addedAt: 0, readCount: 0, lastReadAt: null,
-          };
-          return { kind: "new", item, raw: scraped, via } satisfies Preview;
-        })
-      );
-      setPreviews([...results, ...duplicates]);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "scrape failed");
+      await startScrape(input);
+      setInput("");
     } finally {
-      setScraping(false);
+      setSubmitting(false);
     }
   };
+
+  const onConfirmAdd = async () => {
+    if (readyCount === 0) return;
+    setAdding(true);
+    setSaveError(null);
+    const { saved, failedMsg } = await commitReady();
+    if (saved.length > 0) onAdd?.(saved);
+    if (failedMsg) setSaveError(failedMsg);
+    setAdding(false);
+  };
+
+  const hasJobs = jobs.length > 0;
 
   return (
     <div
@@ -181,22 +111,25 @@ export function AddModal({ open, onClose, recentAdds, embedded, onAdd }: {
             placeholder={"177013\nnhentai.net/g/895243\n820175, 831895, 563281"}
             className="min-h-20 w-full rounded-lg bg-nh-input border-nh-border px-3 py-2.5 font-mono text-xs tracking-wide text-nh-text-1 resize-y"
           />
-          {error && (
+          {saveError && (
             <Alert
               variant="destructive"
               className="mt-2.5 rounded-md py-2 px-2.5 font-mono text-[11px]"
               style={{ background: "rgba(255,60,60,0.08)", borderColor: "rgba(255,60,60,0.25)", color: "#ff6b6b" }}
             >
-              <AlertDescription className="text-[#ff6b6b]">{error}</AlertDescription>
+              <AlertDescription className="text-[#ff6b6b]">{saveError}</AlertDescription>
             </Alert>
           )}
           <div className="flex items-center gap-2 mt-2.5">
             <div className="flex-1 font-mono text-[10px] tracking-wide text-nh-text-3">
               {inputs.length} {inputs.length === 1 ? "entry" : "entries"} detected
+              {scrapingCount > 0 && (
+                <span className="text-nh-accent"> · {scrapingCount} scraping in background</span>
+              )}
             </div>
             <Button
               onClick={onScrape}
-              disabled={inputs.length === 0 || scraping}
+              disabled={inputs.length === 0 || submitting}
               className="h-9 px-3.5 rounded-lg font-display font-bold text-xs gap-1.5 disabled:opacity-100"
               style={{
                 background: inputs.length === 0 ? "var(--nh-pill-bg)" : "var(--nh-accent)",
@@ -204,8 +137,8 @@ export function AddModal({ open, onClose, recentAdds, embedded, onAdd }: {
                 letterSpacing: "-0.01em",
               }}
             >
-              {scraping ? (
-                <><span className="nh-dot-pulse"/> scraping…</>
+              {submitting ? (
+                <><span className="nh-dot-pulse"/> queuing…</>
               ) : (
                 <>
                   <ArrowRight className="size-3.5" strokeWidth={2.2} />
@@ -215,17 +148,21 @@ export function AddModal({ open, onClose, recentAdds, embedded, onAdd }: {
             </Button>
           </div>
 
-          {previews.length > 0 && (() => {
-            const newCount = previews.filter(p => p.kind === "new").length;
-            const dupCount = previews.length - newCount;
-            const fallbackCount = previews.filter(p => p.kind === "new" && p.via === "fallback").length;
+          {hasJobs && (() => {
+            const dupCount = jobs.filter(j => j.status === "duplicate").length;
+            const errorCount = jobs.filter(j => j.status === "error").length;
+            const fallbackCount = jobs.filter(j => j.status === "ready" && j.via === "fallback").length;
+            const summary = [
+              `${readyCount} ready`,
+              scrapingCount > 0 ? `${scrapingCount} scraping` : null,
+              dupCount > 0 ? `${dupCount} in db` : null,
+              errorCount > 0 ? `${errorCount} failed` : null,
+            ].filter(Boolean).join(" · ");
             return (
               <div className="mt-4">
                 <div className="flex justify-between font-mono text-[9.5px] uppercase tracking-widest text-nh-text-3 mb-2">
                   <span>scraped · review before adding</span>
-                  <span className="text-nh-accent">
-                    {newCount} ready{dupCount > 0 ? ` · ${dupCount} already in db` : ""}
-                  </span>
+                  <span className="text-nh-accent">{summary}</span>
                 </div>
                 {fallbackCount > 0 && (
                   <div
@@ -233,31 +170,29 @@ export function AddModal({ open, onClose, recentAdds, embedded, onAdd }: {
                     style={{ background: "rgba(224,162,58,0.08)", border: "1px solid rgba(224,162,58,0.25)", color: "#e0a23a" }}
                   >
                     <Zap className="size-3 shrink-0" strokeWidth={2.2} />
-                    {fallbackCount} of {newCount} scraped via browser fallback — impit was blocked
+                    {fallbackCount} of {readyCount} scraped via browser fallback — impit was blocked
                   </div>
                 )}
                 <div className="flex flex-col gap-2">
-                  {previews.map(p =>
-                    p.kind === "duplicate"
-                      ? <DuplicateRow key={p.item.hashtag} item={p.item} />
-                      : <PreviewRow key={p.item.hashtag} item={p.item} via={p.via} />
-                  )}
+                  {jobs.map(j => (
+                    <JobRow key={j.key} job={j} onDismiss={() => dismiss(j.key)} onRetry={() => retry(j.key)} />
+                  ))}
                 </div>
-                {newCount > 0 && (
+                {readyCount > 0 && (
                   <Button
                     onClick={onConfirmAdd}
                     disabled={adding}
                     className="mt-3 w-full h-[42px] rounded-lg bg-nh-accent text-[#0a0a0a] font-display font-extrabold text-[13px] gap-1.5 disabled:opacity-70 hover:bg-nh-accent/90"
                     style={{ letterSpacing: "-0.01em" }}
                   >
-                    {adding ? <><span className="nh-dot-pulse"/> saving…</> : `add ${newCount} title${newCount > 1 ? "s" : ""} to collection`}
+                    {adding ? <><span className="nh-dot-pulse"/> saving…</> : `add ${readyCount} title${readyCount > 1 ? "s" : ""} to collection`}
                   </Button>
                 )}
               </div>
             );
           })()}
 
-          {previews.length === 0 && !scraping && (
+          {!hasJobs && (
             <div className="mt-6">
               <div className="font-mono text-[9.5px] uppercase tracking-widest text-nh-text-3 mb-2">recently added</div>
               <div className="flex flex-col">
@@ -279,6 +214,65 @@ export function AddModal({ open, onClose, recentAdds, embedded, onAdd }: {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function JobRow({ job, onDismiss, onRetry }: { job: ScrapeJob; onDismiss: () => void; onRetry: () => void }) {
+  if (job.status === "duplicate" && job.item) return <DuplicateRow item={job.item} />;
+  if (job.status === "ready" && job.item) return <PreviewRow item={job.item} via={job.via} onDismiss={onDismiss} />;
+  if (job.status === "error") return <ErrorRow job={job} onDismiss={onDismiss} onRetry={onRetry} />;
+  return <ScrapingRow job={job} onDismiss={onDismiss} />;
+}
+
+// Small subtle remove control shared by the result rows.
+function DismissButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      title="remove from list"
+      className="size-5 shrink-0 grid place-items-center rounded-md text-nh-text-3 hover:bg-nh-pill hover:text-[#ff6b6b] transition-colors"
+    >
+      <X className="size-3" strokeWidth={2.4} />
+    </button>
+  );
+}
+
+function ScrapingRow({ job, onDismiss }: { job: ScrapeJob; onDismiss: () => void }) {
+  const label = job.key.startsWith("#") ? job.key : job.input;
+  return (
+    <div className="flex items-center gap-2.5 p-2 rounded-lg bg-nh-surface-2 border border-nh-border border-dashed">
+      <div className="w-14 h-[74px] shrink-0 rounded-sm bg-nh-pill animate-pulse" />
+      <div className="flex-1 min-w-0 flex flex-col gap-1">
+        <div className="font-mono text-[9.5px] tracking-wider text-nh-text-3 truncate">{label}</div>
+        <div className="flex items-center gap-1.5 font-mono text-[11px] text-nh-text-2">
+          <span className="nh-dot-pulse" /> scraping…
+        </div>
+      </div>
+      <DismissButton onClick={onDismiss} />
+    </div>
+  );
+}
+
+function ErrorRow({ job, onDismiss, onRetry }: { job: ScrapeJob; onDismiss: () => void; onRetry: () => void }) {
+  const label = job.key.startsWith("#") ? job.key : job.input;
+  return (
+    <div
+      className="flex items-center gap-2.5 p-2 rounded-lg border"
+      style={{ background: "rgba(255,60,60,0.06)", borderColor: "rgba(255,60,60,0.22)" }}
+    >
+      <div className="flex-1 min-w-0 flex flex-col gap-1">
+        <div className="font-mono text-[9.5px] tracking-wider text-[#ff6b6b] truncate">{label}</div>
+        <div className="font-mono text-[10px] text-nh-text-3 truncate">{job.error ?? "scrape failed"}</div>
+      </div>
+      <button
+        onClick={onRetry}
+        title="retry scrape"
+        className="size-6 shrink-0 grid place-items-center rounded-md text-nh-text-2 hover:bg-nh-pill hover:text-nh-accent transition-colors"
+      >
+        <RotateCw className="size-3.5" strokeWidth={2.2} />
+      </button>
+      <DismissButton onClick={onDismiss} />
     </div>
   );
 }
@@ -309,7 +303,7 @@ function DuplicateRow({ item }: { item: Item }) {
   );
 }
 
-function PreviewRow({ item, via }: { item: Item; via?: ScrapeVia }) {
+function PreviewRow({ item, via, onDismiss }: { item: Item; via?: ScrapeJob["via"]; onDismiss: () => void }) {
   return (
     <div className="flex gap-2.5 p-2 rounded-lg bg-nh-surface-2 border border-nh-border">
       <div className="w-14 shrink-0">
@@ -349,8 +343,14 @@ function PreviewRow({ item, via }: { item: Item; via?: ScrapeVia }) {
           ))}
         </div>
       </div>
-      <div className="flex items-center px-1 text-nh-accent">
-        <Check className="size-4" strokeWidth={2.4} />
+      <div className="flex items-center">
+        <button
+          onClick={onDismiss}
+          title="remove from list"
+          className="size-9 shrink-0 grid place-items-center rounded-md text-nh-text-3 hover:bg-nh-pill hover:text-[#ff6b6b] transition-colors"
+        >
+          <X className="size-5" strokeWidth={2.4} />
+        </button>
       </div>
     </div>
   );

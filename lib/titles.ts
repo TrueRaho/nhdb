@@ -179,6 +179,8 @@ export type QueryParams = {
   pageMin?: number;
   pageMax?: number;
   read?: "read" | "unread";
+  /** Keep only titles with no alter name set (null or empty). */
+  noAlter?: boolean;
   sortField?: SortField;
   sortDir?: "asc" | "desc";
   /** Shuffle seed for sortField "random" — keeps pagination stable within one shuffle. */
@@ -212,6 +214,7 @@ function buildWhere(p: QueryParams): Prisma.TitleWhereInput {
   if (p.pageMax != null) and.push({ pages: { lte: p.pageMax } });
   if (p.read === "unread") and.push({ readCount: 0 });
   if (p.read === "read") and.push({ readCount: { gt: 0 } });
+  if (p.noAlter) and.push({ OR: [{ alterName: null }, { alterName: "" }] });
 
   if (p.search && p.search.trim()) {
     const q = p.search.trim();

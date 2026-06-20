@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Slider } from "@/components/ui/slider";
+import { ScrapeBadge } from "./ScrapeBadge";
 import {
   Sheet,
   SheetContent,
@@ -21,6 +22,7 @@ export type Filters = {
   tags: string[]; characters: string[]; parodies: string[]; artists: string[]; groups: string[];
   pageMin: number; pageMax: number;
   read: ReadFilter;
+  noAlter: boolean;
   sortField: SortField; sortDir: "asc" | "desc";
 };
 
@@ -67,13 +69,16 @@ export function GalleryHeader({ search, setSearch, onAdd, onStats, statsActive, 
             style={{ color: statsActive ? "var(--nh-accent)" : "var(--nh-text-2)" }}
           />
         </Button>
-        <Button
-          onClick={onAdd}
-          size="icon"
-          className="size-8 rounded-lg bg-nh-accent text-[#0a0a0a] hover:bg-nh-accent/90"
-        >
-          <Plus className="size-4" strokeWidth={2.2} />
-        </Button>
+        <div className="relative">
+          <Button
+            onClick={onAdd}
+            size="icon"
+            className="size-8 rounded-lg bg-nh-accent text-[#0a0a0a] hover:bg-nh-accent/90"
+          >
+            <Plus className="size-4" strokeWidth={2.2} />
+          </Button>
+          <ScrapeBadge />
+        </div>
       </div>
       <div className="flex items-center gap-2 px-3 pb-2">
         <div className="relative flex-1">
@@ -127,7 +132,7 @@ export function FilterSheet({ open, onClose, filters, setFilters, dataset, activ
 
   const sections = [
     { id: "sort", label: "sort", count: filters.sortField !== "added-at" || filters.sortDir !== "desc" ? 1 : 0 },
-    { id: "status", label: "status", count: filters.read !== "all" ? 1 : 0 },
+    { id: "status", label: "status", count: (filters.read !== "all" ? 1 : 0) + (filters.noAlter ? 1 : 0) },
     { id: "tags", label: "tags", count: filters.tags.length },
     { id: "characters", label: "chars", count: filters.characters.length },
     { id: "parodies", label: "parodies", count: filters.parodies.length },
@@ -163,7 +168,7 @@ export function FilterSheet({ open, onClose, filters, setFilters, dataset, activ
           <div className="flex-1" />
           <Button
             variant="ghost"
-            onClick={() => setFilters({ tags: [], characters: [], parodies: [], artists: [], groups: [], pageMin: dataset.pageMin, pageMax: dataset.pageMax, read: "all", sortField: "added-at", sortDir: "desc" })}
+            onClick={() => setFilters({ tags: [], characters: [], parodies: [], artists: [], groups: [], pageMin: dataset.pageMin, pageMax: dataset.pageMax, read: "all", noAlter: false, sortField: "added-at", sortDir: "desc" })}
             className="h-auto p-0 font-mono text-[10px] uppercase tracking-wider text-nh-text-3 hover:bg-transparent hover:text-nh-text-2"
           >
             clear all
@@ -378,6 +383,25 @@ function FilterStatus({ filters, setFilters }: { filters: Filters; setFilters: R
           );
         })}
       </div>
+
+      <div className="font-mono text-[9.5px] uppercase tracking-widest text-nh-text-3 mb-1.5 mt-3.5">alter name</div>
+      <Button
+        onClick={() => setFilters(f => ({ ...f, noAlter: !f.noAlter }))}
+        variant="ghost"
+        className="flex flex-col items-start gap-0.5 h-auto w-full px-2.5 py-2 rounded-lg border border-nh-border text-left whitespace-normal"
+        style={{
+          background: filters.noAlter ? "var(--nh-accent)" : "var(--nh-input)",
+          color: filters.noAlter ? "#0a0a0a" : "var(--nh-text-2)",
+        }}
+      >
+        <span className="font-display font-bold text-xs" style={{ letterSpacing: "-0.01em" }}>only without alter name</span>
+        <span
+          className="font-mono text-[9px]"
+          style={{ color: filters.noAlter ? "rgba(0,0,0,0.55)" : "var(--nh-text-3)", letterSpacing: "0.02em" }}
+        >
+          titles missing a manual alter name
+        </span>
+      </Button>
     </div>
   );
 }

@@ -16,6 +16,8 @@ const AddModal = dynamic(() => import("./AddModal").then((m) => ({ default: m.Ad
 const StatsView = dynamic(() => import("./Stats").then((m) => ({ default: m.StatsView })), { ssr: false });
 const NhdbDesktop = dynamic(() => import("./Desktop").then((m) => ({ default: m.NhdbDesktop })), { ssr: false });
 
+import { ScrapeJobsProvider } from "./ScrapeJobsProvider";
+
 // null until mounted: the server renders neither layout, so a phone never
 // downloads the desktop chunk and there is no hydration mismatch.
 function useViewport(): "mobile" | "desktop" | null {
@@ -68,6 +70,7 @@ export default function NhdbApp({
     pageMin: datasetPayload.pageMin,
     pageMax: datasetPayload.pageMax || 999,
     read: "all",
+    noAlter: false,
     sortField: "added-at", sortDir: "desc",
   }));
   const [filterOpen, setFilterOpen] = useState(false);
@@ -104,6 +107,7 @@ export default function NhdbApp({
       pageMin: currentFilters.pageMin,
       pageMax: currentFilters.pageMax,
       read: currentFilters.read === "all" ? undefined : currentFilters.read,
+      noAlter: currentFilters.noAlter || undefined,
       sortField: currentFilters.sortField,
       sortDir: currentFilters.sortDir,
       seed: currentFilters.sortField === "random" ? seedRef.current : undefined,
@@ -138,7 +142,8 @@ export default function NhdbApp({
     filters.tags.length + filters.characters.length +
     filters.parodies.length + filters.artists.length + filters.groups.length +
     ((filters.pageMin > dataset.pageMin || filters.pageMax < dataset.pageMax) ? 1 : 0) +
-    (filters.read !== "all" ? 1 : 0),
+    (filters.read !== "all" ? 1 : 0) +
+    (filters.noAlter ? 1 : 0),
   [filters, dataset.pageMin, dataset.pageMax]);
 
   const openFilters = (section: string) => {
@@ -226,6 +231,7 @@ export default function NhdbApp({
 
   if (viewport === "desktop") {
     return (
+      <ScrapeJobsProvider>
       <div className="min-h-screen bg-nh-bg">
         <NhdbDesktop
           items={items} total={total} totalEver={totalEver} dataset={dataset}
@@ -241,10 +247,12 @@ export default function NhdbApp({
           loading={loading} onLoadMore={onLoadMore}
         />
       </div>
+      </ScrapeJobsProvider>
     );
   }
 
   return (
+    <ScrapeJobsProvider>
     <div className="w-full min-h-screen flex flex-col bg-nh-bg text-nh-text-1 relative overflow-hidden">
       <div className="flex-1 relative">
         <GalleryHeader
@@ -313,5 +321,6 @@ export default function NhdbApp({
       />
       <AddModal open={addOpen} onClose={() => setAddOpen(false)} recentAdds={recentAdds} onAdd={onAddItems} />
     </div>
+    </ScrapeJobsProvider>
   );
 }
