@@ -18,6 +18,8 @@ export interface ScrapeJob {
   raw?: ScrapeResult;
   via?: ScrapeVia;
   error?: string;
+  /** Transient progress hint shown while retrying (e.g. waking a cold scraper). */
+  note?: string;
 }
 
 interface ScrapeJobsValue {
@@ -34,6 +36,15 @@ interface ScrapeJobsValue {
 
 const ScrapeJobsContext = createContext<ScrapeJobsValue | null>(null);
 const STORAGE_KEY = "nhdb.scrapeJobs.v1";
+
+// Render's free tier cold-starts (~90s), past Vercel's 60s function budget — so
+// the first proxied scrape after idle comes back as a transient 5xx. We can't
+// loop inside the function (it dies at 60s), so the client retries: each attempt
+// is a fresh sub-60s call, and a retry lands once Render is warm. A 4xx is a
+// definitive verdict about the input (bad / not found / auth) and never retries.
+const MAX_SCRAPE_ATTEMPTS = 8;
+const RETRY_DELAY_MS = 4_000;
+const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 function itemFromScraped(scraped: ScrapeResult): Item {
   const uploadedAt = Math.floor((Date.now() - new Date(scraped.uploaded_at).getTime()) / 86400000);
@@ -56,67 +67,118 @@ function itemFromScraped(scraped: ScrapeResult): Item {
 }
 
 export function ScrapeJobsProvider({ children }: { children: ReactNode }) {
-  const [jobs, setJobs] = useState<ScrapeJob[]>([]);
-  const hydrated = useRef(false);
-
-  // Hydrate once on the client. A scrape that was still in flight when the tab
-  // closed/reloaded can't be resumed (the fetch is gone), so mark it errored.
-  useEffect(() => {
+  // Read persisted jobs straight into initial state. This provider only ever
+  // mounts client-side (it's gated behind a viewport check that resolves in an
+  // effect), so it never takes part in SSR/hydration — reading localStorage in
+  // the lazy initializer is safe and avoids the cascading render an effect would
+  // cause. Jobs still "scraping" when the tab closed are kept as-is; the resume
+  // effect below re-drives them, so a reload (or a tab reopened mid-scrape)
+  // doesn't lose in-flight work.
+  const [jobs, setJobs] = useState<ScrapeJob[]>(() => {
+    if (typeof window === "undefined") return [];
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored) as ScrapeJob[];
-        setJobs(
-          parsed.map((j) =>
-            j.status === "scraping" ? { ...j, status: "error", error: "scrape interrupted — retry" } : j,
-          ),
-        );
-      }
-    } catch {}
-    hydrated.current = true;
-  }, []);
+      return stored ? (JSON.parse(stored) as ScrapeJob[]) : [];
+    } catch {
+      return [];
+    }
+  });
+  // Keys with a runOne loop currently in flight (including between retries).
+  // Guards against double-driving the same job from startScrape, retry, and the
+  // resume effect below.
+  const inFlight = useRef<Set<string>>(new Set());
 
-  // Persist after hydration so the initial empty state doesn't clobber storage.
+  // Mirror jobs back to storage. The first run rewrites the just-loaded value
+  // (a harmless no-op), so no hydration guard is needed.
   useEffect(() => {
-    if (!hydrated.current) return;
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(jobs));
     } catch {}
   }, [jobs]);
 
   const dismiss = useCallback((key: string) => {
+    inFlight.current.delete(key);
     setJobs((prev) => prev.filter((j) => j.key !== key));
   }, []);
 
-  // Run one scrape and fold the result back into the matching job. Returns
-  // nothing — failures land on the job as status "error", not as throws.
+  // Run one scrape and fold the result back into the matching job. Retries
+  // transient failures (cold scraper / network) on its own; a failure only lands
+  // on the job as status "error" once the attempt budget is spent or the verdict
+  // is definitive. Returns nothing — never throws.
   const runOne = useCallback((raw: string, placeholderKey: string) => {
+    if (inFlight.current.has(placeholderKey)) return;
+    inFlight.current.add(placeholderKey);
+
     void (async () => {
       try {
-        const res = await fetch("/api/scrape", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ input: raw, persist: false }),
-        });
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({ error: res.statusText }));
-          throw new Error(err.error ?? res.statusText);
+        for (let attempt = 1; attempt <= MAX_SCRAPE_ATTEMPTS; attempt++) {
+          // Dismissed mid-flight (dismiss() drops the key) — stop retrying.
+          if (!inFlight.current.has(placeholderKey)) return;
+
+          let res: Response | null = null;
+          try {
+            res = await fetch("/api/scrape", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ input: raw, persist: false }),
+            });
+          } catch {
+            // Network error — transient; fall through to the retry path below.
+          }
+
+          if (res?.ok) {
+            const { scraped, via } = (await res.json()) as { scraped: ScrapeResult; via?: ScrapeVia };
+            const realKey = `#${scraped.hashtag}`;
+            const item = itemFromScraped(scraped);
+            setJobs((prev) => {
+              // If the placeholder was dismissed mid-flight, drop the result.
+              if (!prev.some((j) => j.key === placeholderKey)) return prev;
+              const without = prev.filter((j) => j.key !== placeholderKey && j.key !== realKey);
+              return [...without, { key: realKey, input: raw, status: "ready", item, raw: scraped, via }];
+            });
+            return;
+          }
+
+          // 4xx = definitive verdict about the input (bad / not found / auth);
+          // anything else (5xx, network error) is transient — retry until spent.
+          let message = "scraper unreachable";
+          let definitive = false;
+          if (res) {
+            definitive = res.status >= 400 && res.status < 500;
+            const body = (await res.json().catch(() => null)) as { error?: string } | null;
+            message = body?.error ?? res.statusText;
+          }
+
+          if (definitive || attempt >= MAX_SCRAPE_ATTEMPTS) {
+            const finalMsg = definitive ? message : "scraper didn't respond — retry";
+            setJobs((prev) =>
+              prev.map((j) =>
+                j.key === placeholderKey ? { ...j, status: "error", error: finalMsg, note: undefined } : j,
+              ),
+            );
+            return;
+          }
+
+          // Transient — show a gentle progress hint and back off before retrying.
+          setJobs((prev) =>
+            prev.map((j) => (j.key === placeholderKey ? { ...j, note: `waking scraper… (try ${attempt + 1})` } : j)),
+          );
+          await delay(RETRY_DELAY_MS);
         }
-        const { scraped, via } = (await res.json()) as { scraped: ScrapeResult; via?: ScrapeVia };
-        const realKey = `#${scraped.hashtag}`;
-        const item = itemFromScraped(scraped);
-        setJobs((prev) => {
-          // If the placeholder was dismissed mid-flight, drop the result.
-          if (!prev.some((j) => j.key === placeholderKey)) return prev;
-          const without = prev.filter((j) => j.key !== placeholderKey && j.key !== realKey);
-          return [...without, { key: realKey, input: raw, status: "ready", item, raw: scraped, via }];
-        });
-      } catch (e) {
-        const message = e instanceof Error ? e.message : "scrape failed";
-        setJobs((prev) => prev.map((j) => (j.key === placeholderKey ? { ...j, status: "error", error: message } : j)));
+      } finally {
+        inFlight.current.delete(placeholderKey);
       }
     })();
   }, []);
+
+  // Resume any job left "scraping" that isn't already being driven — e.g. one
+  // loaded from storage after a reload, or a tab reopened mid-scrape. The
+  // inFlight guard makes this safe to run on every jobs change.
+  useEffect(() => {
+    for (const j of jobs) {
+      if (j.status === "scraping" && !inFlight.current.has(j.key)) runOne(j.input, j.key);
+    }
+  }, [jobs, runOne]);
 
   const startScrape = useCallback(
     async (rawInput: string) => {
@@ -178,7 +240,9 @@ export function ScrapeJobsProvider({ children }: { children: ReactNode }) {
     (key: string) => {
       const job = jobs.find((j) => j.key === key);
       if (!job) return;
-      setJobs((prev) => prev.map((j) => (j.key === key ? { ...j, status: "scraping", error: undefined } : j)));
+      setJobs((prev) =>
+        prev.map((j) => (j.key === key ? { ...j, status: "scraping", error: undefined, note: undefined } : j)),
+      );
       runOne(job.input, key);
     },
     [jobs, runOne],

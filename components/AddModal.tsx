@@ -246,7 +246,7 @@ function ScrapingRow({ job, onDismiss }: { job: ScrapeJob; onDismiss: () => void
       <div className="flex-1 min-w-0 flex flex-col gap-1">
         <div className="font-mono text-[9.5px] tracking-wider text-nh-text-3 truncate">{label}</div>
         <div className="flex items-center gap-1.5 font-mono text-[11px] text-nh-text-2">
-          <span className="nh-dot-pulse" /> scraping…
+          <span className="nh-dot-pulse" /> {job.note ?? "scraping…"}
         </div>
       </div>
       <DismissButton onClick={onDismiss} />
