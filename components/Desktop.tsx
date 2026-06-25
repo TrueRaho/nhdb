@@ -30,8 +30,8 @@ import { DetailModal } from "./DetailModal";
 import { AddModal } from "./AddModal";
 import { ScrapeBadge } from "./ScrapeBadge";
 import type { Item } from "../lib/data";
-import type { SortField } from "../lib/titles";
-import { READ_OPTIONS, type Filters, type Dataset } from "./HeaderFilter";
+import type { SortField, MatchMode } from "../lib/titles";
+import { READ_OPTIONS, SORT_FIELDS, MatchToggle, defaultFilters, type Filters, type Dataset, type MatchCategory } from "./HeaderFilter";
 
 export function NhdbDesktop({
   items, total, totalEver, dataset, activeFilterCount,
@@ -219,13 +219,10 @@ function DesktopSidebar({ filters, setFilters, dataset, activeFilterCount, match
     });
   };
 
-  const clearAll = () => setFilters({
-    tags: [], characters: [], parodies: [], artists: [], groups: [],
-    pageMin: dataset.pageMin, pageMax: dataset.pageMax,
-    read: "all",
-    noAlter: false,
-    sortField: "added-at", sortDir: "desc",
-  });
+  const setMode = (key: MatchCategory, m: MatchMode) =>
+    setFilters(f => ({ ...f, matchModes: { ...f.matchModes, [key]: m } }));
+
+  const clearAll = () => setFilters(defaultFilters(dataset.pageMin, dataset.pageMax));
 
   return (
     <div className="w-[280px] shrink-0 border-r border-nh-border overflow-auto pt-4 pb-16 bg-nh-surface">
@@ -287,23 +284,23 @@ function DesktopSidebar({ filters, setFilters, dataset, activeFilterCount, match
       </SidebarGroup>
 
       <SidebarGroup title={`tags · ${filters.tags.length}`} open={openSection.tags} onToggle={() => tog("tags")}>
-        <SidebarMulti options={dataset.allTags} counts={dataset.tagCounts} selected={filters.tags} onToggle={v => toggle("tags", v)} placeholder="search tags…" defaultLimit={10} />
+        <SidebarMulti options={dataset.allTags} counts={dataset.tagCounts} selected={filters.tags} onToggle={v => toggle("tags", v)} placeholder="search tags…" defaultLimit={10} mode={filters.matchModes.tags} onModeChange={m => setMode("tags", m)} />
       </SidebarGroup>
 
       <SidebarGroup title={`artists · ${filters.artists.length}`} open={openSection.artists} onToggle={() => tog("artists")}>
-        <SidebarMulti options={dataset.allArtists} counts={dataset.artistCounts} selected={filters.artists} onToggle={v => toggle("artists", v)} placeholder="search artists…" defaultLimit={8} />
+        <SidebarMulti options={dataset.allArtists} counts={dataset.artistCounts} selected={filters.artists} onToggle={v => toggle("artists", v)} placeholder="search artists…" defaultLimit={8} mode={filters.matchModes.artists} onModeChange={m => setMode("artists", m)} />
       </SidebarGroup>
 
       <SidebarGroup title={`groups · ${filters.groups.length}`} open={openSection.groups} onToggle={() => tog("groups")}>
-        <SidebarMulti options={dataset.allGroups} counts={dataset.groupCounts} selected={filters.groups} onToggle={v => toggle("groups", v)} placeholder="search groups…" defaultLimit={8} />
+        <SidebarMulti options={dataset.allGroups} counts={dataset.groupCounts} selected={filters.groups} onToggle={v => toggle("groups", v)} placeholder="search groups…" defaultLimit={8} mode={filters.matchModes.groups} onModeChange={m => setMode("groups", m)} />
       </SidebarGroup>
 
       <SidebarGroup title={`characters · ${filters.characters.length}`} open={openSection.characters} onToggle={() => tog("characters")}>
-        <SidebarMulti options={dataset.allCharacters} counts={dataset.charCounts} selected={filters.characters} onToggle={v => toggle("characters", v)} placeholder="search characters…" defaultLimit={8} />
+        <SidebarMulti options={dataset.allCharacters} counts={dataset.charCounts} selected={filters.characters} onToggle={v => toggle("characters", v)} placeholder="search characters…" defaultLimit={8} mode={filters.matchModes.characters} onModeChange={m => setMode("characters", m)} />
       </SidebarGroup>
 
       <SidebarGroup title={`parodies · ${filters.parodies.length}`} open={openSection.parodies} onToggle={() => tog("parodies")}>
-        <SidebarMulti options={dataset.allParodies} counts={dataset.parodyCounts} selected={filters.parodies} onToggle={v => toggle("parodies", v)} placeholder="search parodies…" defaultLimit={8} />
+        <SidebarMulti options={dataset.allParodies} counts={dataset.parodyCounts} selected={filters.parodies} onToggle={v => toggle("parodies", v)} placeholder="search parodies…" defaultLimit={8} mode={filters.matchModes.parodies} onModeChange={m => setMode("parodies", m)} />
       </SidebarGroup>
 
       <SidebarGroup title="pages" open={openSection.pages} onToggle={() => tog("pages")}>
@@ -363,9 +360,10 @@ function SidebarGroup({ title, open, onToggle, children }: { title: string; open
   );
 }
 
-function SidebarMulti({ options, counts, selected, onToggle, placeholder, defaultLimit }: {
+function SidebarMulti({ options, counts, selected, onToggle, placeholder, defaultLimit, mode, onModeChange }: {
   options: string[]; counts: Record<string, number>; selected: string[];
   onToggle: (v: string) => void; placeholder: string; defaultLimit: number;
+  mode?: MatchMode; onModeChange?: (m: MatchMode) => void;
 }) {
   const [search, setSearch] = useState("");
   const [showAll, setShowAll] = useState(false);
@@ -390,6 +388,12 @@ function SidebarMulti({ options, counts, selected, onToggle, placeholder, defaul
           className="h-7 rounded-md bg-nh-input border-nh-border pl-6 font-mono text-[11px] text-nh-text-1"
         />
       </div>
+      {mode && onModeChange && selected.length >= 2 && (
+        <div className="flex items-center gap-1.5">
+          <span className="font-mono text-[9px] uppercase tracking-wider text-nh-text-3">match</span>
+          <MatchToggle mode={mode} onChange={onModeChange} />
+        </div>
+      )}
       <div className="flex flex-col gap-px">
         {visible.map(o => {
           const sel = selected.includes(o);
@@ -430,17 +434,7 @@ function SidebarMulti({ options, counts, selected, onToggle, placeholder, defaul
 }
 
 function SortControl({ filters, setFilters }: { filters: Filters; setFilters: React.Dispatch<React.SetStateAction<Filters>> }) {
-  const fields: { id: SortField; label: string }[] = [
-    { id: "added-at", label: "date added" },
-    { id: "last-read-at", label: "last read" },
-    { id: "uploaded-at", label: "upload date" },
-    { id: "read-count", label: "read count" },
-    { id: "pages", label: "pages" },
-    { id: "tag-count", label: "tag count" },
-    { id: "title", label: "title (a→z)" },
-    { id: "hashtag", label: "hashtag" },
-    { id: "random", label: "random" },
-  ];
+  const fields = SORT_FIELDS;
   const isRandom = filters.sortField === "random";
   return (
     <div className="flex flex-col gap-2">

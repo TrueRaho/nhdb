@@ -105,7 +105,6 @@ export async function upsertScrapedTitle(s: ScrapeResult) {
     // scrape path never writes it, neither on create nor on re-scrape.
     const titleData = {
       titleName: s.title_name,
-      titleLink: s.title_link,
       imageLink: s.image_link,
       pages: s.pages,
       uploadedAt: new Date(s.uploaded_at),
@@ -169,6 +168,13 @@ export type SortField =
   | "added-at" | "last-read-at" | "uploaded-at" | "read-count" | "pages"
   | "hashtag" | "title" | "tag-count" | "random";
 
+// "and" = title must have every selected value in the category; "or" = any.
+export type MatchMode = "and" | "or";
+export type MatchModes = {
+  tags?: MatchMode; artists?: MatchMode; groups?: MatchMode;
+  characters?: MatchMode; parodies?: MatchMode;
+};
+
 export type QueryParams = {
   search?: string;
   tags?: string[];
@@ -176,6 +182,7 @@ export type QueryParams = {
   groups?: string[];
   characters?: string[];
   parodies?: string[];
+  matchModes?: MatchModes;
   pageMin?: number;
   pageMax?: number;
   read?: "read" | "unread";
@@ -193,23 +200,25 @@ function buildWhere(p: QueryParams): Prisma.TitleWhereInput {
   const where: Prisma.TitleWhereInput = {};
   const and: Prisma.TitleWhereInput[] = [];
 
-  if (p.tags && p.tags.length) {
-    for (const t of p.tags) {
-      and.push({ tags: { some: { tag: { tag_name: t } } } });
-    }
-  }
-  if (p.artists && p.artists.length) {
-    and.push({ artists: { some: { artist: { artist_name: { in: p.artists } } } } });
-  }
-  if (p.groups && p.groups.length) {
-    and.push({ groups: { some: { group: { group_name: { in: p.groups } } } } });
-  }
-  if (p.characters && p.characters.length) {
-    and.push({ characters: { some: { character: { character_name: { in: p.characters } } } } });
-  }
-  if (p.parodies && p.parodies.length) {
-    and.push({ parodies: { some: { parody: { parodie_name: { in: p.parodies } } } } });
-  }
+  // AND = title must have every selected value (one `some` per value);
+  // OR  = title matches any selected value (a single `some … in`).
+  const pushMulti = (
+    values: string[] | undefined,
+    mode: MatchMode,
+    clause: (name: string | Prisma.StringFilter) => Prisma.TitleWhereInput,
+  ) => {
+    if (!values?.length) return;
+    if (mode === "and") for (const v of values) and.push(clause(v));
+    else and.push(clause({ in: values }));
+  };
+
+  const m = p.matchModes ?? {};
+  pushMulti(p.tags, m.tags ?? "or", (n) => ({ tags: { some: { tag: { tag_name: n } } } }));
+  pushMulti(p.artists, m.artists ?? "or", (n) => ({ artists: { some: { artist: { artist_name: n } } } }));
+  pushMulti(p.groups, m.groups ?? "or", (n) => ({ groups: { some: { group: { group_name: n } } } }));
+  pushMulti(p.characters, m.characters ?? "or", (n) => ({ characters: { some: { character: { character_name: n } } } }));
+  pushMulti(p.parodies, m.parodies ?? "or", (n) => ({ parodies: { some: { parody: { parodie_name: n } } } }));
+
   if (p.pageMin != null && p.pageMin > 0) and.push({ pages: { gte: p.pageMin } });
   if (p.pageMax != null) and.push({ pages: { lte: p.pageMax } });
   if (p.read === "unread") and.push({ readCount: 0 });
@@ -427,7 +436,9 @@ export async function getDataset(): Promise<DatasetPayload> {
       counts[r.name] = Number(r.n);
       all.push(r.name);
     }
-    all.sort();
+    // Keep the SQL order (most-used first): the mobile filter list renders this
+    // order directly, so popular entries stay near the top. Desktop and Stats
+    // re-sort for their own needs, so they're unaffected.
     return { all, counts };
   };
 

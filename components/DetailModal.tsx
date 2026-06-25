@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { NhCover } from "./Primitives";
+import { daysAgoLabel } from "../lib/utils";
 import type { Item } from "../lib/data";
 import type { SimilarItem } from "../lib/titles";
 import { getSimilarAction, getTitleAction } from "../app/actions";
@@ -99,15 +100,6 @@ function DetailModalInner({ item, onClose, onTagClick, onDelete, onRead, onOpen,
       onAlterName(draft.trim());
     }
   };
-  const fmtDays = (d: number | null) => {
-    if (d == null) return "—";
-    if (d === 0) return "today";
-    if (d < 7) return `${d} days ago`;
-    if (d < 30) return `${Math.floor(d / 7)} weeks ago`;
-    if (d < 365) return `${Math.floor(d / 30)} months ago`;
-    return `${(d / 365).toFixed(1)} years ago`;
-  };
-
   const inner = (
     <div
       ref={innerRef}
@@ -196,9 +188,9 @@ function DetailModalInner({ item, onClose, onTagClick, onDelete, onRead, onOpen,
           className="grid grid-cols-3 gap-px mt-3.5 mx-4 rounded-lg overflow-hidden"
           style={{ background: "var(--nh-border)" }}
         >
-          <DateCell label="uploaded" days={item.uploadedAt} fmt={fmtDays} />
-          <DateCell label="added" days={item.addedAt} fmt={fmtDays} />
-          <DateCell label="last read" days={item.lastReadAt} fmt={fmtDays} />
+          <DateCell label="uploaded" days={item.uploadedAt} fmt={daysAgoLabel} />
+          <DateCell label="added" days={item.addedAt} fmt={daysAgoLabel} />
+          <DateCell label="last read" days={item.lastReadAt} fmt={daysAgoLabel} />
         </div>
 
         <div className="flex flex-col gap-3.5 p-4">

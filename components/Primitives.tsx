@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Image from "next/image";
 import type { Item } from "../lib/data";
 
@@ -24,6 +25,7 @@ const SIZE_PX = { sm: 140, card: 280, large: 360 } as const;
 
 export function NhCover({ item, size = "card" }: { item: Item; size?: "card" | "large" | "sm" }) {
   const hasImage = !!item.imageLink;
+  const [loaded, setLoaded] = useState(false);
   const [a, b] = paletteFor(item.hashtag);
   const rng = mulberry32(item.hashtag);
   rng(); rng();
@@ -66,7 +68,13 @@ export function NhCover({ item, size = "card" }: { item: Item; size?: "card" | "
           fill
           sizes={`${px}px`}
           loading="lazy"
-          className="object-cover object-top"
+          // The wrapper's procedural gradient is the placeholder; the cover fades
+          // in over it once decoded — no stored blur, generated on the fly from
+          // the hashtag. The ref covers cache hits (where onLoad may not fire) by
+          // reading `complete` synchronously when the element mounts.
+          onLoad={() => setLoaded(true)}
+          ref={(el) => { if (el?.complete) setLoaded(true); }}
+          className={`object-cover object-top transition-opacity duration-700 ease-out ${loaded ? "opacity-100" : "opacity-0"}`}
         />
       )}
 

@@ -5,7 +5,7 @@ import dynamic from "next/dynamic";
 import { ArrowUpDown } from "lucide-react";
 import type { Item } from "../lib/data";
 import { GalleryGrid } from "./Gallery";
-import { GalleryHeader, FilterSheet, type Filters, type Dataset } from "./HeaderFilter";
+import { GalleryHeader, FilterSheet, defaultFilters, type Filters, type Dataset } from "./HeaderFilter";
 import {
   deleteTitleAction, markReadAction, updateAlterNameAction, queryTitlesAction, commitScrapedAction,
 } from "../app/actions";
@@ -65,14 +65,8 @@ export default function NhdbApp({
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [filters, setFilters] = useState<Filters>(() => ({
-    tags: [], characters: [], parodies: [], artists: [], groups: [],
-    pageMin: datasetPayload.pageMin,
-    pageMax: datasetPayload.pageMax || 999,
-    read: "all",
-    noAlter: false,
-    sortField: "added-at", sortDir: "desc",
-  }));
+  const [filters, setFilters] = useState<Filters>(() =>
+    defaultFilters(datasetPayload.pageMin, datasetPayload.pageMax));
   const [filterOpen, setFilterOpen] = useState(false);
   const [filterSection, setFilterSection] = useState("sort");
   const [detailItem, setDetailItem] = useState<Item | null>(null);
@@ -104,6 +98,7 @@ export default function NhdbApp({
       groups: currentFilters.groups,
       characters: currentFilters.characters,
       parodies: currentFilters.parodies,
+      matchModes: currentFilters.matchModes,
       pageMin: currentFilters.pageMin,
       pageMax: currentFilters.pageMax,
       read: currentFilters.read === "all" ? undefined : currentFilters.read,

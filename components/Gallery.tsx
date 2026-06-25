@@ -4,6 +4,7 @@ import { memo } from "react";
 import { BookOpen, Eye } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { NhCover } from "./Primitives";
+import { daysAgoLabel } from "../lib/utils";
 import type { Item } from "../lib/data";
 
 type Density = "comfortable" | "compact";
@@ -14,9 +15,8 @@ const overlayBadgeClass =
 export const GalleryCard = memo(function GalleryCard({ item, onOpen, onTagClick, density }: {
   item: Item; onOpen: (i: Item) => void; onTagClick: (t: string) => void; density: Density;
 }) {
-  const lastReadStr = item.lastReadAt != null
-    ? (item.lastReadAt === 0 ? "today" : item.lastReadAt < 7 ? `${item.lastReadAt}d` : item.lastReadAt < 30 ? `${Math.floor(item.lastReadAt/7)}w` : `${Math.floor(item.lastReadAt/30)}mo`)
-    : null;
+  const showLastRead = item.lastReadAt != null;
+  const lastReadStr = showLastRead ? daysAgoLabel(item.lastReadAt, "short") : "";
   const showRead = item.readCount > 0;
   const isCompact = density === "compact";
   const tagsToShow = isCompact ? item.tags.slice(0, 3) : item.tags.slice(0, 4);
@@ -44,7 +44,7 @@ export const GalleryCard = memo(function GalleryCard({ item, onOpen, onTagClick,
             </Badge>
           )}
         </div>
-        {lastReadStr && (
+        {showLastRead && (
           <div
             className="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 rounded-sm font-mono text-[8.5px] uppercase tracking-wider text-white/70 backdrop-blur-[4px]"
             style={{ background: "rgba(0,0,0,0.6)" }}

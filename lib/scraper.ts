@@ -23,7 +23,6 @@ export interface ScrapeEntity {
 export interface ScrapeResult {
   hashtag: number;
   title_name: string;
-  title_link: string;
   image_link: string;
   pages: number;
   uploaded_at: string;
@@ -62,7 +61,7 @@ function parseCount(raw: string): number {
   return parseInt(raw.replace(/,/g, ""), 10) || 0;
 }
 
-function parseInfoDiv(html: string, hashtag: number, pageUrl: string): ScrapeResult {
+function parseInfoDiv(html: string, hashtag: number): ScrapeResult {
   const $ = cheerio.load(html);
   const info = $("#info");
 
@@ -102,7 +101,6 @@ function parseInfoDiv(html: string, hashtag: number, pageUrl: string): ScrapeRes
   return {
     hashtag,
     title_name,
-    title_link: pageUrl,
     image_link,
     pages,
     uploaded_at,
@@ -171,7 +169,7 @@ async function scrapeViaImpit(url: string, hashtag: number): Promise<ScrapeResul
     return null;
   }
 
-  return parseInfoDiv(html, hashtag, url);
+  return parseInfoDiv(html, hashtag);
 }
 
 // ---------------------------------------------------------------------------
@@ -303,7 +301,7 @@ async function scrapeViaBrowser(url: string, hashtag: number): Promise<ScrapeRes
     }
 
     const html = await page.content();
-    return parseInfoDiv(html, hashtag, url);
+    return parseInfoDiv(html, hashtag);
   } finally {
     await page.close().catch(() => {});
     scheduleIdleClose();

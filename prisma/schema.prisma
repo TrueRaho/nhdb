@@ -11,14 +11,12 @@ model Title {
   hashtag       Int       @id
   titleName     String    @db.VarChar(255) @map("title_name")
   alterName     String?   @db.VarChar(255) @map("alter_name")
-  titleLink     String    @db.VarChar(255) @map("title_link")
-  imageLink     String    @unique @db.VarChar(255) @map("image_link")
+  imageLink     String    @db.VarChar(255) @map("image_link")
   pages         Int
   uploadedAt    DateTime  @db.Date @map("uploaded_at")
   createdAt     DateTime  @default(now()) @map("created_at")
   readCount     Int       @default(0) @map("read_count")
   lastReadAt    DateTime? @map("last_read_at")
-  coverBlurHash String?   @map("cover_blur_hash")
 
   artists    TitleArtist[]
   groups     TitleGroup[]

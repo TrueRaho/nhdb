@@ -14,12 +14,17 @@ import {
   SheetTitle,
   SheetDescription,
 } from "@/components/ui/sheet";
-import type { SortField } from "../lib/titles";
+import type { SortField, MatchMode } from "../lib/titles";
 
 export type ReadFilter = "all" | "unread" | "read";
 
+// Which multi-select categories support an AND/OR match toggle, in render order.
+export const MATCH_CATEGORIES = ["tags", "artists", "groups", "characters", "parodies"] as const;
+export type MatchCategory = (typeof MATCH_CATEGORIES)[number];
+
 export type Filters = {
   tags: string[]; characters: string[]; parodies: string[]; artists: string[]; groups: string[];
+  matchModes: Record<MatchCategory, MatchMode>;
   pageMin: number; pageMax: number;
   read: ReadFilter;
   noAlter: boolean;
@@ -32,6 +37,65 @@ export type Dataset = {
   parodyCounts: Record<string, number>; artistCounts: Record<string, number>; groupCounts: Record<string, number>;
   pageMin: number; pageMax: number; matchingCount?: number;
 };
+
+// The initial / "cleared" filter state. Single source of truth so the initial
+// render and every "clear all" stay in sync (page bounds default to the dataset
+// span; `|| 999` keeps the upper bound sane when the library is empty).
+export function defaultFilters(pageMin: number, pageMax: number): Filters {
+  return {
+    tags: [], characters: [], parodies: [], artists: [], groups: [],
+    // Every category defaults to "any" (OR) — selecting more values widens the
+    // results; flip a category to "all" (AND) to require every selected value.
+    matchModes: { tags: "or", artists: "or", groups: "or", characters: "or", parodies: "or" },
+    pageMin,
+    pageMax: pageMax || 999,
+    read: "all",
+    noAlter: false,
+    sortField: "added-at", sortDir: "desc",
+  };
+}
+
+// Compact "all (AND) / any (OR)" segmented control for a multi-select category.
+// Shown only when 2+ values are selected, since the mode is a no-op below that.
+export function MatchToggle({ mode, onChange }: { mode: MatchMode; onChange: (m: MatchMode) => void }) {
+  return (
+    <div className="inline-flex rounded-sm border border-nh-border bg-nh-input p-[2px]">
+      {([
+        { id: "and" as const, label: "all" },
+        { id: "or" as const, label: "any" },
+      ]).map(o => {
+        const sel = mode === o.id;
+        return (
+          <button
+            key={o.id}
+            onClick={() => onChange(o.id)}
+            className="px-1.5 py-[1px] rounded-[2px] font-mono text-[9px] font-semibold uppercase tracking-wider"
+            style={{
+              background: sel ? "var(--nh-accent)" : "transparent",
+              color: sel ? "#0a0a0a" : "var(--nh-text-3)",
+            }}
+          >
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// Canonical sort fields (order + label + icon). Shared by the mobile sort sheet
+// and the desktop sidebar so a new SortField is declared in exactly one place.
+export const SORT_FIELDS: { id: SortField; label: string; icon: typeof Clock }[] = [
+  { id: "added-at", label: "date added", icon: Clock },
+  { id: "last-read-at", label: "last read date", icon: Eye },
+  { id: "uploaded-at", label: "upload date", icon: Clock },
+  { id: "read-count", label: "read count", icon: Eye },
+  { id: "pages", label: "page count", icon: BookOpen },
+  { id: "tag-count", label: "tag count", icon: SlidersHorizontal },
+  { id: "title", label: "title (a→z)", icon: ArrowUpDown },
+  { id: "hashtag", label: "hashtag id", icon: ArrowUpDown },
+  { id: "random", label: "random", icon: Shuffle },
+];
 
 export function GalleryHeader({ search, setSearch, onAdd, onStats, statsActive, onOpenFilters, onOpenSort, activeFilterCount, sortLabel }: {
   search: string; setSearch: (s: string) => void;
@@ -148,6 +212,9 @@ export function FilterSheet({ open, onClose, filters, setFilters, dataset, activ
     });
   };
 
+  const setMode = (key: MatchCategory, m: MatchMode) =>
+    setFilters(f => ({ ...f, matchModes: { ...f.matchModes, [key]: m } }));
+
   const totalActive = filters.tags.length + filters.characters.length + filters.parodies.length + filters.artists.length + filters.groups.length;
 
   return (
@@ -168,7 +235,7 @@ export function FilterSheet({ open, onClose, filters, setFilters, dataset, activ
           <div className="flex-1" />
           <Button
             variant="ghost"
-            onClick={() => setFilters({ tags: [], characters: [], parodies: [], artists: [], groups: [], pageMin: dataset.pageMin, pageMax: dataset.pageMax, read: "all", noAlter: false, sortField: "added-at", sortDir: "desc" })}
+            onClick={() => setFilters(defaultFilters(dataset.pageMin, dataset.pageMax))}
             className="h-auto p-0 font-mono text-[10px] uppercase tracking-wider text-nh-text-3 hover:bg-transparent hover:text-nh-text-2"
           >
             clear all
@@ -220,23 +287,28 @@ export function FilterSheet({ open, onClose, filters, setFilters, dataset, activ
           {activeSection === "tags" && (
             <FilterMulti search={tagSearch} setSearch={setTagSearch} placeholder="search tags…"
               options={dataset.allTags} selected={filters.tags}
-              onToggle={(v) => toggle("tags", v)} counts={dataset.tagCounts} />
+              onToggle={(v) => toggle("tags", v)} counts={dataset.tagCounts}
+              mode={filters.matchModes.tags} onModeChange={(m) => setMode("tags", m)} />
           )}
           {activeSection === "characters" && (
             <FilterMulti options={dataset.allCharacters} selected={filters.characters}
-              onToggle={(v) => toggle("characters", v)} counts={dataset.charCounts} placeholder="search characters…" />
+              onToggle={(v) => toggle("characters", v)} counts={dataset.charCounts} placeholder="search characters…"
+              mode={filters.matchModes.characters} onModeChange={(m) => setMode("characters", m)} />
           )}
           {activeSection === "parodies" && (
             <FilterMulti options={dataset.allParodies} selected={filters.parodies}
-              onToggle={(v) => toggle("parodies", v)} counts={dataset.parodyCounts} placeholder="search parodies…" />
+              onToggle={(v) => toggle("parodies", v)} counts={dataset.parodyCounts} placeholder="search parodies…"
+              mode={filters.matchModes.parodies} onModeChange={(m) => setMode("parodies", m)} />
           )}
           {activeSection === "artists" && (
             <FilterMulti options={dataset.allArtists} selected={filters.artists}
-              onToggle={(v) => toggle("artists", v)} counts={dataset.artistCounts} placeholder="search artists…" />
+              onToggle={(v) => toggle("artists", v)} counts={dataset.artistCounts} placeholder="search artists…"
+              mode={filters.matchModes.artists} onModeChange={(m) => setMode("artists", m)} />
           )}
           {activeSection === "groups" && (
             <FilterMulti options={dataset.allGroups} selected={filters.groups}
-              onToggle={(v) => toggle("groups", v)} counts={dataset.groupCounts} placeholder="search groups…" />
+              onToggle={(v) => toggle("groups", v)} counts={dataset.groupCounts} placeholder="search groups…"
+              mode={filters.matchModes.groups} onModeChange={(m) => setMode("groups", m)} />
           )}
           {activeSection === "pages" && <FilterPageRange filters={filters} setFilters={setFilters} min={dataset.pageMin} max={dataset.pageMax} />}
           {activeSection === "status" && <FilterStatus filters={filters} setFilters={setFilters} />}
@@ -256,9 +328,10 @@ export function FilterSheet({ open, onClose, filters, setFilters, dataset, activ
   );
 }
 
-function FilterMulti({ options, selected, onToggle, counts, placeholder, search: searchProp, setSearch: setSearchProp }: {
+function FilterMulti({ options, selected, onToggle, counts, placeholder, mode, onModeChange, search: searchProp, setSearch: setSearchProp }: {
   options: string[]; selected: string[]; onToggle: (v: string) => void;
   counts: Record<string, number>; placeholder: string;
+  mode?: MatchMode; onModeChange?: (m: MatchMode) => void;
   search?: string; setSearch?: (s: string) => void;
 }) {
   const [searchLocal, setSearchLocal] = useState("");
@@ -279,6 +352,15 @@ function FilterMulti({ options, selected, onToggle, counts, placeholder, search:
           className="h-8 rounded-md bg-nh-input border-nh-border pl-7 font-mono text-[11px] text-nh-text-1"
         />
       </div>
+      {mode && onModeChange && selected.length >= 2 && (
+        <div className="flex items-center gap-1.5">
+          <span className="font-mono text-[9.5px] uppercase tracking-widest text-nh-text-3">match</span>
+          <MatchToggle mode={mode} onChange={onModeChange} />
+          <span className="font-mono text-[9px] text-nh-text-3">
+            {mode === "and" ? "has all selected" : "has any selected"}
+          </span>
+        </div>
+      )}
       {selected.length > 0 && (
         <div className="flex flex-wrap gap-1">
           {selected.map(s => (
@@ -407,17 +489,7 @@ function FilterStatus({ filters, setFilters }: { filters: Filters; setFilters: R
 }
 
 function FilterSort({ filters, setFilters }: { filters: Filters; setFilters: React.Dispatch<React.SetStateAction<Filters>> }) {
-  const fields: { id: SortField; label: string; icon: typeof Clock }[] = [
-    { id: "added-at", label: "date added", icon: Clock },
-    { id: "last-read-at", label: "last read date", icon: Eye },
-    { id: "uploaded-at", label: "upload date", icon: Clock },
-    { id: "read-count", label: "read count", icon: Eye },
-    { id: "pages", label: "page count", icon: BookOpen },
-    { id: "tag-count", label: "tag count", icon: SlidersHorizontal },
-    { id: "title", label: "title (a→z)", icon: ArrowUpDown },
-    { id: "hashtag", label: "hashtag id", icon: ArrowUpDown },
-    { id: "random", label: "random", icon: Shuffle },
-  ];
+  const fields = SORT_FIELDS;
   const isRandom = filters.sortField === "random";
   return (
     <div className="flex flex-col gap-3.5 py-1">
