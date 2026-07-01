@@ -166,7 +166,7 @@ export type TitleWithRelations = Prisma.TitleGetPayload<{ include: typeof titleI
 
 export type SortField =
   | "added-at" | "last-read-at" | "uploaded-at" | "read-count" | "pages"
-  | "hashtag" | "title" | "tag-count" | "random";
+  | "hashtag" | "title" | "tag-count" | "avg-tag-value" | "random";
 
 // "and" = title must have every selected value in the category; "or" = any.
 export type MatchMode = "and" | "or";
@@ -252,6 +252,10 @@ function buildOrderBy(field: SortField, dir: "asc" | "desc"): Prisma.TitleOrderB
     case "hashtag": return [{ hashtag: dir }];
     case "title": return [{ titleName: dir }];
     case "tag-count": return [{ tags: { _count: dir } }];
+    // avg_tag_value is denormalized on titles and kept current by DB triggers,
+    // so this is a plain indexed sort. hashtag breaks the many ties for stable
+    // pagination. Nulls (tag-less titles) sink to the bottom.
+    case "avg-tag-value": return [{ avgTagValue: { sort: dir, nulls: "last" } }, { hashtag: "desc" }];
     default: return [{ createdAt: "desc" }];
   }
 }
@@ -347,6 +351,10 @@ export async function deleteTitle(hashtag: number) {
   const parodyIds = title.parodies.map(r => r.id_parodie);
   const tagIds = title.tags.map(r => r.id_tag);
 
+  // Delete the tag links explicitly (not via the title's FK cascade) so the
+  // titlestotags AFTER DELETE trigger fires on a real statement and refreshes
+  // tag title_count / title avg_tag_value for the affected set.
+  await prisma.titleTag.deleteMany({ where: { hashtag } });
   await prisma.title.delete({ where: { hashtag } });
 
   await Promise.all([

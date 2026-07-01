@@ -31,7 +31,7 @@ import { AddModal } from "./AddModal";
 import { ScrapeBadge } from "./ScrapeBadge";
 import type { Item } from "../lib/data";
 import type { SortField, MatchMode } from "../lib/titles";
-import { READ_OPTIONS, SORT_FIELDS, MatchToggle, defaultFilters, type Filters, type Dataset, type MatchCategory } from "./HeaderFilter";
+import { READ_OPTIONS, SORT_FIELDS, MatchToggle, OptionSortToggle, sortOptions, defaultFilters, type Filters, type Dataset, type MatchCategory, type OptionSort } from "./HeaderFilter";
 
 export function NhdbDesktop({
   items, total, totalEver, dataset, activeFilterCount,
@@ -367,9 +367,10 @@ function SidebarMulti({ options, counts, selected, onToggle, placeholder, defaul
 }) {
   const [search, setSearch] = useState("");
   const [showAll, setShowAll] = useState(false);
+  const [optSort, setOptSort] = useState<OptionSort>("count-desc");
   const sorted = useMemo(
-    () => [...options].sort((a, b) => (counts[b] || 0) - (counts[a] || 0)),
-    [options, counts]
+    () => sortOptions(options, counts, optSort),
+    [options, counts, optSort]
   );
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
@@ -387,6 +388,10 @@ function SidebarMulti({ options, counts, selected, onToggle, placeholder, defaul
           placeholder={placeholder}
           className="h-7 rounded-md bg-nh-input border-nh-border pl-6 font-mono text-[11px] text-nh-text-1"
         />
+      </div>
+      <div className="flex items-center gap-1.5">
+        <span className="font-mono text-[9px] uppercase tracking-wider text-nh-text-3">sort</span>
+        <OptionSortToggle value={optSort} onChange={setOptSort} />
       </div>
       {mode && onModeChange && selected.length >= 2 && (
         <div className="flex items-center gap-1.5">

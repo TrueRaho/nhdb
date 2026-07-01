@@ -17,6 +17,10 @@ model Title {
   createdAt     DateTime  @default(now()) @map("created_at")
   readCount     Int       @default(0) @map("read_count")
   lastReadAt    DateTime? @map("last_read_at")
+  // Mean global frequency of this title's tags (a tag's "value" = how many
+  // titles carry it). Maintained by DB triggers on titlestotags — see
+  // migration 3_avg_tag_value. Null when the title has no tags.
+  avgTagValue   Float?    @map("avg_tag_value")
 
   artists    TitleArtist[]
   groups     TitleGroup[]
@@ -30,6 +34,7 @@ model Title {
   @@index([readCount(sort: Desc)])
   @@index([uploadedAt(sort: Desc)])
   @@index([pages])
+  @@index([avgTagValue])
   @@map("titles")
 }
 
@@ -82,6 +87,9 @@ model Tag {
   tag_name   String     @unique @db.VarChar(255)
   tag_link   String     @unique @db.VarChar(255)
   total_works Int?
+  // Number of titles carrying this tag (this tag's "value"). Maintained by DB
+  // triggers on titlestotags — see migration 3_avg_tag_value.
+  title_count Int        @default(0)
 
   titles TitleTag[]
 

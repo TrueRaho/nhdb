@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { BarChart3, Plus, Search, SlidersHorizontal, X, Clock, Eye, BookOpen, Shuffle, ArrowUpDown } from "lucide-react";
+import { BarChart3, Plus, Search, SlidersHorizontal, X, Clock, Eye, BookOpen, Shuffle, ArrowUpDown, Gauge } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -55,6 +55,47 @@ export function defaultFilters(pageMin: number, pageMax: number): Filters {
   };
 }
 
+// How a multi-select option list (tags, artists, …) is ordered. "count-desc"
+// surfaces the most-used entries first (the default), "count-asc" the rarest.
+export type OptionSort = "count-desc" | "count-asc";
+
+const OPTION_SORTS: { id: OptionSort; label: string }[] = [
+  { id: "count-desc", label: "most" },
+  { id: "count-asc", label: "least" },
+];
+
+// Order an option list by the chosen mode. Ties break alphabetically so the
+// output is stable regardless of the incoming order.
+export function sortOptions(options: string[], counts: Record<string, number>, sort: OptionSort): string[] {
+  const arr = [...options];
+  if (sort === "count-asc") return arr.sort((a, b) => (counts[a] || 0) - (counts[b] || 0) || a.localeCompare(b));
+  return arr.sort((a, b) => (counts[b] || 0) - (counts[a] || 0) || a.localeCompare(b));
+}
+
+// Compact segmented control for picking an OptionSort.
+export function OptionSortToggle({ value, onChange }: { value: OptionSort; onChange: (s: OptionSort) => void }) {
+  return (
+    <div className="inline-flex rounded-sm border border-nh-border bg-nh-input p-[2px]">
+      {OPTION_SORTS.map(o => {
+        const sel = value === o.id;
+        return (
+          <button
+            key={o.id}
+            onClick={() => onChange(o.id)}
+            className="px-1.5 py-[1px] rounded-[2px] font-mono text-[9px] font-semibold uppercase tracking-wider"
+            style={{
+              background: sel ? "var(--nh-accent)" : "transparent",
+              color: sel ? "#0a0a0a" : "var(--nh-text-3)",
+            }}
+          >
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 // Compact "all (AND) / any (OR)" segmented control for a multi-select category.
 // Shown only when 2+ values are selected, since the mode is a no-op below that.
 export function MatchToggle({ mode, onChange }: { mode: MatchMode; onChange: (m: MatchMode) => void }) {
@@ -92,16 +133,16 @@ export const SORT_FIELDS: { id: SortField; label: string; icon: typeof Clock }[]
   { id: "read-count", label: "read count", icon: Eye },
   { id: "pages", label: "page count", icon: BookOpen },
   { id: "tag-count", label: "tag count", icon: SlidersHorizontal },
+  { id: "avg-tag-value", label: "avg tag value", icon: Gauge },
   { id: "title", label: "title (a→z)", icon: ArrowUpDown },
   { id: "hashtag", label: "hashtag id", icon: ArrowUpDown },
   { id: "random", label: "random", icon: Shuffle },
 ];
 
-export function GalleryHeader({ search, setSearch, onAdd, onStats, statsActive, onOpenFilters, onOpenSort, activeFilterCount, sortLabel }: {
+export function GalleryHeader({ search, setSearch, onAdd, onStats, statsActive, onOpenSettings, activeFilterCount }: {
   search: string; setSearch: (s: string) => void;
   onAdd: () => void; onStats: () => void; statsActive: boolean;
-  onOpenFilters: () => void; onOpenSort: () => void; activeFilterCount: number;
-  sortLabel: string;
+  onOpenSettings: () => void; activeFilterCount: number;
 }) {
   return (
     <div
@@ -164,22 +205,21 @@ export function GalleryHeader({ search, setSearch, onAdd, onStats, statsActive, 
           )}
         </div>
         <Button
-          onClick={onOpenSort}
-          variant="secondary"
-          className="h-8 rounded-lg border border-nh-border bg-nh-input px-2.5 gap-1.5 font-mono text-[11px] tracking-wide hover:bg-nh-input/80 max-w-[110px]"
-          style={{ color: "var(--nh-text-2)" }}
-        >
-          <ArrowUpDown className="size-3.5 shrink-0" />
-          <span className="truncate">{sortLabel}</span>
-        </Button>
-        <Button
-          onClick={onOpenFilters}
+          onClick={onOpenSettings}
           variant="secondary"
           className="h-8 rounded-lg border border-nh-border bg-nh-input px-2.5 gap-1.5 font-mono text-[11px] tracking-wide hover:bg-nh-input/80"
           style={activeFilterCount > 0 ? { background: "var(--nh-accent-soft)", color: "var(--nh-accent)" } : { color: "var(--nh-text-2)" }}
         >
           <SlidersHorizontal className="size-3.5" />
-          {activeFilterCount > 0 ? activeFilterCount : "filter"}
+          settings
+          {activeFilterCount > 0 && (
+            <span
+              className="min-w-4 rounded-sm px-1 text-center text-[9px] font-semibold"
+              style={{ background: "var(--nh-accent)", color: "#0a0a0a" }}
+            >
+              {activeFilterCount}
+            </span>
+          )}
         </Button>
       </div>
     </div>
@@ -335,12 +375,14 @@ function FilterMulti({ options, selected, onToggle, counts, placeholder, mode, o
   search?: string; setSearch?: (s: string) => void;
 }) {
   const [searchLocal, setSearchLocal] = useState("");
+  const [optSort, setOptSort] = useState<OptionSort>("count-desc");
   const search = searchProp !== undefined ? searchProp : searchLocal;
   const setSearch = setSearchProp || setSearchLocal;
   const filtered = useMemo(() => {
+    const ordered = sortOptions(options, counts, optSort);
     const q = search.toLowerCase();
-    return q ? options.filter(o => o.toLowerCase().includes(q)) : options;
-  }, [options, search]);
+    return q ? ordered.filter(o => o.toLowerCase().includes(q)) : ordered;
+  }, [options, counts, search, optSort]);
   return (
     <div className="flex flex-col gap-2.5">
       <div className="relative">
@@ -351,6 +393,10 @@ function FilterMulti({ options, selected, onToggle, counts, placeholder, mode, o
           placeholder={placeholder}
           className="h-8 rounded-md bg-nh-input border-nh-border pl-7 font-mono text-[11px] text-nh-text-1"
         />
+      </div>
+      <div className="flex items-center gap-1.5">
+        <span className="font-mono text-[9.5px] uppercase tracking-widest text-nh-text-3">sort</span>
+        <OptionSortToggle value={optSort} onChange={setOptSort} />
       </div>
       {mode && onModeChange && selected.length >= 2 && (
         <div className="flex items-center gap-1.5">

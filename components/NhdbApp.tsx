@@ -255,10 +255,8 @@ export default function NhdbApp({
           onAdd={() => setAddOpen(true)}
           onStats={() => setView(v => v === "stats" ? "gallery" : "stats")}
           statsActive={view === "stats"}
-          onOpenFilters={() => openFilters("tags")}
-          onOpenSort={() => openFilters("sort")}
+          onOpenSettings={() => setFilterOpen(true)}
           activeFilterCount={activeFilterCount}
-          sortLabel={filters.sortField.replace(/-/g, " ")}
         />
         <div className="flex items-center gap-1.5 px-3 pt-2.5 pb-2">
           <div className="font-mono text-[10px] uppercase tracking-wider text-nh-text-3">
