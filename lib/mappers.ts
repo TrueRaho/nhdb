@@ -18,10 +18,10 @@ export function dbTitleToItem(title: DbTitle): Item {
     addedAt: daysAgo(title.createdAt),
     readCount: title.readCount,
     lastReadAt: title.lastReadAt != null ? daysAgo(title.lastReadAt) : null,
-    tags: title.tags.map((r) => r.tag.tag_name),
-    artists: title.artists.map((r) => r.artist.artist_name),
-    groups: title.groups.map((r) => r.group.group_name),
-    parodies: title.parodies.map((r) => r.parody.parodie_name),
-    characters: title.characters.map((r) => r.character.character_name),
+    tags: title.tags.map((r) => r.tag.tagName),
+    artists: title.artists.map((r) => r.artist.artistName),
+    groups: title.groups.map((r) => r.group.groupName),
+    parodies: title.parodies.map((r) => r.parody.parodieName),
+    characters: title.characters.map((r) => r.character.characterName),
   };
 }

@@ -20,14 +20,14 @@ const batchUpsertArtists = (items: ScrapeEntity[]) =>
   batchUpsertEntities(
     items,
     (es) => prisma.artist.createMany({
-      data: es.map((e) => ({ artist_name: e.name, artist_link: e.link, total_works: e.total_works })),
+      data: es.map((e) => ({ artistName: e.name, artistLink: e.link, totalWorks: e.total_works })),
       skipDuplicates: true,
     }),
     async (names) => new Map(
       (await prisma.artist.findMany({
-        where: { artist_name: { in: names } },
-        select: { id_artist: true, artist_name: true },
-      })).map((r) => [r.artist_name, r.id_artist])
+        where: { artistName: { in: names } },
+        select: { idArtist: true, artistName: true },
+      })).map((r) => [r.artistName, r.idArtist])
     ),
   );
 
@@ -35,14 +35,14 @@ const batchUpsertGroups = (items: ScrapeEntity[]) =>
   batchUpsertEntities(
     items,
     (es) => prisma.group.createMany({
-      data: es.map((e) => ({ group_name: e.name, group_link: e.link, total_works: e.total_works })),
+      data: es.map((e) => ({ groupName: e.name, groupLink: e.link, totalWorks: e.total_works })),
       skipDuplicates: true,
     }),
     async (names) => new Map(
       (await prisma.group.findMany({
-        where: { group_name: { in: names } },
-        select: { id_group: true, group_name: true },
-      })).map((r) => [r.group_name, r.id_group])
+        where: { groupName: { in: names } },
+        select: { idGroup: true, groupName: true },
+      })).map((r) => [r.groupName, r.idGroup])
     ),
   );
 
@@ -50,14 +50,14 @@ const batchUpsertCharacters = (items: ScrapeEntity[]) =>
   batchUpsertEntities(
     items,
     (es) => prisma.character.createMany({
-      data: es.map((e) => ({ character_name: e.name, character_link: e.link, total_works: e.total_works })),
+      data: es.map((e) => ({ characterName: e.name, characterLink: e.link, totalWorks: e.total_works })),
       skipDuplicates: true,
     }),
     async (names) => new Map(
       (await prisma.character.findMany({
-        where: { character_name: { in: names } },
-        select: { id_character: true, character_name: true },
-      })).map((r) => [r.character_name, r.id_character])
+        where: { characterName: { in: names } },
+        select: { idCharacter: true, characterName: true },
+      })).map((r) => [r.characterName, r.idCharacter])
     ),
   );
 
@@ -65,14 +65,14 @@ const batchUpsertParodies = (items: ScrapeEntity[]) =>
   batchUpsertEntities(
     items,
     (es) => prisma.parody.createMany({
-      data: es.map((e) => ({ parodie_name: e.name, parodie_link: e.link, total_works: e.total_works })),
+      data: es.map((e) => ({ parodieName: e.name, parodieLink: e.link, totalWorks: e.total_works })),
       skipDuplicates: true,
     }),
     async (names) => new Map(
       (await prisma.parody.findMany({
-        where: { parodie_name: { in: names } },
-        select: { id_parodie: true, parodie_name: true },
-      })).map((r) => [r.parodie_name, r.id_parodie])
+        where: { parodieName: { in: names } },
+        select: { idParodie: true, parodieName: true },
+      })).map((r) => [r.parodieName, r.idParodie])
     ),
   );
 
@@ -80,14 +80,14 @@ const batchUpsertTags = (items: ScrapeEntity[]) =>
   batchUpsertEntities(
     items,
     (es) => prisma.tag.createMany({
-      data: es.map((e) => ({ tag_name: e.name, tag_link: e.link, total_works: e.total_works })),
+      data: es.map((e) => ({ tagName: e.name, tagLink: e.link, totalWorks: e.total_works })),
       skipDuplicates: true,
     }),
     async (names) => new Map(
       (await prisma.tag.findMany({
-        where: { tag_name: { in: names } },
-        select: { id_tag: true, tag_name: true },
-      })).map((r) => [r.tag_name, r.id_tag])
+        where: { tagName: { in: names } },
+        select: { idTag: true, tagName: true },
+      })).map((r) => [r.tagName, r.idTag])
     ),
   );
 
@@ -127,23 +127,23 @@ export async function upsertScrapedTitle(s: ScrapeResult) {
     await Promise.all([
       artistIds.length &&
         tx.titleArtist.createMany({
-          data: artistIds.map((id_artist) => ({ hashtag: s.hashtag, id_artist })),
+          data: artistIds.map((idArtist) => ({ hashtag: s.hashtag, idArtist })),
         }),
       groupIds.length &&
         tx.titleGroup.createMany({
-          data: groupIds.map((id_group) => ({ hashtag: s.hashtag, id_group })),
+          data: groupIds.map((idGroup) => ({ hashtag: s.hashtag, idGroup })),
         }),
       characterIds.length &&
         tx.titleCharacter.createMany({
-          data: characterIds.map((id_character) => ({ hashtag: s.hashtag, id_character })),
+          data: characterIds.map((idCharacter) => ({ hashtag: s.hashtag, idCharacter })),
         }),
       parodyIds.length &&
         tx.titleParody.createMany({
-          data: parodyIds.map((id_parodie) => ({ hashtag: s.hashtag, id_parodie })),
+          data: parodyIds.map((idParodie) => ({ hashtag: s.hashtag, idParodie })),
         }),
       tagIds.length &&
         tx.titleTag.createMany({
-          data: tagIds.map((id_tag) => ({ hashtag: s.hashtag, id_tag })),
+          data: tagIds.map((idTag) => ({ hashtag: s.hashtag, idTag })),
         }),
     ]);
 
@@ -213,11 +213,11 @@ function buildWhere(p: QueryParams): Prisma.TitleWhereInput {
   };
 
   const m = p.matchModes ?? {};
-  pushMulti(p.tags, m.tags ?? "or", (n) => ({ tags: { some: { tag: { tag_name: n } } } }));
-  pushMulti(p.artists, m.artists ?? "or", (n) => ({ artists: { some: { artist: { artist_name: n } } } }));
-  pushMulti(p.groups, m.groups ?? "or", (n) => ({ groups: { some: { group: { group_name: n } } } }));
-  pushMulti(p.characters, m.characters ?? "or", (n) => ({ characters: { some: { character: { character_name: n } } } }));
-  pushMulti(p.parodies, m.parodies ?? "or", (n) => ({ parodies: { some: { parody: { parodie_name: n } } } }));
+  pushMulti(p.tags, m.tags ?? "or", (n) => ({ tags: { some: { tag: { tagName: n } } } }));
+  pushMulti(p.artists, m.artists ?? "or", (n) => ({ artists: { some: { artist: { artistName: n } } } }));
+  pushMulti(p.groups, m.groups ?? "or", (n) => ({ groups: { some: { group: { groupName: n } } } }));
+  pushMulti(p.characters, m.characters ?? "or", (n) => ({ characters: { some: { character: { characterName: n } } } }));
+  pushMulti(p.parodies, m.parodies ?? "or", (n) => ({ parodies: { some: { parody: { parodieName: n } } } }));
 
   if (p.pageMin != null && p.pageMin > 0) and.push({ pages: { gte: p.pageMin } });
   if (p.pageMax != null) and.push({ pages: { lte: p.pageMax } });
@@ -230,8 +230,8 @@ function buildWhere(p: QueryParams): Prisma.TitleWhereInput {
     const orClauses: Prisma.TitleWhereInput[] = [
       { titleName: { contains: q, mode: "insensitive" } },
       { alterName: { contains: q, mode: "insensitive" } },
-      { artists: { some: { artist: { artist_name: { contains: q, mode: "insensitive" } } } } },
-      { tags: { some: { tag: { tag_name: { contains: q, mode: "insensitive" } } } } },
+      { artists: { some: { artist: { artistName: { contains: q, mode: "insensitive" } } } } },
+      { tags: { some: { tag: { tagName: { contains: q, mode: "insensitive" } } } } },
     ];
     if (/^\d+$/.test(q)) orClauses.push({ hashtag: parseInt(q, 10) });
     and.push({ OR: orClauses });
@@ -345,33 +345,34 @@ export async function deleteTitle(hashtag: number) {
   });
   if (!title) return;
 
-  const artistIds = title.artists.map(r => r.id_artist);
-  const groupIds = title.groups.map(r => r.id_group);
-  const characterIds = title.characters.map(r => r.id_character);
-  const parodyIds = title.parodies.map(r => r.id_parodie);
-  const tagIds = title.tags.map(r => r.id_tag);
+  const artistIds = title.artists.map(r => r.idArtist);
+  const groupIds = title.groups.map(r => r.idGroup);
+  const characterIds = title.characters.map(r => r.idCharacter);
+  const parodyIds = title.parodies.map(r => r.idParodie);
+  const tagIds = title.tags.map(r => r.idTag);
 
-  // Delete the tag links explicitly (not via the title's FK cascade) so the
-  // titlestotags AFTER DELETE trigger fires on a real statement and refreshes
-  // tag title_count / title avg_tag_value for the affected set.
-  await prisma.titleTag.deleteMany({ where: { hashtag } });
+  // Deleting the title cascades to every join table (all declare onDelete:
+  // Cascade). Verified on Postgres 17/Neon: the cascaded DELETE on titlestotags
+  // fires the statement-level AFTER DELETE trigger with its transition table
+  // populated, so tags.title_count / titles.avg_tag_value are recomputed here —
+  // no separate titleTag.deleteMany needed. Orphan-entity cleanup runs after.
   await prisma.title.delete({ where: { hashtag } });
 
   await Promise.all([
     artistIds.length && prisma.artist.deleteMany({
-      where: { id_artist: { in: artistIds }, titles: { none: {} } },
+      where: { idArtist: { in: artistIds }, titles: { none: {} } },
     }),
     groupIds.length && prisma.group.deleteMany({
-      where: { id_group: { in: groupIds }, titles: { none: {} } },
+      where: { idGroup: { in: groupIds }, titles: { none: {} } },
     }),
     characterIds.length && prisma.character.deleteMany({
-      where: { id_character: { in: characterIds }, titles: { none: {} } },
+      where: { idCharacter: { in: characterIds }, titles: { none: {} } },
     }),
     parodyIds.length && prisma.parody.deleteMany({
-      where: { id_parodie: { in: parodyIds }, titles: { none: {} } },
+      where: { idParodie: { in: parodyIds }, titles: { none: {} } },
     }),
     tagIds.length && prisma.tag.deleteMany({
-      where: { id_tag: { in: tagIds }, titles: { none: {} } },
+      where: { idTag: { in: tagIds }, titles: { none: {} } },
     }),
   ]);
 }
@@ -587,7 +588,7 @@ export async function getStats(): Promise<StatsPayload> {
       select: {
         hashtag: true, titleName: true, alterName: true, pages: true,
         readCount: true, imageLink: true,
-        artists: { take: 1, include: { artist: { select: { artist_name: true } } } },
+        artists: { take: 1, include: { artist: { select: { artistName: true } } } },
       },
     }),
   ]);
@@ -644,7 +645,7 @@ export async function getStats(): Promise<StatsPayload> {
       pages: m.pages,
       readCount: m.readCount,
       imageLink: m.imageLink,
-      firstArtist: m.artists[0]?.artist.artist_name ?? "",
+      firstArtist: m.artists[0]?.artist.artistName ?? "",
     })),
   };
 }

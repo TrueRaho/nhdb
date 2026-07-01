@@ -39,10 +39,10 @@ model Title {
 }
 
 model Artist {
-  id_artist  Int           @id @default(autoincrement())
-  artist_name String       @unique @db.VarChar(255)
-  artist_link String       @unique @db.VarChar(255)
-  total_works Int?
+  idArtist   Int           @id @default(autoincrement()) @map("id_artist")
+  artistName String        @unique @db.VarChar(255) @map("artist_name")
+  artistLink String        @unique @db.VarChar(255) @map("artist_link")
+  totalWorks Int?          @map("total_works")
 
   titles TitleArtist[]
 
@@ -50,10 +50,10 @@ model Artist {
 }
 
 model Group {
-  id_group   Int          @id @default(autoincrement())
-  group_name String       @unique @db.VarChar(255)
-  group_link String       @unique @db.VarChar(255)
-  total_works Int?
+  idGroup    Int          @id @default(autoincrement()) @map("id_group")
+  groupName  String       @unique @db.VarChar(255) @map("group_name")
+  groupLink  String       @unique @db.VarChar(255) @map("group_link")
+  totalWorks Int?         @map("total_works")
 
   titles TitleGroup[]
 
@@ -61,10 +61,10 @@ model Group {
 }
 
 model Character {
-  id_character   Int              @id @default(autoincrement())
-  character_name String           @unique @db.VarChar(255)
-  character_link String           @unique @db.VarChar(255)
-  total_works    Int?
+  idCharacter   Int              @id @default(autoincrement()) @map("id_character")
+  characterName String           @unique @db.VarChar(255) @map("character_name")
+  characterLink String           @unique @db.VarChar(255) @map("character_link")
+  totalWorks    Int?             @map("total_works")
 
   titles TitleCharacter[]
 
@@ -72,10 +72,10 @@ model Character {
 }
 
 model Parody {
-  id_parodie   Int              @id @default(autoincrement())
-  parodie_name String           @unique @db.VarChar(255)
-  parodie_link String           @unique @db.VarChar(255)
-  total_works  Int?
+  idParodie   Int              @id @default(autoincrement()) @map("id_parodie")
+  parodieName String           @unique @db.VarChar(255) @map("parodie_name")
+  parodieLink String           @unique @db.VarChar(255) @map("parodie_link")
+  totalWorks  Int?             @map("total_works")
 
   titles TitleParody[]
 
@@ -83,13 +83,13 @@ model Parody {
 }
 
 model Tag {
-  id_tag     Int        @id @default(autoincrement())
-  tag_name   String     @unique @db.VarChar(255)
-  tag_link   String     @unique @db.VarChar(255)
-  total_works Int?
+  idTag      Int        @id @default(autoincrement()) @map("id_tag")
+  tagName    String     @unique @db.VarChar(255) @map("tag_name")
+  tagLink    String     @unique @db.VarChar(255) @map("tag_link")
+  totalWorks Int?       @map("total_works")
   // Number of titles carrying this tag (this tag's "value"). Maintained by DB
   // triggers on titlestotags — see migration 3_avg_tag_value.
-  title_count Int        @default(0)
+  titleCount Int        @default(0) @map("title_count")
 
   titles TitleTag[]
 
@@ -97,57 +97,57 @@ model Tag {
 }
 
 model TitleArtist {
-  hashtag   Int
-  id_artist Int
-  title     Title  @relation(fields: [hashtag], references: [hashtag], onDelete: Cascade, onUpdate: NoAction)
-  artist    Artist @relation(fields: [id_artist], references: [id_artist], onDelete: Cascade, onUpdate: NoAction)
+  hashtag  Int
+  idArtist Int    @map("id_artist")
+  title    Title  @relation(fields: [hashtag], references: [hashtag], onDelete: Cascade, onUpdate: NoAction)
+  artist   Artist @relation(fields: [idArtist], references: [idArtist], onDelete: Cascade, onUpdate: NoAction)
 
-  @@id([hashtag, id_artist])
-  @@index([id_artist])
+  @@id([hashtag, idArtist])
+  @@index([idArtist])
   @@map("titlestoartists")
 }
 
 model TitleGroup {
-  hashtag  Int
-  id_group Int
-  title    Title @relation(fields: [hashtag], references: [hashtag], onDelete: Cascade, onUpdate: NoAction)
-  group    Group @relation(fields: [id_group], references: [id_group], onDelete: Cascade, onUpdate: NoAction)
+  hashtag Int
+  idGroup Int   @map("id_group")
+  title   Title @relation(fields: [hashtag], references: [hashtag], onDelete: Cascade, onUpdate: NoAction)
+  group   Group @relation(fields: [idGroup], references: [idGroup], onDelete: Cascade, onUpdate: NoAction)
 
-  @@id([hashtag, id_group])
-  @@index([id_group])
+  @@id([hashtag, idGroup])
+  @@index([idGroup])
   @@map("titlestogroups")
 }
 
 model TitleCharacter {
-  hashtag      Int
-  id_character Int
-  title        Title     @relation(fields: [hashtag], references: [hashtag], onDelete: Cascade, onUpdate: NoAction)
-  character    Character @relation(fields: [id_character], references: [id_character], onDelete: Cascade, onUpdate: NoAction)
+  hashtag     Int
+  idCharacter Int       @map("id_character")
+  title       Title     @relation(fields: [hashtag], references: [hashtag], onDelete: Cascade, onUpdate: NoAction)
+  character   Character @relation(fields: [idCharacter], references: [idCharacter], onDelete: Cascade, onUpdate: NoAction)
 
-  @@id([hashtag, id_character])
-  @@index([id_character])
+  @@id([hashtag, idCharacter])
+  @@index([idCharacter])
   @@map("titlestocharacters")
 }
 
 model TitleParody {
-  hashtag    Int
-  id_parodie Int
-  title      Title  @relation(fields: [hashtag], references: [hashtag], onDelete: Cascade, onUpdate: NoAction)
-  parody     Parody @relation(fields: [id_parodie], references: [id_parodie], onDelete: Cascade, onUpdate: NoAction)
+  hashtag   Int
+  idParodie Int    @map("id_parodie")
+  title     Title  @relation(fields: [hashtag], references: [hashtag], onDelete: Cascade, onUpdate: NoAction)
+  parody    Parody @relation(fields: [idParodie], references: [idParodie], onDelete: Cascade, onUpdate: NoAction)
 
-  @@id([hashtag, id_parodie])
-  @@index([id_parodie])
+  @@id([hashtag, idParodie])
+  @@index([idParodie])
   @@map("titlestoparodies")
 }
 
 model TitleTag {
   hashtag Int
-  id_tag  Int
+  idTag   Int   @map("id_tag")
   title   Title @relation(fields: [hashtag], references: [hashtag], onDelete: Cascade, onUpdate: NoAction)
-  tag     Tag   @relation(fields: [id_tag], references: [id_tag], onDelete: Cascade, onUpdate: NoAction)
+  tag     Tag   @relation(fields: [idTag], references: [idTag], onDelete: Cascade, onUpdate: NoAction)
 
-  @@id([hashtag, id_tag])
-  @@index([id_tag])
+  @@id([hashtag, idTag])
+  @@index([idTag])
   @@map("titlestotags")
 }
 

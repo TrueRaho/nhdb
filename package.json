@@ -9,7 +9,10 @@
     "start": "next start",
     "lint": "eslint",
     "scraper": "tsx scripts/scraper-server.ts",
-    "rescrape": "tsx scripts/rescrape.ts"
+    "rescrape": "tsx scripts/rescrape.ts",
+    "postinstall": "prisma generate",
+    "db:generate": "prisma generate",
+    "db:deploy": "prisma migrate deploy"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
