@@ -30,12 +30,26 @@ function oklchToHex(L: number, C: number, H: number): string {
 }
 
 function readTheme() {
-  const css = readFileSync(join(process.cwd(), "app/globals.css"), "utf-8");
+  const cssPath = join(process.cwd(), "app/globals.css");
+  const css = readFileSync(cssPath, "utf-8");
 
-  const hue = parseFloat(css.match(/--nh-accent-hue:\s*([\d.]+)/)?.[1] ?? "50");
-  const L   = parseFloat(css.match(/--nh-accent:\s*oklch\(([\d.]+)/)?.[1]   ?? "0.72");
-  const Cv  = parseFloat(css.match(/--nh-accent:\s*oklch\([\d.]+\s+([\d.]+)/)?.[1] ?? "0.19");
-  const bg  = css.match(/--nh-bg:\s*(#[0-9a-fA-F]+)/)?.[1] ?? "#0a0805";
+  const extract = (re: RegExp, token: string): string => {
+    const value = css.match(re)?.[1];
+    if (value === undefined) {
+      throw new Error(
+        `app/icon.tsx readTheme(): could not parse ${token} from ${cssPath}. ` +
+        `The favicon derives its colors from globals.css; if that variable was ` +
+        `renamed or reformatted, update the matching regex here so the icon stays in sync.`
+      );
+    }
+    return value;
+  };
+
+  const num = /(\d*\.?\d+)/.source;
+  const hue = parseFloat(extract(new RegExp(`--nh-accent-hue\\s*:\\s*${num}`), "--nh-accent-hue"));
+  const L   = parseFloat(extract(new RegExp(`--nh-accent\\s*:\\s*oklch\\(\\s*${num}`), "the L number of --nh-accent: oklch(L C ...)"));
+  const Cv  = parseFloat(extract(new RegExp(`--nh-accent\\s*:\\s*oklch\\(\\s*\\d*\\.?\\d+\\s+${num}`), "the C number of --nh-accent: oklch(L C ...)"));
+  const bg  = extract(/--nh-bg\s*:\s*(#[0-9a-fA-F]{3,8})\s*;/, "--nh-bg hex color");
 
   return { accent: oklchToHex(L, Cv, hue), bg };
 }

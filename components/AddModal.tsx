@@ -219,7 +219,7 @@ export function AddModal({ open, onClose, recentAdds, embedded, onAdd }: {
 }
 
 function JobRow({ job, onDismiss, onRetry }: { job: ScrapeJob; onDismiss: () => void; onRetry: () => void }) {
-  if (job.status === "duplicate" && job.item) return <DuplicateRow item={job.item} />;
+  if (job.status === "duplicate" && job.item) return <DuplicateRow item={job.item} onDismiss={onDismiss} />;
   if (job.status === "ready" && job.item) return <PreviewRow item={job.item} via={job.via} onDismiss={onDismiss} />;
   if (job.status === "error") return <ErrorRow job={job} onDismiss={onDismiss} onRetry={onRetry} />;
   return <ScrapingRow job={job} onDismiss={onDismiss} />;
@@ -278,7 +278,9 @@ function ErrorRow({ job, onDismiss, onRetry }: { job: ScrapeJob; onDismiss: () =
 }
 
 // Stub row for a title that is already in the collection — scrape was skipped.
-function DuplicateRow({ item }: { item: Item }) {
+// Dismissable: an all-duplicate batch never goes through commitReady's sweep,
+// so without the button these rows would be stuck in the list (and storage).
+function DuplicateRow({ item, onDismiss }: { item: Item; onDismiss: () => void }) {
   return (
     <div className="flex gap-2.5 p-2 rounded-lg bg-nh-surface-2 border border-nh-border border-dashed opacity-75">
       <div className="w-14 shrink-0">
@@ -298,6 +300,9 @@ function DuplicateRow({ item }: { item: Item }) {
       </div>
       <div className="flex items-center px-1 text-nh-text-3">
         <Database className="size-4" strokeWidth={2} />
+      </div>
+      <div className="flex items-center">
+        <DismissButton onClick={onDismiss} />
       </div>
     </div>
   );

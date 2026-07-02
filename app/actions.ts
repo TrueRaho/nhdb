@@ -19,6 +19,9 @@ export async function commitScrapedAction(scraped: ScrapeResult): Promise<Item> 
   updateTag("stats");
   updateTag(`title-${scraped.hashtag}`);
   updateTag(`similar-${scraped.hashtag}`);
+  // Broad tag: cached similar-<other> lists of NEIGHBOR titles (tag overlap)
+  // reference this title too and would otherwise go stale forever.
+  updateTag("similar");
   return dbTitleToItem(saved);
 }
 
@@ -27,6 +30,7 @@ export async function deleteTitleAction(hashtag: number) {
   updateTag("titles-list");
   updateTag(`title-${hashtag}`);
   updateTag(`similar-${hashtag}`);
+  updateTag("similar"); // neighbors' similar lists may include the deleted title
   updateTag("dataset");
   updateTag("stats");
 }
@@ -42,6 +46,8 @@ export async function updateAlterNameAction(hashtag: number, alterName: string) 
   await updateAlterName(hashtag, alterName);
   updateTag("titles-list");
   updateTag(`title-${hashtag}`);
+  updateTag("similar"); // neighbors' similar lists show this title's name
+  updateTag("stats"); // alterName feeds stats.recentSessions.name / mostRead.alterName
 }
 
 export async function queryTitlesAction(params: QueryParams): Promise<{ items: Item[]; total: number }> {

@@ -74,6 +74,7 @@ export default function NhdbApp({
   const [view, setView] = useState<"gallery" | "stats">("gallery");
   const [, startTransition] = useTransition();
   const [loading, setLoading] = useState(false);
+  const [queryError, setQueryError] = useState(false);
   const queryIdRef = useRef(0);
   const viewport = useViewport();
 
@@ -87,6 +88,7 @@ export default function NhdbApp({
   const runQuery = useCallback((offset: number, append: boolean, currentSearch: string, currentFilters: Filters) => {
     const id = ++queryIdRef.current;
     setLoading(true);
+    setQueryError(false);
     // Fresh seed per new random query; "load more" keeps the seed so pages don't overlap.
     if (currentFilters.sortField === "random" && !append) {
       seedRef.current = Math.floor(Math.random() * 1_000_000_000);
@@ -99,8 +101,10 @@ export default function NhdbApp({
       characters: currentFilters.characters,
       parodies: currentFilters.parodies,
       matchModes: currentFilters.matchModes,
-      pageMin: currentFilters.pageMin,
-      pageMax: currentFilters.pageMax,
+      // Bounds equal to the dataset span mean "no page filter" — omit them so
+      // titles outside the (possibly stale) initial bounds don't silently vanish.
+      pageMin: currentFilters.pageMin > dataset.pageMin ? currentFilters.pageMin : undefined,
+      pageMax: currentFilters.pageMax < dataset.pageMax ? currentFilters.pageMax : undefined,
       read: currentFilters.read === "all" ? undefined : currentFilters.read,
       noAlter: currentFilters.noAlter || undefined,
       sortField: currentFilters.sortField,
@@ -111,13 +115,23 @@ export default function NhdbApp({
     }).then((res) => {
       if (id !== queryIdRef.current) return;
       setTotal(res.total);
-      setItems((prev) => append ? [...prev, ...res.items] : res.items);
+      // Dedup on append: optimistic add/delete (and tied server sorts) can shift
+      // offsets, so a page may overlap rows we already have — duplicate
+      // key={hashtag} would crash the grid.
+      setItems((prev) => {
+        if (!append) return res.items;
+        const existing = new Set(prev.map((x) => x.hashtag));
+        return [...prev, ...res.items.filter((x) => !existing.has(x.hashtag))];
+      });
       setLoading(false);
     }).catch((err) => {
       console.error("query failed:", err);
-      if (id === queryIdRef.current) setLoading(false);
+      if (id === queryIdRef.current) {
+        setLoading(false);
+        setQueryError(true);
+      }
     });
-  }, [pageSize]);
+  }, [pageSize, dataset.pageMin, dataset.pageMax]);
 
   const isInitialRender = useRef(true);
   useEffect(() => {
@@ -201,7 +215,10 @@ export default function NhdbApp({
     }
     const { scraped } = await res.json();
     const fresh = await commitScrapedAction(scraped);
-    setDetailItem(fresh);
+    // The scrape can take a long time; only swap the modal content if it is
+    // still open on the same title — never force it back open or yank a
+    // different title the user has since navigated to.
+    setDetailItem(cur => (cur && cur.hashtag === hashtag ? fresh : cur));
     setItems(c => c.map(x => x.hashtag === hashtag ? fresh : x));
   };
 
@@ -213,11 +230,16 @@ export default function NhdbApp({
   // write (notably on Vercel), and a stale cached page would clobber the
   // just-added titles off the top of the list.
   const onAddItems = (newItems: Item[]) => {
+    // Dedup before touching state so `total` only counts rows actually added —
+    // counting dropped duplicates would inflate it and skew load-more math.
+    const existing = new Set(items.map(x => x.hashtag));
+    const added = newItems.filter(x => !existing.has(x.hashtag));
+    if (added.length === 0) return;
     setItems(c => {
-      const existing = new Set(c.map(x => x.hashtag));
-      return [...newItems.filter(x => !existing.has(x.hashtag)), ...c];
+      const current = new Set(c.map(x => x.hashtag));
+      return [...added.filter(x => !current.has(x.hashtag)), ...c];
     });
-    setTotal(t => t + newItems.length);
+    setTotal(t => t + added.length);
   };
 
   if (viewport === null) {
@@ -239,7 +261,7 @@ export default function NhdbApp({
           onTagClick={onTagClick} onChipClick={onChipClick} onDelete={onDelete} onRead={onRead}
           onAlterName={onAlterName} onRefresh={onRefresh}
           recentAdds={recentAdds} density="comfortable" onAddItems={onAddItems}
-          loading={loading} onLoadMore={onLoadMore}
+          loading={loading} onLoadMore={onLoadMore} queryError={queryError}
         />
       </div>
       </ScrapeJobsProvider>
@@ -274,6 +296,11 @@ export default function NhdbApp({
 
         {view === "gallery" && (
           <>
+            {queryError && (
+              <div className="px-3 pb-2 font-mono text-[10px] text-[#ff6b6b]">
+                query failed — results may be stale · adjust filters to retry
+              </div>
+            )}
             <GalleryGrid items={items} onOpen={setDetailItem} onTagClick={onTagClick} density="comfortable" />
             {items.length < total && (
               <div className="flex justify-center pb-6">

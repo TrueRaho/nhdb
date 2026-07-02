@@ -16,11 +16,10 @@ COPY . .
 # Full install — dotenv is a devDependency the server imports, and `--prod=false`
 # guards against an inherited NODE_ENV=production trimming devDependencies.
 #
-# A throwaway DATABASE_URL only satisfies prisma.config.ts's presence check during
-# the `prisma generate` that pnpm runs on install — generate never connects to a
-# database, and the scraper itself never touches one.
-RUN DATABASE_URL="postgresql://user:pass@localhost:5432/db" \
-    pnpm install --frozen-lockfile --prod=false
+# No DATABASE_URL needed: prisma.config.ts's presence check is lazy (it fires only
+# when a command actually connects), the `prisma generate` that postinstall runs
+# never connects, and the scraper itself never touches a database.
+RUN pnpm install --frozen-lockfile --prod=false
 
 # Render injects PORT at runtime; the server reads it. Exposed for documentation.
 EXPOSE 3333

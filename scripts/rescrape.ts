@@ -7,19 +7,30 @@
 //   pnpm rescrape --all         # every title (refreshes counts, pages, links)
 //   pnpm rescrape --list        # print targets without scraping
 //   pnpm rescrape --limit=20    # cap the number of titles processed
+//
+// Set VERCEL_AUTOMATION_BYPASS_SECRET when APP_URL targets a Vercel deployment with Deployment Protection.
 import { config } from "dotenv";
 import { neon } from "@neondatabase/serverless";
 
 config({ path: [".env.local", ".env"], quiet: true });
 
 const APP_URL = process.env.APP_URL ?? "http://localhost:3000";
+// Optional Vercel Deployment Protection bypass; when unset, no extra headers are sent.
+const BYPASS_SECRET = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
+const bypassHeaders: Record<string, string> = BYPASS_SECRET
+  ? { "x-vercel-protection-bypass": BYPASS_SECRET, "x-vercel-set-bypass-cookie": "true" }
+  : {};
 const DELAY_MS = 2500;
+const REQUEST_TIMEOUT_MS = 60_000; // one hung route must not stall the whole loop
 
 const args = process.argv.slice(2);
 const all = args.includes("--all");
 const listOnly = args.includes("--list");
 const limitArg = args.find((a) => a.startsWith("--limit="));
-const limit = limitArg ? parseInt(limitArg.split("=")[1], 10) : Infinity;
+// A malformed --limit= parses to NaN, and rows.slice(0, NaN) would silently
+// process ZERO titles — treat it as "no limit" instead.
+const parsedLimit = limitArg ? parseInt(limitArg.split("=")[1], 10) : Infinity;
+const limit = Number.isNaN(parsedLimit) ? Infinity : parsedLimit;
 
 async function main() {
   const sql = neon(process.env.DATABASE_URL!);
@@ -43,8 +54,9 @@ async function main() {
     try {
       const res = await fetch(`${APP_URL}/api/scrape`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...bypassHeaders },
         body: JSON.stringify({ input: String(r.hashtag), persist: true }),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));

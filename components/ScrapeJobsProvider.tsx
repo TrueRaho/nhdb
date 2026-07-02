@@ -46,6 +46,23 @@ const MAX_SCRAPE_ATTEMPTS = 8;
 const RETRY_DELAY_MS = 4_000;
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+const JOB_STATUSES: readonly ScrapeJobStatus[] = ["scraping", "ready", "duplicate", "error"];
+
+// Persisted state can be anything (truncated write, old schema, "null"…) — only
+// accept an array, and only entries that look like jobs, so one corrupt value
+// can't blank-screen the whole app on the next render.
+function parseStoredJobs(stored: string): ScrapeJob[] {
+  const parsed: unknown = JSON.parse(stored);
+  if (!Array.isArray(parsed)) return [];
+  return parsed.filter((j): j is ScrapeJob =>
+    j != null &&
+    typeof j === "object" &&
+    typeof (j as ScrapeJob).key === "string" &&
+    typeof (j as ScrapeJob).input === "string" &&
+    JOB_STATUSES.includes((j as ScrapeJob).status),
+  );
+}
+
 function itemFromScraped(scraped: ScrapeResult): Item {
   const uploadedAt = Math.floor((Date.now() - new Date(scraped.uploaded_at).getTime()) / 86400000);
   return {
@@ -78,7 +95,7 @@ export function ScrapeJobsProvider({ children }: { children: ReactNode }) {
     if (typeof window === "undefined") return [];
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
-      return stored ? (JSON.parse(stored) as ScrapeJob[]) : [];
+      return stored ? parseStoredJobs(stored) : [];
     } catch {
       return [];
     }
@@ -87,6 +104,20 @@ export function ScrapeJobsProvider({ children }: { children: ReactNode }) {
   // Guards against double-driving the same job from startScrape, retry, and the
   // resume effect below.
   const inFlight = useRef<Set<string>>(new Set());
+  // Latest jobs, readable synchronously (startScrape decides what to scrape
+  // outside the setJobs updater, so updaters stay pure).
+  const jobsRef = useRef(jobs);
+  useEffect(() => {
+    jobsRef.current = jobs;
+  }, [jobs]);
+  // Aborted on unmount so the retry loop stops issuing fetches for a provider
+  // that no longer exists (e.g. viewport flip remounts the tree).
+  const abortRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    const ac = new AbortController();
+    abortRef.current = ac;
+    return () => ac.abort();
+  }, []);
 
   // Mirror jobs back to storage. The first run rewrites the just-loaded value
   // (a harmless no-op), so no hydration guard is needed.
@@ -114,6 +145,9 @@ export function ScrapeJobsProvider({ children }: { children: ReactNode }) {
         for (let attempt = 1; attempt <= MAX_SCRAPE_ATTEMPTS; attempt++) {
           // Dismissed mid-flight (dismiss() drops the key) — stop retrying.
           if (!inFlight.current.has(placeholderKey)) return;
+          // Provider unmounted — stop the loop instead of fetching into the void.
+          const signal = abortRef.current?.signal;
+          if (signal?.aborted) return;
 
           let res: Response | null = null;
           try {
@@ -121,8 +155,10 @@ export function ScrapeJobsProvider({ children }: { children: ReactNode }) {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ input: raw, persist: false }),
+              signal,
             });
           } catch {
+            if (signal?.aborted) return;
             // Network error — transient; fall through to the retry path below.
           }
 
@@ -164,6 +200,7 @@ export function ScrapeJobsProvider({ children }: { children: ReactNode }) {
             prev.map((j) => (j.key === placeholderKey ? { ...j, note: `waking scraper… (try ${attempt + 1})` } : j)),
           );
           await delay(RETRY_DELAY_MS);
+          if (abortRef.current?.signal.aborted) return;
         }
       } finally {
         inFlight.current.delete(placeholderKey);
@@ -199,38 +236,51 @@ export function ScrapeJobsProvider({ children }: { children: ReactNode }) {
       const keyOf = (p: { raw: string; hashtag: number | null }) =>
         p.hashtag != null ? `#${p.hashtag}` : `raw:${p.raw}`;
 
+      // Decide what each input becomes BEFORE touching state, against the
+      // latest jobs snapshot — the setJobs updater below stays pure (updaters
+      // may be dropped or double-invoked, so side effects there are unreliable).
+      const currentByKey = new Map(jobsRef.current.map((j) => [j.key, j]));
+      const upserts: ScrapeJob[] = [];
       const toScrape: { raw: string; key: string }[] = [];
-      setJobs((prev) => {
-        const next = [...prev];
-        const seen = new Set<string>();
-        const replaceOrPush = (job: ScrapeJob) => {
-          const idx = next.findIndex((j) => j.key === job.key);
-          if (idx >= 0) next[idx] = job;
-          else next.push(job);
-        };
-        for (const p of parsed) {
-          const key = keyOf(p);
-          if (seen.has(key)) continue;
-          seen.add(key);
+      const seen = new Set<string>();
+      for (const p of parsed) {
+        const key = keyOf(p);
+        if (seen.has(key)) continue;
+        seen.add(key);
 
-          const known = p.hashtag != null ? existingByTag.get(p.hashtag) : undefined;
-          if (known) {
-            replaceOrPush({ key, input: p.raw, status: "duplicate", item: known });
-            continue;
-          }
-
-          // Don't re-scrape something already in flight or already fetched.
-          const current = next.find((j) => j.key === key);
-          if (current && (current.status === "scraping" || current.status === "ready")) continue;
-
-          replaceOrPush({ key, input: p.raw, status: "scraping" });
-          toScrape.push({ raw: p.raw, key });
+        const known = p.hashtag != null ? existingByTag.get(p.hashtag) : undefined;
+        if (known) {
+          upserts.push({ key, input: p.raw, status: "duplicate", item: known });
+          continue;
         }
-        return next;
-      });
+
+        // Don't re-scrape something already in flight or already fetched.
+        const current = currentByKey.get(key);
+        if (current && (current.status === "scraping" || current.status === "ready")) continue;
+
+        upserts.push({ key, input: p.raw, status: "scraping" });
+        toScrape.push({ raw: p.raw, key });
+      }
+
+      if (upserts.length > 0) {
+        setJobs((prev) => {
+          const next = [...prev];
+          for (const job of upserts) {
+            const idx = next.findIndex((j) => j.key === job.key);
+            // The decision above used a snapshot — never downgrade a job that
+            // has since started scraping or come back ready to a fresh placeholder.
+            if (idx >= 0 && job.status === "scraping" &&
+                (next[idx].status === "scraping" || next[idx].status === "ready")) continue;
+            if (idx >= 0) next[idx] = job;
+            else next.push(job);
+          }
+          return next;
+        });
+      }
 
       // Fire and forget — these resolve into the store on their own schedule,
-      // so the caller (and the modal) can move on / close.
+      // so the caller (and the modal) can move on / close. runOne's inFlight
+      // guard makes a duplicate kickoff for an already-driven key a no-op.
       for (const { raw, key } of toScrape) runOne(raw, key);
     },
     [runOne],

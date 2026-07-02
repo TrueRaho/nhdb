@@ -3,95 +3,88 @@ import { Prisma } from "./generated/prisma/client";
 import { prisma } from "./db";
 import type { ScrapeEntity, ScrapeResult } from "./scraper";
 
-// One generic batch-upsert for all five entity kinds. `createMany` inserts the
-// scraped rows (skipDuplicates), `findIdsByName` maps entity names back to ids.
+// One generic batch-upsert for all five entity kinds: a single
+// INSERT … ON CONFLICT (name) DO UPDATE … RETURNING per category, so a
+// re-scrape refreshes link/total_works on existing rows and RETURNING yields
+// every id in one round trip. (The previous createMany({ skipDuplicates }) +
+// findMany-by-name pair never refreshed existing rows, and any row skipped by
+// the *link* unique was silently dropped from the id list.)
+//
+// The table/column identifiers are hardcoded literals from the five callers
+// below (never user input), so embedding them via Prisma.raw is safe; entity
+// name/link/total_works values are parameterized through Prisma.sql.
+// Note: tags.title_count is trigger-owned (maintained by triggers on
+// titlestotags), so it is deliberately absent from both the INSERT column
+// list (defaults to 0 on insert) and the DO UPDATE SET (stays untouched).
 async function batchUpsertEntities(
   items: ScrapeEntity[],
-  createMany: (items: ScrapeEntity[]) => Promise<unknown>,
-  findIdsByName: (names: string[]) => Promise<Map<string, number>>,
+  table: string,
+  idCol: string,
+  nameCol: string,
+  linkCol: string,
 ): Promise<number[]> {
   if (items.length === 0) return [];
-  await createMany(items);
-  const map = await findIdsByName(items.map((e) => e.name));
-  return items.map((e) => map.get(e.name)!).filter(Boolean);
+  // Dedup by name (last occurrence wins): a single INSERT … ON CONFLICT DO
+  // UPDATE errors with "cannot affect row a second time" on duplicate names.
+  const deduped = [...new Map(items.map((e) => [e.name, e])).values()];
+  const rows = await prisma.$queryRaw<{ id: number; name: string }[]>(Prisma.sql`
+    INSERT INTO ${Prisma.raw(`"${table}" ("${nameCol}", "${linkCol}", total_works)`)}
+    VALUES ${Prisma.join(deduped.map((e) => Prisma.sql`(${e.name}, ${e.link}, ${e.total_works})`))}
+    ON CONFLICT (${Prisma.raw(`"${nameCol}"`)}) DO UPDATE
+      SET ${Prisma.raw(`"${linkCol}" = EXCLUDED."${linkCol}"`)}, total_works = EXCLUDED.total_works
+    RETURNING ${Prisma.raw(`"${idCol}" AS id, "${nameCol}" AS name`)}
+  `);
+  // RETURNING with DO UPDATE emits every affected row (inserted or updated),
+  // so each input name resolves — ids come back in input order, no drops.
+  const map = new Map(rows.map((r) => [r.name, r.id]));
+  return items.map((e) => map.get(e.name)!);
 }
 
 const batchUpsertArtists = (items: ScrapeEntity[]) =>
-  batchUpsertEntities(
-    items,
-    (es) => prisma.artist.createMany({
-      data: es.map((e) => ({ artistName: e.name, artistLink: e.link, totalWorks: e.total_works })),
-      skipDuplicates: true,
-    }),
-    async (names) => new Map(
-      (await prisma.artist.findMany({
-        where: { artistName: { in: names } },
-        select: { idArtist: true, artistName: true },
-      })).map((r) => [r.artistName, r.idArtist])
-    ),
-  );
+  batchUpsertEntities(items, "artists", "id_artist", "artist_name", "artist_link");
 
 const batchUpsertGroups = (items: ScrapeEntity[]) =>
-  batchUpsertEntities(
-    items,
-    (es) => prisma.group.createMany({
-      data: es.map((e) => ({ groupName: e.name, groupLink: e.link, totalWorks: e.total_works })),
-      skipDuplicates: true,
-    }),
-    async (names) => new Map(
-      (await prisma.group.findMany({
-        where: { groupName: { in: names } },
-        select: { idGroup: true, groupName: true },
-      })).map((r) => [r.groupName, r.idGroup])
-    ),
-  );
+  batchUpsertEntities(items, "groups", "id_group", "group_name", "group_link");
 
 const batchUpsertCharacters = (items: ScrapeEntity[]) =>
-  batchUpsertEntities(
-    items,
-    (es) => prisma.character.createMany({
-      data: es.map((e) => ({ characterName: e.name, characterLink: e.link, totalWorks: e.total_works })),
-      skipDuplicates: true,
-    }),
-    async (names) => new Map(
-      (await prisma.character.findMany({
-        where: { characterName: { in: names } },
-        select: { idCharacter: true, characterName: true },
-      })).map((r) => [r.characterName, r.idCharacter])
-    ),
-  );
+  batchUpsertEntities(items, "characters", "id_character", "character_name", "character_link");
 
 const batchUpsertParodies = (items: ScrapeEntity[]) =>
-  batchUpsertEntities(
-    items,
-    (es) => prisma.parody.createMany({
-      data: es.map((e) => ({ parodieName: e.name, parodieLink: e.link, totalWorks: e.total_works })),
-      skipDuplicates: true,
-    }),
-    async (names) => new Map(
-      (await prisma.parody.findMany({
-        where: { parodieName: { in: names } },
-        select: { idParodie: true, parodieName: true },
-      })).map((r) => [r.parodieName, r.idParodie])
-    ),
-  );
+  batchUpsertEntities(items, "parodies", "id_parodie", "parodie_name", "parodie_link");
 
 const batchUpsertTags = (items: ScrapeEntity[]) =>
-  batchUpsertEntities(
-    items,
-    (es) => prisma.tag.createMany({
-      data: es.map((e) => ({ tagName: e.name, tagLink: e.link, totalWorks: e.total_works })),
-      skipDuplicates: true,
-    }),
-    async (names) => new Map(
-      (await prisma.tag.findMany({
-        where: { tagName: { in: names } },
-        select: { idTag: true, tagName: true },
-      })).map((r) => [r.tagName, r.idTag])
-    ),
-  );
+  batchUpsertEntities(items, "tags", "id_tag", "tag_name", "tag_link");
+
+// Thrown for a malformed client-supplied scrape payload. `name` is set to
+// "ValidationError" so the /api/scrape route's isValidationError() maps it to
+// HTTP 400 (not 500) — matching on the message would misfire on Prisma errors,
+// whose messages often contain "Invalid".
+class ScrapePayloadError extends Error {
+  name = "ValidationError";
+}
+
+// Both the Server Action and the /api/scrape route pass client-supplied data
+// here, so validate the payload shape before touching the database.
+function assertValidScrapePayload(s: ScrapeResult): void {
+  if (!Number.isInteger(s.hashtag) || s.hashtag <= 0)
+    throw new ScrapePayloadError(`Invalid scrape payload: hashtag must be a positive integer, got ${s.hashtag}`);
+  if (typeof s.title_name !== "string")
+    throw new ScrapePayloadError("Invalid scrape payload: title_name must be a string");
+  if (typeof s.image_link !== "string")
+    throw new ScrapePayloadError("Invalid scrape payload: image_link must be a string");
+  if (typeof s.pages !== "number" || Number.isNaN(s.pages) || s.pages < 0)
+    throw new ScrapePayloadError(`Invalid scrape payload: pages must be a non-negative number, got ${s.pages}`);
+  for (const key of ["tags", "artists", "groups", "characters", "parodies"] as const) {
+    if (!Array.isArray(s[key]))
+      throw new ScrapePayloadError(`Invalid scrape payload: ${key} must be an array`);
+  }
+  if (isNaN(new Date(s.uploaded_at).getTime()))
+    throw new ScrapePayloadError(`Invalid scrape payload: uploaded_at is not a valid date, got ${s.uploaded_at}`);
+}
 
 export async function upsertScrapedTitle(s: ScrapeResult) {
+  assertValidScrapePayload(s);
+
   const [artistIds, groupIds, characterIds, parodyIds, tagIds] = await Promise.all([
     batchUpsertArtists(s.artists),
     batchUpsertGroups(s.groups),
@@ -116,36 +109,41 @@ export async function upsertScrapedTitle(s: ScrapeResult) {
       update: titleData,
     });
 
-    await Promise.all([
-      tx.titleArtist.deleteMany({ where: { hashtag: s.hashtag } }),
-      tx.titleGroup.deleteMany({ where: { hashtag: s.hashtag } }),
-      tx.titleCharacter.deleteMany({ where: { hashtag: s.hashtag } }),
-      tx.titleParody.deleteMany({ where: { hashtag: s.hashtag } }),
-      tx.titleTag.deleteMany({ where: { hashtag: s.hashtag } }),
-    ]);
+    // Sequential awaits on purpose: Prisma discourages Promise.all inside an
+    // interactive transaction — every tx query serializes on one connection
+    // anyway, and concurrent awaits have caused ordering issues on some
+    // adapters.
+    await tx.titleArtist.deleteMany({ where: { hashtag: s.hashtag } });
+    await tx.titleGroup.deleteMany({ where: { hashtag: s.hashtag } });
+    await tx.titleCharacter.deleteMany({ where: { hashtag: s.hashtag } });
+    await tx.titleParody.deleteMany({ where: { hashtag: s.hashtag } });
+    await tx.titleTag.deleteMany({ where: { hashtag: s.hashtag } });
 
-    await Promise.all([
-      artistIds.length &&
-        tx.titleArtist.createMany({
-          data: artistIds.map((idArtist) => ({ hashtag: s.hashtag, idArtist })),
-        }),
-      groupIds.length &&
-        tx.titleGroup.createMany({
-          data: groupIds.map((idGroup) => ({ hashtag: s.hashtag, idGroup })),
-        }),
-      characterIds.length &&
-        tx.titleCharacter.createMany({
-          data: characterIds.map((idCharacter) => ({ hashtag: s.hashtag, idCharacter })),
-        }),
-      parodyIds.length &&
-        tx.titleParody.createMany({
-          data: parodyIds.map((idParodie) => ({ hashtag: s.hashtag, idParodie })),
-        }),
-      tagIds.length &&
-        tx.titleTag.createMany({
-          data: tagIds.map((idTag) => ({ hashtag: s.hashtag, idTag })),
-        }),
-    ]);
+    if (artistIds.length)
+      await tx.titleArtist.createMany({
+        data: artistIds.map((idArtist) => ({ hashtag: s.hashtag, idArtist })),
+        skipDuplicates: true,
+      });
+    if (groupIds.length)
+      await tx.titleGroup.createMany({
+        data: groupIds.map((idGroup) => ({ hashtag: s.hashtag, idGroup })),
+        skipDuplicates: true,
+      });
+    if (characterIds.length)
+      await tx.titleCharacter.createMany({
+        data: characterIds.map((idCharacter) => ({ hashtag: s.hashtag, idCharacter })),
+        skipDuplicates: true,
+      });
+    if (parodyIds.length)
+      await tx.titleParody.createMany({
+        data: parodyIds.map((idParodie) => ({ hashtag: s.hashtag, idParodie })),
+        skipDuplicates: true,
+      });
+    if (tagIds.length)
+      await tx.titleTag.createMany({
+        data: tagIds.map((idTag) => ({ hashtag: s.hashtag, idTag })),
+        skipDuplicates: true,
+      });
 
     return tx.title.findUniqueOrThrow({
       where: { hashtag: s.hashtag },
@@ -233,7 +231,9 @@ function buildWhere(p: QueryParams): Prisma.TitleWhereInput {
       { artists: { some: { artist: { artistName: { contains: q, mode: "insensitive" } } } } },
       { tags: { some: { tag: { tagName: { contains: q, mode: "insensitive" } } } } },
     ];
-    if (/^\d+$/.test(q)) orClauses.push({ hashtag: parseInt(q, 10) });
+    // Only match hashtag when the digit string fits INT4 — a longer number
+    // would overflow the column type and make Prisma reject the whole query.
+    if (/^\d+$/.test(q) && q.length <= 9) orClauses.push({ hashtag: parseInt(q, 10) });
     and.push({ OR: orClauses });
   }
 
@@ -242,21 +242,23 @@ function buildWhere(p: QueryParams): Prisma.TitleWhereInput {
 }
 
 // "desc" consistently means newest / most / biggest first, matching the UI labels.
+// Every sort ends with the unique `hashtag` as a tiebreaker: OFFSET pagination is
+// only stable across separately-cached pages when the total order is deterministic.
 function buildOrderBy(field: SortField, dir: "asc" | "desc"): Prisma.TitleOrderByWithRelationInput[] {
   switch (field) {
-    case "added-at": return [{ createdAt: dir }];
-    case "last-read-at": return [{ lastReadAt: { sort: dir, nulls: "last" } }];
-    case "uploaded-at": return [{ uploadedAt: dir }];
-    case "read-count": return [{ readCount: dir }];
-    case "pages": return [{ pages: dir }];
+    case "added-at": return [{ createdAt: dir }, { hashtag: "desc" }];
+    case "last-read-at": return [{ lastReadAt: { sort: dir, nulls: "last" } }, { hashtag: "desc" }];
+    case "uploaded-at": return [{ uploadedAt: dir }, { hashtag: "desc" }];
+    case "read-count": return [{ readCount: dir }, { hashtag: "desc" }];
+    case "pages": return [{ pages: dir }, { hashtag: "desc" }];
     case "hashtag": return [{ hashtag: dir }];
-    case "title": return [{ titleName: dir }];
-    case "tag-count": return [{ tags: { _count: dir } }];
+    case "title": return [{ titleName: dir }, { hashtag: "desc" }];
+    case "tag-count": return [{ tags: { _count: dir } }, { hashtag: "desc" }];
     // avg_tag_value is denormalized on titles and kept current by DB triggers,
     // so this is a plain indexed sort. hashtag breaks the many ties for stable
     // pagination. Nulls (tag-less titles) sink to the bottom.
     case "avg-tag-value": return [{ avgTagValue: { sort: dir, nulls: "last" } }, { hashtag: "desc" }];
-    default: return [{ createdAt: "desc" }];
+    default: return [{ createdAt: "desc" }, { hashtag: "desc" }];
   }
 }
 
@@ -278,8 +280,8 @@ export async function queryTitles(p: QueryParams): Promise<QueryResult> {
   cacheTag("titles-list");
   cacheLife("max");
 
-  const limit = Math.min(Math.max(p.limit ?? 60, 1), 200);
-  const offset = Math.max(p.offset ?? 0, 0);
+  const limit = Math.min(Math.max(Math.floor(p.limit ?? 60), 1), 200);
+  const offset = Math.max(Math.floor(p.offset ?? 0), 0);
   const where = buildWhere(p);
   const sortField = p.sortField ?? "added-at";
   const sortDir = p.sortDir ?? "desc";
@@ -292,7 +294,7 @@ export async function queryTitles(p: QueryParams): Promise<QueryResult> {
     const matching = await prisma.title.findMany({ where, select: { hashtag: true } });
     const shuffled = matching
       .map(({ hashtag }) => ({ hashtag, key: hashMix(hashtag, seed) }))
-      .sort((a, b) => a.key - b.key)
+      .sort((a, b) => a.key - b.key || a.hashtag - b.hashtag)
       .slice(offset, offset + limit)
       .map((r) => r.hashtag);
     if (shuffled.length === 0) return { items: [], total: matching.length };
@@ -339,42 +341,10 @@ export async function getTitle(hashtag: number) {
 }
 
 export async function deleteTitle(hashtag: number) {
-  const title = await prisma.title.findUnique({
-    where: { hashtag },
-    include: titleInclude,
-  });
-  if (!title) return;
-
-  const artistIds = title.artists.map(r => r.idArtist);
-  const groupIds = title.groups.map(r => r.idGroup);
-  const characterIds = title.characters.map(r => r.idCharacter);
-  const parodyIds = title.parodies.map(r => r.idParodie);
-  const tagIds = title.tags.map(r => r.idTag);
-
-  // Deleting the title cascades to every join table (all declare onDelete:
-  // Cascade). Verified on Postgres 17/Neon: the cascaded DELETE on titlestotags
-  // fires the statement-level AFTER DELETE trigger with its transition table
-  // populated, so tags.title_count / titles.avg_tag_value are recomputed here —
-  // no separate titleTag.deleteMany needed. Orphan-entity cleanup runs after.
-  await prisma.title.delete({ where: { hashtag } });
-
-  await Promise.all([
-    artistIds.length && prisma.artist.deleteMany({
-      where: { idArtist: { in: artistIds }, titles: { none: {} } },
-    }),
-    groupIds.length && prisma.group.deleteMany({
-      where: { idGroup: { in: groupIds }, titles: { none: {} } },
-    }),
-    characterIds.length && prisma.character.deleteMany({
-      where: { idCharacter: { in: characterIds }, titles: { none: {} } },
-    }),
-    parodyIds.length && prisma.parody.deleteMany({
-      where: { idParodie: { in: parodyIds }, titles: { none: {} } },
-    }),
-    tagIds.length && prisma.tag.deleteMany({
-      where: { idTag: { in: tagIds }, titles: { none: {} } },
-    }),
-  ]);
+  // Cascade removes every join row; DB triggers recompute tag stats and delete
+  // any now-orphaned entities (migration 4_orphan_cleanup_triggers, deferred so
+  // the re-scrape delete+recreate path doesn't FK-violate).
+  await prisma.title.deleteMany({ where: { hashtag } });
 }
 
 export async function markRead(hashtag: number) {
@@ -502,7 +472,9 @@ export type StatsPayload = {
 export async function getStats(): Promise<StatsPayload> {
   "use cache";
   cacheTag("stats");
-  cacheLife("max");
+  // Time-bounded (not "max"): the NOW()/AGE() buckets below are relative to the
+  // query time, so the entry must self-refresh or the buckets freeze forever.
+  cacheLife("hours");
 
   const [
     aggRow,
@@ -613,6 +585,12 @@ export async function getStats(): Promise<StatsPayload> {
     return { d: i, count: dowMap.get(pgDow) ?? 0 };
   });
 
+  const pageBucketMap = new Map(pageBucketRows.map((r) => [r.label, Number(r.count)]));
+  const pageBuckets = ["<25", "25-49", "50-99", "100-149", "150+"].map((label) => ({
+    label,
+    count: pageBucketMap.get(label) ?? 0,
+  }));
+
   const additionMap = new Map(additionRows.map((r) => [Number(r.bucket), Number(r.count)]));
   const additions = Array.from({ length: 6 }, (_, i) => {
     const bucket = 5 - i;
@@ -628,7 +606,7 @@ export async function getStats(): Promise<StatsPayload> {
     avgPages: total ? Math.round(totalPages / total) : 0,
     medianPages: Number(median ?? 0),
     longestPages: agg?.longest ?? 0,
-    pageBuckets: pageBucketRows.map((r) => ({ label: r.label, count: Number(r.count) })),
+    pageBuckets,
     monthlyReads,
     hourlyReads,
     dowReads,
@@ -661,8 +639,13 @@ export type SimilarItem = {
 
 export async function getSimilar(hashtag: number, limit = 8): Promise<SimilarItem[]> {
   "use cache";
+  // Broad "similar" tag alongside the per-title one: write paths invalidate the
+  // literal "similar" tag to bust every cached similarity list at once.
   cacheTag(`similar-${hashtag}`);
+  cacheTag("similar");
   cacheLife("max");
+
+  const take = Math.min(Math.max(Math.floor(limit) || 1, 1), 50);
 
   const rows = await prisma.$queryRaw<{
     hashtag: number; title_name: string; alter_name: string | null;
@@ -677,7 +660,7 @@ export async function getSimilar(hashtag: number, limit = 8): Promise<SimilarIte
     GROUP BY t.hashtag, t.title_name, t.alter_name, t.image_link, t.pages
     HAVING COUNT(*) >= 2
     ORDER BY shared DESC
-    LIMIT ${limit}
+    LIMIT ${take}
   `);
 
   return rows.map((r) => ({

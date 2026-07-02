@@ -12,7 +12,8 @@ export function cn(...inputs: ClassValue[]) {
 // null value should hide the element instead.
 export function daysAgoLabel(d: number | null, style: "long" | "short" = "long"): string {
   if (d == null) return "—"
-  if (d === 0) return "today"
+  // Clock skew / future dates can yield negative day counts — clamp to "today".
+  if (d <= 0) return "today"
   if (style === "short") {
     if (d < 7) return `${d}d`
     if (d < 30) return `${Math.floor(d / 7)}w`

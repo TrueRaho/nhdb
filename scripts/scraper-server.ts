@@ -1,4 +1,5 @@
 import http from "node:http";
+import { timingSafeEqual } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 import { config } from "dotenv";
 import { scrapeTitle, ScrapeError, closeScraper } from "../lib/scraper";
@@ -8,6 +9,20 @@ config({ path: [".env.local", ".env"] });
 // Render injects PORT; locally fall back to SCRAPER_PORT or 3333.
 const PORT = Number(process.env.PORT ?? process.env.SCRAPER_PORT ?? 3333);
 const SECRET = process.env.SCRAPER_SECRET;
+
+// The scrape payload is a single short input string — anything near this cap
+// is abuse, and buffering unbounded bodies would let a client exhaust memory.
+const MAX_BODY_BYTES = 64 * 1024;
+
+// Constant-time bearer-token check (a plain !== compare leaks the match
+// length/prefix through timing). Unequal lengths short-circuit — that only
+// reveals the token's length, not its content.
+function isAuthorized(header: string | undefined): boolean {
+  if (!SECRET) return true;
+  const expected = Buffer.from(`Bearer ${SECRET}`);
+  const actual = Buffer.from(header ?? "");
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
+}
 
 const server = http.createServer(async (req, res) => {
   // Health check — Render pings this, and it's a quick "is the tunnel up?" probe.
@@ -22,14 +37,23 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (SECRET && req.headers.authorization !== `Bearer ${SECRET}`) {
+  if (!isAuthorized(req.headers.authorization)) {
     res.writeHead(401, { "Content-Type": "application/json" })
        .end(JSON.stringify({ error: "Unauthorized" }));
     return;
   }
 
   const chunks: Buffer[] = [];
-  for await (const chunk of req) chunks.push(chunk);
+  let received = 0;
+  for await (const chunk of req) {
+    received += (chunk as Buffer).length;
+    if (received > MAX_BODY_BYTES) {
+      res.writeHead(413, { "Content-Type": "application/json" })
+         .end(JSON.stringify({ error: "Request body too large" }));
+      return;
+    }
+    chunks.push(chunk as Buffer);
+  }
   let input: string;
   try {
     ({ input } = JSON.parse(Buffer.concat(chunks).toString()));
@@ -76,7 +100,10 @@ server.listen(PORT, "0.0.0.0", () => {
 // Render sends SIGTERM on deploy/stop; close the warm browser cleanly either way.
 function shutdown() {
   ngrok?.kill();
+  server.close();
   void closeScraper().finally(() => process.exit(0));
+  // A hung browser.close() must not wedge the process — force-exit after 5s.
+  setTimeout(() => process.exit(0), 5_000).unref();
 }
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);

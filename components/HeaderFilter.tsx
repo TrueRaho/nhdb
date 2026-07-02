@@ -460,7 +460,9 @@ function FilterPageRange({ filters, setFilters, min, max }: {
       <div className="flex flex-col gap-3 pt-2">
         <Slider
           min={min}
-          max={max}
+          // `|| 1` guards the empty-library case (pageMax 0) so the slider
+          // never degenerates to min == max == 0 — mirrors the desktop sidebar.
+          max={max || 1}
           value={[filters.pageMin, filters.pageMax]}
           onValueChange={(v: number | readonly number[]) => {
             const arr = Array.isArray(v) ? v : [v as number, v as number];

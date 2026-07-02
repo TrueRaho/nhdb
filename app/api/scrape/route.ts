@@ -37,16 +37,18 @@ async function callScraper(baseUrl: string, input: string, timeoutMs: number): P
       signal: controller.signal,
     });
   } catch {
+    clearTimeout(timer);
     return {
       kind: "unreachable",
       response: NextResponse.json({ error: "Scraper service unreachable" }, { status: 503 }),
     };
-  } finally {
-    clearTimeout(timer);
   }
 
   // ngrok/proxies return HTML error pages when the tunnel is down — a JSON parse
   // failure means "not a real scraper response", so fall through to the next host.
+  // The abort timer stays armed through the body read: headers can arrive fast
+  // while the body stalls, and an undisarmed abort makes json() reject so we
+  // fall through to the next host instead of hanging until maxDuration.
   let data: { scraped?: ScrapeResult; error?: string; via?: ScrapeVia; code?: string };
   try {
     data = await upstream.json();
@@ -58,6 +60,8 @@ async function callScraper(baseUrl: string, input: string, timeoutMs: number): P
         { status: 502 },
       ),
     };
+  } finally {
+    clearTimeout(timer);
   }
 
   if (upstream.ok) return { kind: "ok", scraped: data.scraped, via: data.via };
@@ -78,6 +82,15 @@ function invalidateAfterUpsert(hashtag: number) {
   revalidateTag("stats", "max");
   revalidateTag(`title-${hashtag}`, "max");
   revalidateTag(`similar-${hashtag}`, "max");
+  // Broad tag: neighbors' similar-<other> lists (tag overlap) reference this
+  // title too and would otherwise go stale forever.
+  revalidateTag("similar", "max");
+}
+
+// upsertScrapedTitle validates the payload at the write boundary and throws a
+// named validation error on malformed input — map those to 400, not 500.
+function isValidationError(e: unknown): e is Error {
+  return e instanceof Error && /invalid|validation/i.test(e.name);
 }
 
 export async function POST(req: Request) {
@@ -94,6 +107,9 @@ export async function POST(req: Request) {
       invalidateAfterUpsert(body.scraped.hashtag);
       return NextResponse.json({ scraped: body.scraped, saved });
     } catch (e) {
+      if (isValidationError(e)) {
+        return NextResponse.json({ error: e.message }, { status: 400 });
+      }
       console.error("commit failed:", e);
       return NextResponse.json({ error: "Internal commit error" }, { status: 500 });
     }
@@ -136,9 +152,17 @@ export async function POST(req: Request) {
         continue;
       }
       if (body.persist === false) return NextResponse.json({ scraped, via });
-      const saved = await upsertScrapedTitle(scraped);
-      invalidateAfterUpsert(scraped.hashtag);
-      return NextResponse.json({ scraped, saved, via });
+      try {
+        const saved = await upsertScrapedTitle(scraped);
+        invalidateAfterUpsert(scraped.hashtag);
+        return NextResponse.json({ scraped, saved, via });
+      } catch (e) {
+        if (isValidationError(e)) {
+          return NextResponse.json({ error: e.message }, { status: 400 });
+        }
+        console.error("persist failed:", e);
+        return NextResponse.json({ error: "Internal persist error" }, { status: 500 });
+      }
     }
     return lastError;
   }

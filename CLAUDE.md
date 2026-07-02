@@ -83,23 +83,35 @@ returned as-is; only an *unreachable* primary falls through. `scripts/scraper-se
 is the standalone host (runs the same `scrapeTitle`, adds ngrok + Render lifecycle).
 Full topology is in `SCRAPER.md`.
 
-### Postgres-maintained denormalized stats (migration `3_avg_tag_value`)
+### Postgres-maintained invariants (migrations `3_avg_tag_value`, `4_orphan_cleanup_triggers`)
 
-`tags.title_count` (how many titles carry a tag) and `titles.avg_tag_value`
-(mean of a title's tags' `title_count`) are **maintained by statement-level
-triggers on `titlestotags`**, not by application code. The library's
-`avg-tag-value` sort reads the denormalized column directly.
+Two kinds of DB-maintained data, both kept correct by triggers instead of app code:
 
-These triggers fire on **any** statement that mutates `titlestotags` —
-including the DELETE that Postgres runs internally for an FK `ON DELETE CASCADE`
-(verified empirically on PG17/Neon: the cascaded delete populates the trigger's
-`OLD TABLE` transition table and recomputes the counts). So `deleteTitle` in
-`lib/titles.ts` just calls `prisma.title.delete()` and lets the cascade remove
-the join rows and drive the recompute; re-scrapes go through `upsertScrapedTitle`,
-which delete+recreates the join rows in a transaction and the triggers keep the
-counts correct there too. (A prior comment claimed cascade would *not* fire the
-trigger and forced an explicit `titleTag.deleteMany` — that was false and has
-been removed.)
+**Denormalized stats** — `tags.title_count` (how many titles carry a tag) and
+`titles.avg_tag_value` (mean of a title's tags' `title_count`) are maintained by
+**statement-level triggers on `titlestotags`** (migration 3); the `avg-tag-value`
+sort reads the denormalized column directly. They fire on **any** statement that
+mutates `titlestotags` — including the DELETE Postgres runs internally for an FK
+`ON DELETE CASCADE` (verified on PG17/Neon: the cascaded delete populates the
+trigger's `OLD TABLE` transition table and recomputes the counts).
+
+**Orphan-entity cleanup** — entities (artists/groups/characters/parodies/tags)
+left with zero titles are removed by **deferred constraint triggers** on the five
+join tables (migration 4). They are `DEFERRABLE INITIALLY DEFERRED` (fire at
+COMMIT) *on purpose*: `upsertScrapedTitle` re-scrapes by delete+recreating a
+title's join rows in one transaction, and an *immediate* trigger would delete an
+entity the instant its old link was removed, so the re-insert would FK-violate.
+Deferring to commit lets a re-referenced entity survive (only genuine orphans go)
+and also cleans up entities dropped on re-scrape, which the old app-side cleanup
+missed.
+
+Because of both, `deleteTitle` in `lib/titles.ts` is just
+`prisma.title.deleteMany({ where: { hashtag } })` — the cascade removes the join
+rows, the stat triggers recompute, and the deferred triggers drop orphans; no
+app-side id-collection or cleanup. (A prior comment claimed cascade would *not*
+fire the stat trigger and forced an explicit `titleTag.deleteMany` — false,
+removed.) Migration 4 is created but applies on deploy (`build` runs
+`prisma migrate deploy`); locally run `pnpm db:deploy` after pulling it.
 
 ### Migrations
 

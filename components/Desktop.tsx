@@ -38,7 +38,7 @@ export function NhdbDesktop({
   search, setSearch, filters, setFilters,
   detailItem, setDetailItem, addOpen, setAddOpen,
   view, setView, onTagClick, onChipClick, onDelete, onRead, onAlterName, onRefresh,
-  recentAdds, density, onAddItems, loading, onLoadMore,
+  recentAdds, density, onAddItems, loading, onLoadMore, queryError,
 }: {
   items: Item[]; total: number; totalEver: number; dataset: Dataset;
   activeFilterCount: number;
@@ -56,6 +56,7 @@ export function NhdbDesktop({
   recentAdds: Item[]; density: "comfortable" | "compact";
   onAddItems: (items: Item[]) => void;
   loading: boolean; onLoadMore: () => void;
+  queryError?: boolean;
 }) {
   return (
     <div className="w-full min-h-screen flex flex-col bg-nh-bg text-nh-text-1">
@@ -71,7 +72,8 @@ export function NhdbDesktop({
           {view === "gallery" && (
             <DesktopGallery items={items} total={total} totalCount={totalEver}
               filters={filters} onOpen={setDetailItem} onTagClick={onTagClick}
-              density={density} loading={loading} onLoadMore={onLoadMore} />
+              density={density} loading={loading} onLoadMore={onLoadMore}
+              queryError={queryError} />
           )}
           {view === "stats" && <StatsView dataset={dataset} onTagClick={onTagClick} />}
         </div>
@@ -484,11 +486,12 @@ function SortControl({ filters, setFilters }: { filters: Filters; setFilters: Re
   );
 }
 
-function DesktopGallery({ items, total, totalCount, filters, onOpen, onTagClick, density, loading, onLoadMore }: {
+function DesktopGallery({ items, total, totalCount, filters, onOpen, onTagClick, density, loading, onLoadMore, queryError }: {
   items: Item[]; total: number; totalCount: number; filters: Filters;
   onOpen: (i: Item) => void; onTagClick: (t: string) => void;
   density: "comfortable" | "compact";
   loading: boolean; onLoadMore: () => void;
+  queryError?: boolean;
 }) {
   const cols = density === "compact" ? "grid-cols-6" : "grid-cols-5";
   return (
@@ -504,6 +507,11 @@ function DesktopGallery({ items, total, totalCount, filters, onOpen, onTagClick,
           {total} of {totalCount} · sort {filters.sortField.replace(/-/g, " ")} · {filters.sortDir}
         </span>
       </div>
+      {queryError && (
+        <div className="mb-3 font-mono text-[11px] text-[#ff6b6b]">
+          query failed — results may be stale · adjust filters to retry
+        </div>
+      )}
       <div className={`grid ${cols} gap-3.5`}>
         {items.map(item => (
           <GalleryCard key={item.hashtag} item={item} onOpen={onOpen} onTagClick={onTagClick} density="comfortable" />

@@ -66,6 +66,12 @@ function parseInfoDiv(html: string, hashtag: number): ScrapeResult {
   const info = $("#info");
 
   const title_name = info.find("h1 .pretty").text().trim();
+  // An empty title means the selector no longer matches (markup drift) or the
+  // page served an empty #info — fail loudly rather than upsert a blank record
+  // that a later `rescrape --all` would overwrite good data with.
+  if (title_name === "") {
+    throw new ScrapeError(`parsed empty title for #${hashtag} — markup drift?`, "TIMEOUT");
+  }
 
   const image_link =
     $("div#cover img").attr("data-src") ||
@@ -78,9 +84,14 @@ function parseInfoDiv(html: string, hashtag: number): ScrapeResult {
     .find(".name")
     .first()
     .text();
-  const pages = parseInt(pagesText, 10) || 0;
+  const pages = parseCount(pagesText);
 
-  const datetimeAttr = info.find("time").attr("datetime") || new Date().toISOString();
+  // Never fabricate an upload date: a missing/malformed datetime attr would
+  // otherwise get stamped as "today" and re-stamped on every re-scrape.
+  const datetimeAttr = (info.find("time").attr("datetime") ?? "").trim();
+  if (datetimeAttr === "" || Number.isNaN(Date.parse(datetimeAttr))) {
+    throw new ScrapeError(`missing or malformed upload date for #${hashtag}`, "TIMEOUT");
+  }
   const uploaded_at = datetimeAttr.split("T")[0];
 
   const extractEntities = (label: string): ScrapeEntity[] => {
@@ -236,6 +247,19 @@ async function launchWarm(): Promise<{ browser: PWBrowser; context: PWBrowserCon
     ],
   });
 
+  // A post-launch crash must not leave a dead browser cached forever — uncache
+  // so the next scrape relaunches. Only clear _warm if it still points at THIS
+  // browser (closeScraper / a newer launch may have replaced it already).
+  browser.on("disconnected", () => {
+    const cached = _warm;
+    if (!cached) return;
+    cached
+      .then((w) => {
+        if (w.browser === browser && _warm === cached) _warm = null;
+      })
+      .catch(() => {});
+  });
+
   const context = await browser.newContext({
     userAgent: USER_AGENT,
     viewport: { width: 1280, height: 800 },
@@ -244,11 +268,14 @@ async function launchWarm(): Promise<{ browser: PWBrowser; context: PWBrowserCon
   });
 
   // Skip subresources for speed — we only need the server-rendered HTML.
+  // abort()/continue() reject ("Target page closed") when the page is closing;
+  // the rejections are fire-and-forget so they MUST be observed or they become
+  // unhandled rejections that crash the standalone server process.
   await context.route("**/*", (route: import("playwright").Route) => {
     if (["image", "media", "font", "stylesheet"].includes(route.request().resourceType())) {
-      route.abort();
+      route.abort().catch(() => {});
     } else {
-      route.continue();
+      route.continue().catch(() => {});
     }
   });
 
@@ -280,8 +307,31 @@ export async function closeScraper(): Promise<void> {
 }
 
 async function scrapeViaBrowser(url: string, hashtag: number): Promise<ScrapeResult> {
-  const { context } = await getWarm();
-  const page = await context.newPage();
+  // Disarm any pending idle-close FIRST: a scrape starting just before the
+  // timer fires must not have closeScraper() pull the browser out from under
+  // its page.goto. The `finally` below re-arms it once we're done.
+  if (_idleTimer) {
+    clearTimeout(_idleTimer);
+    _idleTimer = null;
+  }
+
+  const warm = getWarm();
+  let browser: PWBrowser;
+  let page: import("playwright").Page;
+  try {
+    const w = await warm;
+    browser = w.browser;
+    page = await w.context.newPage();
+  } catch (e) {
+    // Launch failed or the cached browser died — uncache so the next call
+    // relaunches instead of reusing a dead session forever.
+    if (_warm === warm) _warm = null;
+    throw new ScrapeError(
+      `could not acquire a browser page: ${e instanceof Error ? e.message : String(e)}`,
+      "TIMEOUT"
+    );
+  }
+
   try {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 });
 
@@ -302,6 +352,16 @@ async function scrapeViaBrowser(url: string, hashtag: number): Promise<ScrapeRes
 
     const html = await page.content();
     return parseInfoDiv(html, hashtag);
+  } catch (e) {
+    if (e instanceof ScrapeError) throw e;
+    // A raw Playwright failure usually means the browser died mid-scrape —
+    // uncache it (the "disconnected" handler covers most cases; this is the
+    // belt to its suspenders) and surface a typed error.
+    if (!browser.isConnected() && _warm === warm) _warm = null;
+    throw new ScrapeError(
+      `browser scrape failed: ${e instanceof Error ? e.message : String(e)}`,
+      "TIMEOUT"
+    );
   } finally {
     await page.close().catch(() => {});
     scheduleIdleClose();
