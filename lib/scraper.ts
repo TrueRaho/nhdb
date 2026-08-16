@@ -61,7 +61,10 @@ function parseCount(raw: string): number {
   return parseInt(raw.replace(/,/g, ""), 10) || 0;
 }
 
-function parseInfoDiv(html: string, hashtag: number): ScrapeResult {
+// Exported for tests (lib/scraper.test.ts pins the parse against fixture HTML
+// so nhentai markup drift or a selector edit fails loudly); not part of the
+// module's public surface otherwise.
+export function parseInfoDiv(html: string, hashtag: number): ScrapeResult {
   const $ = cheerio.load(html);
   const info = $("#info");
 
@@ -124,7 +127,8 @@ function parseInfoDiv(html: string, hashtag: number): ScrapeResult {
 }
 
 // Cloudflare interstitials served instead of the real page.
-function looksLikeChallenge(html: string): boolean {
+// Exported for tests only.
+export function looksLikeChallenge(html: string): boolean {
   const head = html.slice(0, 4000).toLowerCase();
   return (
     head.includes("just a moment") ||
@@ -211,10 +215,15 @@ let _warm: Promise<{ browser: PWBrowser; context: PWBrowserContext }> | null = n
 
 const IDLE_MS = Number(process.env.SCRAPER_BROWSER_IDLE_MS ?? 60_000);
 let _idleTimer: ReturnType<typeof setTimeout> | null = null;
+// Browser scrapes currently in flight. The standalone server handles requests
+// concurrently, so scrape A finishing must not arm the idle timer while scrape
+// B is still driving the shared warm browser — the timer would close it under
+// B's page.goto.
+let _activeBrowserScrapes = 0;
 
 function scheduleIdleClose(): void {
   if (_idleTimer) clearTimeout(_idleTimer);
-  if (IDLE_MS > 0) {
+  if (IDLE_MS > 0 && _activeBrowserScrapes === 0) {
     _idleTimer = setTimeout(() => void closeScraper(), IDLE_MS);
     _idleTimer.unref?.();
   }
@@ -309,7 +318,9 @@ export async function closeScraper(): Promise<void> {
 async function scrapeViaBrowser(url: string, hashtag: number): Promise<ScrapeResult> {
   // Disarm any pending idle-close FIRST: a scrape starting just before the
   // timer fires must not have closeScraper() pull the browser out from under
-  // its page.goto. The `finally` below re-arms it once we're done.
+  // its page.goto. The counter keeps a concurrent scrape's `finally` from
+  // re-arming it while we're still running; ours re-arms once the last one is done.
+  _activeBrowserScrapes++;
   if (_idleTimer) {
     clearTimeout(_idleTimer);
     _idleTimer = null;
@@ -324,8 +335,15 @@ async function scrapeViaBrowser(url: string, hashtag: number): Promise<ScrapeRes
     page = await w.context.newPage();
   } catch (e) {
     // Launch failed or the cached browser died — uncache so the next call
-    // relaunches instead of reusing a dead session forever.
-    if (_warm === warm) _warm = null;
+    // relaunches instead of reusing a dead session forever. If the browser
+    // itself is alive (newPage failed some other way), close it too: nulling
+    // _warm alone would orphan a live Chromium process nothing can reach again.
+    if (_warm === warm) {
+      _warm = null;
+      warm.then((w) => void w.browser.close().catch(() => {})).catch(() => {});
+    }
+    _activeBrowserScrapes--;
+    scheduleIdleClose();
     throw new ScrapeError(
       `could not acquire a browser page: ${e instanceof Error ? e.message : String(e)}`,
       "TIMEOUT"
@@ -364,6 +382,7 @@ async function scrapeViaBrowser(url: string, hashtag: number): Promise<ScrapeRes
     );
   } finally {
     await page.close().catch(() => {});
+    _activeBrowserScrapes--;
     scheduleIdleClose();
   }
 }

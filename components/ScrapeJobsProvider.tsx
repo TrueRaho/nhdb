@@ -3,7 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import type { Item } from "../lib/data";
 import type { ScrapeResult, ScrapeVia } from "../lib/scraper";
-import { extractHashtag } from "../lib/utils";
+import { parseInputs } from "../lib/utils";
 import { commitScrapedAction, findExistingTitlesAction } from "../app/actions";
 
 export type ScrapeJobStatus = "scraping" | "ready" | "duplicate" | "error";
@@ -45,6 +45,13 @@ const STORAGE_KEY = "nhdb.scrapeJobs.v1";
 const MAX_SCRAPE_ATTEMPTS = 8;
 const RETRY_DELAY_MS = 4_000;
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+// Scrapes run through a bounded pool rather than all at once. Pasting a phone's
+// whole tab list queues dozens of entries in one go, and firing them together means dozens of concurrent /api/scrape calls funnelling into a single ngrok tunnel — or, when
+// the primary box is asleep, dozens of parallel Playwright launches on the free Render
+// fallback, which it does not survive.
+const MAX_CONCURRENT_SCRAPES = 4;
+const QUEUED_NOTE = "queued…";
 
 const JOB_STATUSES: readonly ScrapeJobStatus[] = ["scraping", "ready", "duplicate", "error"];
 
@@ -100,10 +107,16 @@ export function ScrapeJobsProvider({ children }: { children: ReactNode }) {
       return [];
     }
   });
-  // Keys with a runOne loop currently in flight (including between retries).
-  // Guards against double-driving the same job from startScrape, retry, and the
-  // resume effect below.
-  const inFlight = useRef<Set<string>>(new Set());
+  // Keys the pool owns — queued *or* running (including between retries) —
+  // mapped to a token unique to that drive. Guards against double-driving the
+  // same job from startScrape, retry, and the resume effect below. The token
+  // (not mere key presence) is what a running loop checks: after a dismiss +
+  // immediate re-add, the re-add owns a fresh token, so the stale loop sees the
+  // mismatch and dies without tearing down the new drive's bookkeeping.
+  const inFlight = useRef<Map<string, symbol>>(new Map());
+  // Waiting entries and the number of runOne loops currently executing.
+  const queue = useRef<{ raw: string; key: string; token: symbol }[]>([]);
+  const active = useRef(0);
   // Latest jobs, readable synchronously (startScrape decides what to scrape
   // outside the setJobs updater, so updaters stay pure).
   const jobsRef = useRef(jobs);
@@ -132,80 +145,139 @@ export function ScrapeJobsProvider({ children }: { children: ReactNode }) {
     setJobs((prev) => prev.filter((j) => j.key !== key));
   }, []);
 
+  // Mark a job as failed. Also used when runOne itself throws: leaving the job
+  // "scraping" while the pool forgets the key would let the resume effect below
+  // re-enqueue it forever.
+  const failJob = useCallback((key: string, error: string) => {
+    setJobs((prev) =>
+      prev.map((j) => (j.key === key ? { ...j, status: "error", error, note: undefined } : j)),
+    );
+  }, []);
+
   // Run one scrape and fold the result back into the matching job. Retries
   // transient failures (cold scraper / network) on its own; a failure only lands
   // on the job as status "error" once the attempt budget is spent or the verdict
-  // is definitive. Returns nothing — never throws.
-  const runOne = useCallback((raw: string, placeholderKey: string) => {
-    if (inFlight.current.has(placeholderKey)) return;
-    inFlight.current.add(placeholderKey);
+  // is definitive. The pool awaits it only to learn when the slot frees up.
+  const runOne = useCallback(async (raw: string, placeholderKey: string, token: symbol): Promise<void> => {
+    for (let attempt = 1; attempt <= MAX_SCRAPE_ATTEMPTS; attempt++) {
+      // Dismissed mid-flight (dismiss() drops the key) or superseded by a
+      // newer drive for the same key — stop retrying.
+      if (inFlight.current.get(placeholderKey) !== token) return;
+      // Provider unmounted — stop the loop instead of fetching into the void.
+      const signal = abortRef.current?.signal;
+      if (signal?.aborted) return;
 
-    void (async () => {
+      let res: Response | null = null;
       try {
-        for (let attempt = 1; attempt <= MAX_SCRAPE_ATTEMPTS; attempt++) {
-          // Dismissed mid-flight (dismiss() drops the key) — stop retrying.
-          if (!inFlight.current.has(placeholderKey)) return;
-          // Provider unmounted — stop the loop instead of fetching into the void.
-          const signal = abortRef.current?.signal;
-          if (signal?.aborted) return;
-
-          let res: Response | null = null;
-          try {
-            res = await fetch("/api/scrape", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ input: raw, persist: false }),
-              signal,
-            });
-          } catch {
-            if (signal?.aborted) return;
-            // Network error — transient; fall through to the retry path below.
-          }
-
-          if (res?.ok) {
-            const { scraped, via } = (await res.json()) as { scraped: ScrapeResult; via?: ScrapeVia };
-            const realKey = `#${scraped.hashtag}`;
-            const item = itemFromScraped(scraped);
-            setJobs((prev) => {
-              // If the placeholder was dismissed mid-flight, drop the result.
-              if (!prev.some((j) => j.key === placeholderKey)) return prev;
-              const without = prev.filter((j) => j.key !== placeholderKey && j.key !== realKey);
-              return [...without, { key: realKey, input: raw, status: "ready", item, raw: scraped, via }];
-            });
-            return;
-          }
-
-          // 4xx = definitive verdict about the input (bad / not found / auth);
-          // anything else (5xx, network error) is transient — retry until spent.
-          let message = "scraper unreachable";
-          let definitive = false;
-          if (res) {
-            definitive = res.status >= 400 && res.status < 500;
-            const body = (await res.json().catch(() => null)) as { error?: string } | null;
-            message = body?.error ?? res.statusText;
-          }
-
-          if (definitive || attempt >= MAX_SCRAPE_ATTEMPTS) {
-            const finalMsg = definitive ? message : "scraper didn't respond — retry";
-            setJobs((prev) =>
-              prev.map((j) =>
-                j.key === placeholderKey ? { ...j, status: "error", error: finalMsg, note: undefined } : j,
-              ),
-            );
-            return;
-          }
-
-          // Transient — show a gentle progress hint and back off before retrying.
-          setJobs((prev) =>
-            prev.map((j) => (j.key === placeholderKey ? { ...j, note: `waking scraper… (try ${attempt + 1})` } : j)),
-          );
-          await delay(RETRY_DELAY_MS);
-          if (abortRef.current?.signal.aborted) return;
-        }
-      } finally {
-        inFlight.current.delete(placeholderKey);
+        res = await fetch("/api/scrape", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ input: raw, persist: false }),
+          signal,
+        });
+      } catch {
+        if (signal?.aborted) return;
+        // Network error — transient; fall through to the retry path below.
       }
-    })();
+
+      if (res?.ok) {
+        // Re-check ownership after the await: a dismiss that landed while the
+        // response was in flight must win over the stale result.
+        if (inFlight.current.get(placeholderKey) !== token) return;
+        const { scraped, via } = (await res.json()) as { scraped: ScrapeResult; via?: ScrapeVia };
+        const realKey = `#${scraped.hashtag}`;
+        const item = itemFromScraped(scraped);
+        setJobs((prev) => {
+          // If the placeholder was dismissed mid-flight, drop the result.
+          if (!prev.some((j) => j.key === placeholderKey)) return prev;
+          const without = prev.filter((j) => j.key !== placeholderKey && j.key !== realKey);
+          return [...without, { key: realKey, input: raw, status: "ready", item, raw: scraped, via }];
+        });
+        return;
+      }
+
+      // 4xx = definitive verdict about the input (bad / not found / auth);
+      // anything else (5xx, network error) is transient — retry until spent.
+      let message = "scraper unreachable";
+      let definitive = false;
+      if (res) {
+        definitive = res.status >= 400 && res.status < 500;
+        const body = (await res.json().catch(() => null)) as { error?: string } | null;
+        message = body?.error ?? res.statusText;
+      }
+
+      if (definitive || attempt >= MAX_SCRAPE_ATTEMPTS) {
+        failJob(placeholderKey, definitive ? message : "scraper didn't respond — retry");
+        return;
+      }
+
+      // Transient — show a gentle progress hint and back off before retrying.
+      setJobs((prev) =>
+        prev.map((j) => (j.key === placeholderKey ? { ...j, note: `waking scraper… (try ${attempt + 1})` } : j)),
+      );
+      await delay(RETRY_DELAY_MS);
+      if (abortRef.current?.signal.aborted) return;
+    }
+  }, [failJob]);
+
+  // Start queued work up to the concurrency cap. Called on every enqueue and
+  // again whenever a slot frees, so it is the only place runOne is invoked.
+  // Reached through a ref because it re-enters itself from that completion
+  // callback.
+  const pumpRef = useRef<() => void>(() => {});
+  const pump = useCallback(() => {
+    while (active.current < MAX_CONCURRENT_SCRAPES) {
+      const next = queue.current.shift();
+      if (!next) return;
+      // Dismissed while it sat in the queue (dismiss() drops the key) or
+      // superseded by a re-add that owns a newer token — skip the stale entry.
+      if (inFlight.current.get(next.key) !== next.token) continue;
+      active.current++;
+      // Only rewrite state if this job actually shows the queued hint; a plain
+      // .map() here would rerender the whole list once per started scrape.
+      setJobs((prev) =>
+        prev.some((j) => j.key === next.key && j.note === QUEUED_NOTE)
+          ? prev.map((j) => (j.key === next.key ? { ...j, note: undefined } : j))
+          : prev,
+      );
+      void runOne(next.raw, next.key, next.token)
+        .catch(() => failJob(next.key, "scrape failed"))
+        .finally(() => {
+          active.current--;
+          // Release only our own token — a re-add's fresh drive must survive.
+          if (inFlight.current.get(next.key) === next.token) inFlight.current.delete(next.key);
+          pumpRef.current();
+          // A drive can end without a terminal status: the abort path (StrictMode
+          // remounts the provider, aborting controller #1 while the resume effect
+          // has already re-run against the still-populated inFlight map). Poke the
+          // state only if the job is still "scraping" with no driver — the updater
+          // sees the LATEST jobs, so a normally-completed job never re-renders —
+          // and the identity change re-runs the resume effect, which re-enqueues.
+          setJobs((prev) =>
+            prev.some((j) => j.key === next.key && j.status === "scraping" && !inFlight.current.has(j.key))
+              ? [...prev]
+              : prev,
+          );
+        });
+    }
+  }, [runOne, failJob]);
+  useEffect(() => {
+    pumpRef.current = pump;
+  }, [pump]);
+
+  // Hand a job to the pool. inFlight covers queued *and* running work, so the
+  // same key can't be driven twice by startScrape, retry and the resume effect.
+  const enqueue = useCallback((raw: string, key: string) => {
+    if (inFlight.current.has(key)) return;
+    const token = Symbol(key);
+    inFlight.current.set(key, token);
+    queue.current.push({ raw, key, token });
+    // Say "queued" rather than "scraping" for entries that must wait — with a
+    // 40-link paste most of the list is waiting, not working.
+    if (active.current + queue.current.length > MAX_CONCURRENT_SCRAPES) {
+      setJobs((prev) => prev.map((j) => (j.key === key ? { ...j, note: QUEUED_NOTE } : j)));
+    }
+    pumpRef.current();
   }, []);
 
   // Resume any job left "scraping" that isn't already being driven — e.g. one
@@ -213,28 +285,22 @@ export function ScrapeJobsProvider({ children }: { children: ReactNode }) {
   // inFlight guard makes this safe to run on every jobs change.
   useEffect(() => {
     for (const j of jobs) {
-      if (j.status === "scraping" && !inFlight.current.has(j.key)) runOne(j.input, j.key);
+      if (j.status === "scraping" && !inFlight.current.has(j.key)) enqueue(j.input, j.key);
     }
-  }, [jobs, runOne]);
+  }, [jobs, enqueue]);
 
   const startScrape = useCallback(
     async (rawInput: string) => {
-      const inputs = rawInput
-        .split(/[, \n]+/)
-        .map((s) => s.trim())
-        .filter(Boolean);
-      if (inputs.length === 0) return;
+      // parseInputs handles the messy end of the input space (a pasted dump of
+      // every open tab, titles and all) and returns deduped ids in paste order.
+      const ids = parseInputs(rawInput);
+      if (ids.length === 0) return;
 
-      const parsed = inputs.map((raw) => ({ raw, hashtag: extractHashtag(raw) }));
-      const hashtags = [...new Set(parsed.map((p) => p.hashtag).filter((h): h is number => h != null))];
       let existingByTag = new Map<number, Item>();
       try {
-        const existing = hashtags.length > 0 ? await findExistingTitlesAction(hashtags) : [];
+        const existing = await findExistingTitlesAction(ids);
         existingByTag = new Map(existing.map((i) => [i.hashtag, i]));
       } catch {}
-
-      const keyOf = (p: { raw: string; hashtag: number | null }) =>
-        p.hashtag != null ? `#${p.hashtag}` : `raw:${p.raw}`;
 
       // Decide what each input becomes BEFORE touching state, against the
       // latest jobs snapshot — the setJobs updater below stays pure (updaters
@@ -242,15 +308,13 @@ export function ScrapeJobsProvider({ children }: { children: ReactNode }) {
       const currentByKey = new Map(jobsRef.current.map((j) => [j.key, j]));
       const upserts: ScrapeJob[] = [];
       const toScrape: { raw: string; key: string }[] = [];
-      const seen = new Set<string>();
-      for (const p of parsed) {
-        const key = keyOf(p);
-        if (seen.has(key)) continue;
-        seen.add(key);
+      for (const id of ids) {
+        const key = `#${id}`;
+        const input = String(id);
 
-        const known = p.hashtag != null ? existingByTag.get(p.hashtag) : undefined;
+        const known = existingByTag.get(id);
         if (known) {
-          upserts.push({ key, input: p.raw, status: "duplicate", item: known });
+          upserts.push({ key, input, status: "duplicate", item: known });
           continue;
         }
 
@@ -258,8 +322,8 @@ export function ScrapeJobsProvider({ children }: { children: ReactNode }) {
         const current = currentByKey.get(key);
         if (current && (current.status === "scraping" || current.status === "ready")) continue;
 
-        upserts.push({ key, input: p.raw, status: "scraping" });
-        toScrape.push({ raw: p.raw, key });
+        upserts.push({ key, input, status: "scraping" });
+        toScrape.push({ raw: input, key });
       }
 
       if (upserts.length > 0) {
@@ -278,12 +342,12 @@ export function ScrapeJobsProvider({ children }: { children: ReactNode }) {
         });
       }
 
-      // Fire and forget — these resolve into the store on their own schedule,
-      // so the caller (and the modal) can move on / close. runOne's inFlight
-      // guard makes a duplicate kickoff for an already-driven key a no-op.
-      for (const { raw, key } of toScrape) runOne(raw, key);
+      // Fire and forget — the pool drains these on its own schedule, so the
+      // caller (and the modal) can move on / close. enqueue's inFlight guard
+      // makes a duplicate kickoff for an already-driven key a no-op.
+      for (const { raw, key } of toScrape) enqueue(raw, key);
     },
-    [runOne],
+    [enqueue],
   );
 
   const retry = useCallback(
@@ -293,26 +357,30 @@ export function ScrapeJobsProvider({ children }: { children: ReactNode }) {
       setJobs((prev) =>
         prev.map((j) => (j.key === key ? { ...j, status: "scraping", error: undefined, note: undefined } : j)),
       );
-      runOne(job.input, key);
+      enqueue(job.input, key);
     },
-    [jobs, runOne],
+    [jobs, enqueue],
   );
 
   const commitReady = useCallback(async () => {
     const ready = jobs.filter((j) => j.status === "ready" && j.raw);
     if (ready.length === 0) return { saved: [] as Item[], failedMsg: null };
 
-    const results = await Promise.allSettled(
-      ready.map(async (j) => {
-        try {
-          return await commitScrapedAction(j.raw!);
-        } catch (e) {
-          throw new Error(`#${j.item?.hashtag ?? j.input}: ${e instanceof Error ? e.message : "save failed"}`);
-        }
-      }),
-    );
-    const saved = results.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
-    const failed = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+    // Commits run one at a time ON PURPOSE. The DB stat triggers (migration
+    // 3_avg_tag_value) recompute tags.title_count with COUNT(*) — a
+    // READ-COMMITTED recompute, so concurrent transactions touching the same
+    // tag can overwrite each other's counts. This client is the only writer,
+    // which makes serializing here a complete fix; a 40-title batch trades a
+    // few extra seconds of "saving…" for counts that stay correct.
+    const saved: Item[] = [];
+    const failed: Error[] = [];
+    for (const j of ready) {
+      try {
+        saved.push(await commitScrapedAction(j.raw!));
+      } catch (e) {
+        failed.push(new Error(`#${j.item?.hashtag ?? j.input}: ${e instanceof Error ? e.message : "save failed"}`));
+      }
+    }
     const savedTags = new Set(saved.map((s) => s.hashtag));
 
     // Saving clears the whole review list (duplicates and errors included), not
@@ -326,9 +394,7 @@ export function ScrapeJobsProvider({ children }: { children: ReactNode }) {
 
     return {
       saved,
-      failedMsg: failed.length
-        ? failed.map((f) => (f.reason instanceof Error ? f.reason.message : "save failed")).join(" · ")
-        : null,
+      failedMsg: failed.length ? failed.map((f) => f.message).join(" · ") : null,
     };
   }, [jobs]);
 

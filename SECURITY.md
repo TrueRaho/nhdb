@@ -23,6 +23,10 @@ deployment** that Vercel Deployment Protection does not cover. It is protected b
 constant-time compare (`timingSafeEqual`). `SCRAPER_SECRET` is the only thing
 protecting the Render service — keep it set on both sides.
 
+The server **fails closed**: if `SCRAPER_SECRET` is unset while the process
+would be publicly reachable (on Render, or with the ngrok tunnel enabled), it
+refuses to start. Local-only runs without a secret need `DISABLE_NGROK=1`.
+
 ## Automation behind protection: `pnpm rescrape`
 
 Running `pnpm rescrape` against a **protected production URL** (i.e. `APP_URL`

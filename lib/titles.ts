@@ -17,6 +17,7 @@ import type { ScrapeEntity, ScrapeResult } from "./scraper";
 // titlestotags), so it is deliberately absent from both the INSERT column
 // list (defaults to 0 on insert) and the DO UPDATE SET (stays untouched).
 async function batchUpsertEntities(
+  db: Prisma.TransactionClient,
   items: ScrapeEntity[],
   table: string,
   idCol: string,
@@ -27,7 +28,7 @@ async function batchUpsertEntities(
   // Dedup by name (last occurrence wins): a single INSERT … ON CONFLICT DO
   // UPDATE errors with "cannot affect row a second time" on duplicate names.
   const deduped = [...new Map(items.map((e) => [e.name, e])).values()];
-  const rows = await prisma.$queryRaw<{ id: number; name: string }[]>(Prisma.sql`
+  const rows = await db.$queryRaw<{ id: number; name: string }[]>(Prisma.sql`
     INSERT INTO ${Prisma.raw(`"${table}" ("${nameCol}", "${linkCol}", total_works)`)}
     VALUES ${Prisma.join(deduped.map((e) => Prisma.sql`(${e.name}, ${e.link}, ${e.total_works})`))}
     ON CONFLICT (${Prisma.raw(`"${nameCol}"`)}) DO UPDATE
@@ -40,20 +41,20 @@ async function batchUpsertEntities(
   return items.map((e) => map.get(e.name)!);
 }
 
-const batchUpsertArtists = (items: ScrapeEntity[]) =>
-  batchUpsertEntities(items, "artists", "id_artist", "artist_name", "artist_link");
+const batchUpsertArtists = (db: Prisma.TransactionClient, items: ScrapeEntity[]) =>
+  batchUpsertEntities(db, items, "artists", "id_artist", "artist_name", "artist_link");
 
-const batchUpsertGroups = (items: ScrapeEntity[]) =>
-  batchUpsertEntities(items, "groups", "id_group", "group_name", "group_link");
+const batchUpsertGroups = (db: Prisma.TransactionClient, items: ScrapeEntity[]) =>
+  batchUpsertEntities(db, items, "groups", "id_group", "group_name", "group_link");
 
-const batchUpsertCharacters = (items: ScrapeEntity[]) =>
-  batchUpsertEntities(items, "characters", "id_character", "character_name", "character_link");
+const batchUpsertCharacters = (db: Prisma.TransactionClient, items: ScrapeEntity[]) =>
+  batchUpsertEntities(db, items, "characters", "id_character", "character_name", "character_link");
 
-const batchUpsertParodies = (items: ScrapeEntity[]) =>
-  batchUpsertEntities(items, "parodies", "id_parodie", "parodie_name", "parodie_link");
+const batchUpsertParodies = (db: Prisma.TransactionClient, items: ScrapeEntity[]) =>
+  batchUpsertEntities(db, items, "parodies", "id_parodie", "parodie_name", "parodie_link");
 
-const batchUpsertTags = (items: ScrapeEntity[]) =>
-  batchUpsertEntities(items, "tags", "id_tag", "tag_name", "tag_link");
+const batchUpsertTags = (db: Prisma.TransactionClient, items: ScrapeEntity[]) =>
+  batchUpsertEntities(db, items, "tags", "id_tag", "tag_name", "tag_link");
 
 // Thrown for a malformed client-supplied scrape payload. `name` is set to
 // "ValidationError" so the /api/scrape route's isValidationError() maps it to
@@ -85,15 +86,23 @@ function assertValidScrapePayload(s: ScrapeResult): void {
 export async function upsertScrapedTitle(s: ScrapeResult) {
   assertValidScrapePayload(s);
 
-  const [artistIds, groupIds, characterIds, parodyIds, tagIds] = await Promise.all([
-    batchUpsertArtists(s.artists),
-    batchUpsertGroups(s.groups),
-    batchUpsertCharacters(s.characters),
-    batchUpsertParodies(s.parodies),
-    batchUpsertTags(s.tags),
-  ]);
-
   return prisma.$transaction(async (tx) => {
+    // Entity upserts live INSIDE the transaction on purpose: creating an
+    // entity in autocommit and linking it in a later transaction leaves a
+    // window where the entity exists with zero links — a concurrently
+    // committing delete's deferred orphan sweep (migration 4) could reap it
+    // and FK-abort this upsert. Created-and-linked atomically, a new entity
+    // is invisible to other transactions until it already has its links.
+    // Sequential awaits on purpose: Prisma discourages Promise.all inside an
+    // interactive transaction — every tx query serializes on one connection
+    // anyway, and concurrent awaits have caused ordering issues on some
+    // adapters.
+    const artistIds = await batchUpsertArtists(tx, s.artists);
+    const groupIds = await batchUpsertGroups(tx, s.groups);
+    const characterIds = await batchUpsertCharacters(tx, s.characters);
+    const parodyIds = await batchUpsertParodies(tx, s.parodies);
+    const tagIds = await batchUpsertTags(tx, s.tags);
+
     // alterName is user-managed (set manually via updateAlterName) — the
     // scrape path never writes it, neither on create nor on re-scrape.
     const titleData = {
@@ -109,10 +118,6 @@ export async function upsertScrapedTitle(s: ScrapeResult) {
       update: titleData,
     });
 
-    // Sequential awaits on purpose: Prisma discourages Promise.all inside an
-    // interactive transaction — every tx query serializes on one connection
-    // anyway, and concurrent awaits have caused ordering issues on some
-    // adapters.
     await tx.titleArtist.deleteMany({ where: { hashtag: s.hashtag } });
     await tx.titleGroup.deleteMany({ where: { hashtag: s.hashtag } });
     await tx.titleCharacter.deleteMany({ where: { hashtag: s.hashtag } });

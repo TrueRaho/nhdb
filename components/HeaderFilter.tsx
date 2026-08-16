@@ -75,14 +75,14 @@ export function sortOptions(options: string[], counts: Record<string, number>, s
 // Compact segmented control for picking an OptionSort.
 export function OptionSortToggle({ value, onChange }: { value: OptionSort; onChange: (s: OptionSort) => void }) {
   return (
-    <div className="inline-flex rounded-sm border border-nh-border bg-nh-input p-[2px]">
+    <div className="inline-flex rounded-sm border border-nh-border bg-nh-input p-0.5">
       {OPTION_SORTS.map(o => {
         const sel = value === o.id;
         return (
           <button
             key={o.id}
             onClick={() => onChange(o.id)}
-            className="px-1.5 py-[1px] rounded-[2px] font-mono text-[9px] font-semibold uppercase tracking-wider"
+            className="px-1.5 py-px rounded-xs font-mono text-[9px] font-semibold uppercase tracking-wider"
             style={{
               background: sel ? "var(--nh-accent)" : "transparent",
               color: sel ? "#0a0a0a" : "var(--nh-text-3)",
@@ -100,7 +100,7 @@ export function OptionSortToggle({ value, onChange }: { value: OptionSort; onCha
 // Shown only when 2+ values are selected, since the mode is a no-op below that.
 export function MatchToggle({ mode, onChange }: { mode: MatchMode; onChange: (m: MatchMode) => void }) {
   return (
-    <div className="inline-flex rounded-sm border border-nh-border bg-nh-input p-[2px]">
+    <div className="inline-flex rounded-sm border border-nh-border bg-nh-input p-0.5">
       {([
         { id: "and" as const, label: "all" },
         { id: "or" as const, label: "any" },
@@ -110,7 +110,7 @@ export function MatchToggle({ mode, onChange }: { mode: MatchMode; onChange: (m:
           <button
             key={o.id}
             onClick={() => onChange(o.id)}
-            className="px-1.5 py-[1px] rounded-[2px] font-mono text-[9px] font-semibold uppercase tracking-wider"
+            className="px-1.5 py-px rounded-xs font-mono text-[9px] font-semibold uppercase tracking-wider"
             style={{
               background: sel ? "var(--nh-accent)" : "transparent",
               color: sel ? "#0a0a0a" : "var(--nh-text-3)",
@@ -284,13 +284,13 @@ export function FilterSheet({ open, onClose, filters, setFilters, dataset, activ
             variant="ghost"
             size="icon"
             onClick={onClose}
-            className="size-[26px] rounded-md bg-nh-pill text-nh-text-2 hover:bg-nh-pill/80"
+            className="size-6.5 rounded-md bg-nh-pill text-nh-text-2 hover:bg-nh-pill/80"
           >
             <X className="size-3.5" />
           </Button>
         </div>
         <div
-          className="flex items-center gap-1 px-3 shrink-0 border-b border-nh-border [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          className="flex items-center gap-1 px-3 shrink-0 border-b border-nh-border scrollbar-none [&::-webkit-scrollbar]:hidden"
           style={{ overflowX: "auto", height: "44px" }}
         >
           {sections.map(s => {
@@ -416,7 +416,7 @@ function FilterMulti({ options, selected, onToggle, counts, placeholder, mode, o
               className="h-auto cursor-pointer rounded-sm border-0 bg-nh-accent px-1.5 py-1 font-mono text-[10px] font-semibold text-[#0a0a0a] gap-1 hover:bg-nh-accent/90"
             >
               {s}
-              <X className="size-[9px]" strokeWidth={2.4} />
+              <X className="size-2.25" strokeWidth={2.4} />
             </Badge>
           ))}
         </div>
@@ -430,10 +430,12 @@ function FilterMulti({ options, selected, onToggle, counts, placeholder, mode, o
               onClick={() => onToggle(o)}
               className="flex items-center gap-2 py-2 px-1 text-left border-b border-nh-border"
             >
+              {/* Presentational only — see SidebarMulti in Desktop.tsx: a
+                  handler here would double-toggle with the row's onClick. */}
               <Checkbox
                 checked={isSel}
-                onCheckedChange={() => onToggle(o)}
-                className="size-4 rounded-sm shrink-0"
+                tabIndex={-1}
+                className="size-4 rounded-sm shrink-0 pointer-events-none"
               />
               <span className="flex-1 font-mono text-xs text-nh-text-1 tracking-wide">{o}</span>
               <span className="font-mono text-[10px] text-nh-text-3">{counts?.[o] ?? 0}</span>
@@ -488,7 +490,7 @@ function FilterStatus({ filters, setFilters }: { filters: Filters; setFilters: R
   return (
     <div className="py-1">
       <div className="font-mono text-[9.5px] uppercase tracking-widest text-nh-text-3 mb-1.5">read status</div>
-      <div className="grid grid-cols-3 rounded-lg border border-nh-border bg-nh-input p-[3px]">
+      <div className="grid grid-cols-3 rounded-lg border border-nh-border bg-nh-input p-0.75">
         {READ_OPTIONS.map(o => {
           const sel = filters.read === o.id;
           return (
@@ -544,7 +546,7 @@ function FilterSort({ filters, setFilters }: { filters: Filters; setFilters: Rea
       <div>
         <div className="font-mono text-[9.5px] uppercase tracking-widest text-nh-text-3 mb-1.5">direction</div>
         <div
-          className="grid grid-cols-2 rounded-lg border border-nh-border bg-nh-input p-[3px]"
+          className="grid grid-cols-2 rounded-lg border border-nh-border bg-nh-input p-0.75"
           style={{ opacity: isRandom ? 0.4 : 1, pointerEvents: isRandom ? "none" : "auto" }}
         >
           {[

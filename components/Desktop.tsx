@@ -84,7 +84,7 @@ export function NhdbDesktop({
           showCloseButton={false}
           // flex (not the default grid): a grid auto track sizes to the content's
           // max-content width and overflows the fixed-width popup, clipping edges
-          className="flex flex-col bg-nh-surface border-nh-border p-0 max-w-none w-[920px] sm:max-w-[920px] h-[88vh] max-h-[88vh] rounded-2xl overflow-hidden gap-0"
+          className="flex flex-col bg-nh-surface border-nh-border p-0 max-w-none w-230 sm:max-w-230 h-[88vh] max-h-[88vh] rounded-2xl overflow-hidden gap-0"
         >
           <DialogTitle className="sr-only">Title detail</DialogTitle>
           <DialogDescription className="sr-only">Detailed information about the selected title.</DialogDescription>
@@ -107,7 +107,7 @@ export function NhdbDesktop({
       <Dialog open={addOpen} onOpenChange={(o: boolean) => { if (!o) setAddOpen(false); }}>
         <DialogContent
           showCloseButton={false}
-          className="flex flex-col bg-nh-surface border-nh-border p-0 max-w-none w-[620px] sm:max-w-[620px] h-[80vh] max-h-[80vh] rounded-2xl overflow-hidden gap-0"
+          className="flex flex-col bg-nh-surface border-nh-border p-0 max-w-none w-155 sm:max-w-155 h-[80vh] max-h-[80vh] rounded-2xl overflow-hidden gap-0"
         >
           <DialogTitle className="sr-only">Add titles</DialogTitle>
           <DialogDescription className="sr-only">Add new titles to your collection.</DialogDescription>
@@ -169,7 +169,7 @@ function DesktopHeader({ search, setSearch, onAdd, view, setView }: {
                 color: sel ? "var(--nh-accent)" : "var(--nh-text-2)",
               }}
             >
-              <Icon className="size-[13px]" />
+              <Icon className="size-3.25" />
               {t.label}
             </Button>
           );
@@ -178,14 +178,14 @@ function DesktopHeader({ search, setSearch, onAdd, view, setView }: {
 
       <div className="flex-1" />
 
-      <div className="relative w-[360px]">
+      <div className="relative w-90">
         <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-nh-text-3 pointer-events-none" />
         <Input
           ref={searchRef}
           value={search}
           onChange={e => setSearch(e.target.value)}
           placeholder="search title, artist, tag, hashtag…"
-          className="h-[34px] rounded-lg bg-nh-input border-nh-border pl-8 pr-12 font-mono text-xs tracking-wide text-nh-text-1 placeholder:text-nh-text-3"
+          className="h-8.5 rounded-lg bg-nh-input border-nh-border pl-8 pr-12 font-mono text-xs tracking-wide text-nh-text-1 placeholder:text-nh-text-3"
         />
         <kbd className="absolute right-2.5 top-1/2 -translate-y-1/2 font-mono text-[9.5px] text-nh-text-3 px-1.5 py-0.5 rounded-sm bg-nh-pill border border-nh-border">⌘K</kbd>
       </div>
@@ -193,7 +193,7 @@ function DesktopHeader({ search, setSearch, onAdd, view, setView }: {
       <div className="relative">
         <Button
           onClick={onAdd}
-          className="h-[34px] px-3.5 rounded-lg bg-nh-accent text-[#0a0a0a] gap-1.5 font-display font-bold text-xs hover:bg-nh-accent/90"
+          className="h-8.5 px-3.5 rounded-lg bg-nh-accent text-[#0a0a0a] gap-1.5 font-display font-bold text-xs hover:bg-nh-accent/90"
           style={{ letterSpacing: "-0.01em" }}
         >
           <Plus className="size-3.5" strokeWidth={2.4} />
@@ -227,7 +227,7 @@ function DesktopSidebar({ filters, setFilters, dataset, activeFilterCount, match
   const clearAll = () => setFilters(defaultFilters(dataset.pageMin, dataset.pageMax));
 
   return (
-    <div className="w-[280px] shrink-0 border-r border-nh-border overflow-auto pt-4 pb-16 bg-nh-surface">
+    <div className="w-70 shrink-0 border-r border-nh-border overflow-auto pt-4 pb-16 bg-nh-surface">
       <div className="px-4 pb-3.5 flex items-baseline gap-1.5">
         <span
           className="font-display font-extrabold text-nh-accent leading-none"
@@ -261,7 +261,7 @@ function DesktopSidebar({ filters, setFilters, dataset, activeFilterCount, match
                 key={o.id}
                 onClick={() => setFilters(f => ({ ...f, read: o.id }))}
                 variant="ghost"
-                className="h-[26px] rounded-sm font-mono text-[10px] font-semibold tracking-wide hover:bg-transparent"
+                className="h-6.5 rounded-sm font-mono text-[10px] font-semibold tracking-wide hover:bg-transparent"
                 style={{
                   background: sel ? "var(--nh-accent)" : "transparent",
                   color: sel ? "#0a0a0a" : "var(--nh-text-2)",
@@ -275,7 +275,7 @@ function DesktopSidebar({ filters, setFilters, dataset, activeFilterCount, match
         <Button
           onClick={() => setFilters(f => ({ ...f, noAlter: !f.noAlter }))}
           variant="ghost"
-          className="mt-1.5 h-[28px] w-full justify-start rounded-md border border-nh-border font-mono text-[10px] font-semibold tracking-wide hover:bg-transparent"
+          className="mt-1.5 h-7 w-full justify-start rounded-md border border-nh-border font-mono text-[10px] font-semibold tracking-wide hover:bg-transparent"
           style={{
             background: filters.noAlter ? "var(--nh-accent)" : "transparent",
             color: filters.noAlter ? "#0a0a0a" : "var(--nh-text-2)",
@@ -411,10 +411,13 @@ function SidebarMulti({ options, counts, selected, onToggle, placeholder, defaul
               className="flex items-center gap-1.5 px-1 py-1 text-left rounded-sm"
               style={{ background: sel ? "var(--nh-accent-soft)" : "transparent" }}
             >
+              {/* Presentational only: the row button owns the click. A handler
+                  here would fire AND bubble to the row — two toggles, net no-op
+                  when clicking exactly on the checkbox. */}
               <Checkbox
                 checked={sel}
-                onCheckedChange={() => onToggle(o)}
-                className="size-3 rounded-[2px] shrink-0"
+                tabIndex={-1}
+                className="size-3 rounded-xs shrink-0 pointer-events-none"
               />
               <span
                 className="flex-1 min-w-0 font-mono text-[11px] truncate"
@@ -446,7 +449,7 @@ function SortControl({ filters, setFilters }: { filters: Filters; setFilters: Re
   return (
     <div className="flex flex-col gap-2">
       <Select value={filters.sortField} onValueChange={(v) => v && setFilters(f => ({ ...f, sortField: v as SortField }))}>
-        <SelectTrigger className="h-[30px] w-full rounded-md bg-nh-input border-nh-border font-mono text-[11px] text-nh-text-1">
+        <SelectTrigger className="h-7.5 w-full rounded-md bg-nh-input border-nh-border font-mono text-[11px] text-nh-text-1">
           <SelectValue />
         </SelectTrigger>
         <SelectContent className="bg-nh-surface-2 border-nh-border">
@@ -471,7 +474,7 @@ function SortControl({ filters, setFilters }: { filters: Filters; setFilters: Re
               key={d.id}
               onClick={() => setFilters(f => ({ ...f, sortDir: d.id }))}
               variant="ghost"
-              className="h-[26px] rounded-sm font-mono text-[10px] font-semibold tracking-wide hover:bg-transparent"
+              className="h-6.5 rounded-sm font-mono text-[10px] font-semibold tracking-wide hover:bg-transparent"
               style={{
                 background: sel ? "var(--nh-accent)" : "transparent",
                 color: sel ? "#0a0a0a" : "var(--nh-text-2)",

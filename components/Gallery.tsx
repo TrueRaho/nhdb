@@ -46,14 +46,14 @@ export const GalleryCard = memo(function GalleryCard({ item, onOpen, onTagClick,
         </div>
         {showLastRead && (
           <div
-            className="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 rounded-sm font-mono text-[8.5px] uppercase tracking-wider text-white/70 backdrop-blur-[4px]"
+            className="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 rounded-sm font-mono text-[8.5px] uppercase tracking-wider text-white/70 backdrop-blur-xs"
             style={{ background: "rgba(0,0,0,0.6)" }}
           >
             read · {lastReadStr}
           </div>
         )}
       </div>
-      <div className="flex flex-col gap-[3px] px-px min-w-0">
+      <div className="flex flex-col gap-0.75 px-px min-w-0">
         <div
           className="font-display font-semibold text-nh-text-1 truncate"
           style={{ fontSize: isCompact ? 12 : 13.5, lineHeight: 1.2, letterSpacing: "-0.01em" }}
@@ -67,7 +67,7 @@ export const GalleryCard = memo(function GalleryCard({ item, onOpen, onTagClick,
           {item.artists[0]}
         </div>
         {!isCompact && (
-          <div className="flex flex-wrap gap-[3px] mt-0.5 max-h-8 overflow-hidden">
+          <div className="flex flex-wrap gap-0.75 mt-0.5 max-h-8 overflow-hidden">
             {tagsToShow.map(t => (
               <Badge
                 key={t}

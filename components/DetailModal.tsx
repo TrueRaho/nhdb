@@ -139,7 +139,7 @@ function DetailModalInner({ item, onClose, onTagClick, onDelete, onRead, onOpen,
 
       <div className="flex-1 overflow-auto min-h-0">
         <div className="flex gap-3 px-4 pt-3">
-          <div className="w-[130px] shrink-0">
+          <div className="w-32.5 shrink-0">
             <NhCover item={item} size="large" />
           </div>
           <div className="flex-1 flex flex-col gap-1 min-w-0">
@@ -214,9 +214,9 @@ function DetailModalInner({ item, onClose, onTagClick, onDelete, onRead, onOpen,
                     const full = await getTitleAction(s.hashtag);
                     if (full) onOpen(full);
                   }}
-                  className="w-[104px] shrink-0 cursor-pointer"
+                  className="w-26 shrink-0 cursor-pointer"
                 >
-                  <div className="relative w-full aspect-[350/500] rounded-[var(--nh-radius-card)] overflow-hidden bg-nh-pill">
+                  <div className="relative w-full aspect-350/500 rounded-(--nh-radius-card) overflow-hidden bg-nh-pill">
                     {s.imageLink && (
                       <Image src={s.imageLink} alt="" fill sizes="104px" className="object-cover object-top" />
                     )}
@@ -277,7 +277,7 @@ function DetailModalInner({ item, onClose, onTagClick, onDelete, onRead, onOpen,
   return (
     <div
       onClick={onClose}
-      className="fixed inset-0 z-[110] flex flex-col justify-end"
+      className="fixed inset-0 z-110 flex flex-col justify-end"
       style={{ background: "rgba(0,0,0,0.6)", animation: "nhFadeIn 200ms ease" }}
     >
       {inner}

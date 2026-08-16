@@ -37,3 +37,58 @@ export function extractHashtag(input: string): number | null {
   if (hashMatch) return parseInt(hashMatch[1], 10)
   return null
 }
+
+// Pull every gallery id out of an arbitrary blob of text, in paste order,
+// deduped. This is the *batch* counterpart to extractHashtag: the add box is
+// filled by pasting far more often than by typing, and iOS Safari's "Copy
+// Links" (tab overview → long-press "N Tabs" → Copy Links) dumps every open
+// tab at once, interleaving page TITLES with the URLs. Splitting such a dump
+// into tokens and running extractHashtag over each one turned every word of
+// every title into its own bogus entry.
+//
+// A /g/<id> URL is unambiguous and always counts, whatever the id's length.
+// Bare numbers are trusted only as far as their company allows: when every
+// token is a number the box was typed by hand, so any digit run counts; as soon
+// as prose is mixed in it is a paste, where stray digits are page counts, years
+// and chapter numbers, so only id-shaped runs (5-7 digits) survive. Consequence:
+// a pre-10000 gallery inside a paste has to arrive as a URL, not a bare number.
+export function parseInputs(text: string): number[] {
+  const tokens = text.split(/[\s,]+/).filter(Boolean)
+  const typedByHand = tokens.every((t) => /^#?\d+$/.test(t))
+  const bare = typedByHand ? /^#?(\d+)$/ : /^#?(\d{5,7})$/
+  const ids: number[] = []
+  const seen = new Set<number>()
+
+  const push = (raw: string) => {
+    const n = parseInt(raw, 10)
+    if (!Number.isSafeInteger(n) || n <= 0 || seen.has(n)) return
+    seen.add(n)
+    ids.push(n)
+  }
+
+  // One left-to-right pass over the tokens keeps the output in paste order. A
+  // URL is matched anywhere inside its token, so surrounding punctuation
+  // (markdown link syntax, a trailing slash, quotes) is fine.
+  for (const token of tokens) {
+    const url = token.match(/nhentai\.net\/g\/(\d+)/)
+    if (url) { push(url[1]); continue }
+    const m = token.match(bare)
+    if (m) push(m[1])
+  }
+  return ids
+}
+
+// Query param that queues titles straight from a link: `/?add=177013,895243`.
+// Kept short because it is typed into an iOS Shortcut by hand.
+export const ADD_PARAM = "add"
+
+// Ids carried by an `?add=` deep link, given a location.search string.
+// URLSearchParams does the percent-decoding, so the param may hold bare ids, a
+// comma/space separated list, or whole encoded nhentai URLs — parseInputs
+// treats all three the same way it treats a paste. Repeats (`?add=1&add=2`) are
+// joined rather than dropped, since a share-sheet shortcut may append instead
+// of building one value.
+export function readAddParam(search: string): number[] {
+  const raw = new URLSearchParams(search).getAll(ADD_PARAM).join(" ")
+  return raw ? parseInputs(raw) : []
+}

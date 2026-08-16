@@ -8,6 +8,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { NhCover } from "./Primitives";
 import type { Item } from "../lib/data";
+import { parseInputs } from "../lib/utils";
 import { useScrapeJobs, type ScrapeJob } from "./ScrapeJobsProvider";
 
 export function AddModal({ open, onClose, recentAdds, embedded, onAdd }: {
@@ -31,7 +32,10 @@ export function AddModal({ open, onClose, recentAdds, embedded, onAdd }: {
 
   if (!open) return null;
 
-  const inputs = input.split(/[, \n]+/).map(s => s.trim()).filter(Boolean);
+  // Same parse the provider will run, so the count under the box is exactly
+  // what pressing scrape queues — the box is meant to take a whole pasted tab
+  // dump, where most of the text is titles rather than ids.
+  const inputs = parseInputs(input);
 
   const onScrape = async () => {
     if (inputs.length === 0 || submitting) return;
@@ -60,7 +64,7 @@ export function AddModal({ open, onClose, recentAdds, embedded, onAdd }: {
   return (
     <div
       onClick={embedded ? undefined : onClose}
-      className={embedded ? "relative w-full h-full" : "fixed inset-0 z-[120] flex flex-col justify-end"}
+      className={embedded ? "relative w-full h-full" : "fixed inset-0 z-120 flex flex-col justify-end"}
       style={{
         background: embedded ? "transparent" : "rgba(0,0,0,0.6)",
         animation: embedded ? "none" : "nhFadeIn 200ms ease",
@@ -103,7 +107,7 @@ export function AddModal({ open, onClose, recentAdds, embedded, onAdd }: {
 
         <div className="flex-1 overflow-auto min-h-0 p-4">
           <div className="font-mono text-[9.5px] uppercase tracking-widest text-nh-text-3 mb-1.5">
-            nhentai url or hashtag · supports comma-separated
+            nhentai urls or hashtags · paste a whole tab dump — titles are ignored
           </div>
           <Textarea
             value={input}
@@ -122,7 +126,7 @@ export function AddModal({ open, onClose, recentAdds, embedded, onAdd }: {
           )}
           <div className="flex items-center gap-2 mt-2.5">
             <div className="flex-1 font-mono text-[10px] tracking-wide text-nh-text-3">
-              {inputs.length} {inputs.length === 1 ? "entry" : "entries"} detected
+              {inputs.length} {inputs.length === 1 ? "id" : "ids"} detected
               {scrapingCount > 0 && (
                 <span className="text-nh-accent"> · {scrapingCount} scraping in background</span>
               )}
@@ -182,7 +186,7 @@ export function AddModal({ open, onClose, recentAdds, embedded, onAdd }: {
                   <Button
                     onClick={onConfirmAdd}
                     disabled={adding}
-                    className="mt-3 w-full h-[42px] rounded-lg bg-nh-accent text-[#0a0a0a] font-display font-extrabold text-[13px] gap-1.5 disabled:opacity-70 hover:bg-nh-accent/90"
+                    className="mt-3 w-full h-10.5 rounded-lg bg-nh-accent text-[#0a0a0a] font-display font-extrabold text-[13px] gap-1.5 disabled:opacity-70 hover:bg-nh-accent/90"
                     style={{ letterSpacing: "-0.01em" }}
                   >
                     {adding ? <><span className="nh-dot-pulse"/> saving…</> : `add ${readyCount} title${readyCount > 1 ? "s" : ""} to collection`}
@@ -242,7 +246,7 @@ function ScrapingRow({ job, onDismiss }: { job: ScrapeJob; onDismiss: () => void
   const label = job.key.startsWith("#") ? job.key : job.input;
   return (
     <div className="flex items-center gap-2.5 p-2 rounded-lg bg-nh-surface-2 border border-nh-border border-dashed">
-      <div className="w-14 h-[74px] shrink-0 rounded-sm bg-nh-pill animate-pulse" />
+      <div className="w-14 h-18.5 shrink-0 rounded-sm bg-nh-pill animate-pulse" />
       <div className="flex-1 min-w-0 flex flex-col gap-1">
         <div className="font-mono text-[9.5px] tracking-wider text-nh-text-3 truncate">{label}</div>
         <div className="flex items-center gap-1.5 font-mono text-[11px] text-nh-text-2">
@@ -336,7 +340,7 @@ function PreviewRow({ item, via, onDismiss }: { item: Item; via?: ScrapeJob["via
         <div className="font-mono text-[10px] text-nh-text-3">
           {item.artists[0]} · {item.pages}p · {item.tags.length} tags
         </div>
-        <div className="flex gap-[3px] flex-wrap mt-0.5">
+        <div className="flex gap-0.75 flex-wrap mt-0.5">
           {item.tags.slice(0, 4).map(t => (
             <Badge
               key={t}

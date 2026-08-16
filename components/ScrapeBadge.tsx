@@ -15,7 +15,7 @@ export function ScrapeBadge() {
 
   return (
     <span
-      className="absolute -top-1 -right-1 min-w-[15px] h-[15px] px-1 grid place-items-center rounded-full font-mono text-[9px] font-bold leading-none pointer-events-none"
+      className="absolute -top-1 -right-1 min-w-3.75 h-3.75 px-1 grid place-items-center rounded-full font-mono text-[9px] font-bold leading-none pointer-events-none"
       style={{
         background: scraping ? "#e0a23a" : "var(--nh-accent)",
         color: "#0a0a0a",

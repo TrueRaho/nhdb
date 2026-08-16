@@ -43,16 +43,26 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // The body read MUST be inside try/catch: a connection reset mid-body (ngrok
+  // tunnel flap, client killed mid-upload) rejects the async iterator, and an
+  // unhandled rejection in this async handler kills the whole process — taking
+  // the warm browser down and orphaning the ngrok child on its reserved domain.
   const chunks: Buffer[] = [];
-  let received = 0;
-  for await (const chunk of req) {
-    received += (chunk as Buffer).length;
-    if (received > MAX_BODY_BYTES) {
-      res.writeHead(413, { "Content-Type": "application/json" })
-         .end(JSON.stringify({ error: "Request body too large" }));
-      return;
+  try {
+    let received = 0;
+    for await (const chunk of req) {
+      received += (chunk as Buffer).length;
+      if (received > MAX_BODY_BYTES) {
+        res.writeHead(413, { "Content-Type": "application/json" })
+           .end(JSON.stringify({ error: "Request body too large" }));
+        return;
+      }
+      chunks.push(chunk as Buffer);
     }
-    chunks.push(chunk as Buffer);
+  } catch {
+    // The socket is usually already gone — just make sure the response dies too.
+    if (!res.writableEnded) res.destroy();
+    return;
   }
   let input: string;
   try {
@@ -86,6 +96,23 @@ const server = http.createServer(async (req, res) => {
 const useNgrok = !process.env.RENDER && process.env.DISABLE_NGROK !== "1";
 let ngrok: ChildProcess | undefined;
 
+// Refuse to expose an unauthenticated scraper. isAuthorized() is a no-op when
+// SCRAPER_SECRET is unset, which is fine on a localhost-only server but
+// fail-open the moment a public URL exists (Render, or the ngrok tunnel).
+// SECURITY.md documents the secret as the service's only protection.
+if (!SECRET && (process.env.RENDER || useNgrok)) {
+  console.error(
+    "SCRAPER_SECRET is not set but the server would be publicly reachable " +
+    "(Render or ngrok). Set SCRAPER_SECRET, or run local-only with DISABLE_NGROK=1.",
+  );
+  process.exit(1);
+}
+
+// Belt to the try/catch's suspenders: no future rejection on some handler path
+// may kill the host — a dead primary silently sends every scrape to the slow
+// Render fallback, and the orphaned ngrok child blocks the reserved domain.
+process.on("unhandledRejection", (e) => console.error("unhandled rejection:", e));
+
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`Scraper listening on port ${PORT}`);
 
@@ -94,6 +121,13 @@ server.listen(PORT, "0.0.0.0", () => {
     const args = ["http", String(PORT), ...(domain ? ["--domain", domain] : [])];
     ngrok = spawn("ngrok", args, { stdio: "inherit" });
     ngrok.on("error", () => console.error("ngrok not found — run: brew install ngrok"));
+    // A tunnel that dies (auth expiry, agent crash) leaves the server running
+    // but unreachable from Vercel — say so loudly instead of failing silently.
+    ngrok.on("exit", (code, signal) => {
+      if (code !== null && code !== 0) {
+        console.error(`ngrok exited with code ${code}${signal ? ` (${signal})` : ""} — tunnel is DOWN, restart the server`);
+      }
+    });
   }
 });
 

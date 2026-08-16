@@ -17,6 +17,8 @@ React 19, Tailwind v4, pnpm.
 pnpm dev            # next dev — drive it via http://localhost:3000 (see gotcha below)
 pnpm build          # prisma migrate deploy && prisma generate && next build
 pnpm lint           # eslint
+pnpm typecheck      # tsc --noEmit
+pnpm test           # vitest run (pnpm test:watch to iterate)
 pnpm scraper        # standalone scraper HTTP server on :3333 + ngrok tunnel
 pnpm rescrape       # bulk re-scrape via the running app's /api/scrape
 ```
@@ -25,7 +27,12 @@ pnpm rescrape       # bulk re-scrape via the running app's /api/scrape
   `--limit=N` are also supported. The app must be running.
 - After any change to `prisma/schema.prisma`, run `pnpm prisma generate` — the
   client is generated to a **non-standard, gitignored** path (see below).
-- There is **no test framework** in this repo.
+- Tests are **vitest** (`*.test.ts(x)` next to the code). Default environment is
+  node (parsers, mappers, the /api/scrape route with mocked deps); component
+  tests opt into jsdom per file via a `// @vitest-environment jsdom` docblock
+  (see `components/ScrapeJobsProvider.test.tsx`, which covers the scrape pool).
+  `.github/workflows/ci.yml` runs lint + typecheck + test on every PR; it needs
+  no secrets, because `prisma generate` never connects.
 
 ## Non-obvious gotchas
 
@@ -120,6 +127,20 @@ column drops can't be expressed in `schema.prisma`). `prisma.config.ts` runs
 migrations against `DATABASE_URL_UNPOOLED` — advisory locks don't work through
 Neon's PgBouncer pooler, so migrations need the direct connection.
 
+**Naming trap**: prisma replays migrations in *lexicographic* directory order,
+and the existing dirs are integer-prefixed (`0_`–`4_`). `10_` sorts before
+`2_`, and a timestamp prefix (`2026…`) sorts before `3_` — either would replay
+out of order on a fresh database. Name new migrations `5_`–`9_`; before a tenth
+exists, rename+re-baseline (renames desync `_prisma_migrations`, so that is a
+deliberate maintenance task, not a drive-by fix).
+
+**Concurrency contract**: the stat triggers (migration 3) recompute
+`tags.title_count` with `COUNT(*)` under READ COMMITTED — concurrent writing
+transactions can overwrite each other's counts. The app therefore keeps writes
+serialized: `commitReady` commits one title at a time, and entity upserts run
+*inside* the `upsertScrapedTitle` transaction. Don't parallelize either without
+first making the triggers delta-based.
+
 ### Data flow & frontend
 
 - `app/page.tsx` (server) fetches the first page + `getDataset()` and hands them
@@ -134,7 +155,13 @@ Neon's PgBouncer pooler, so migrations need the direct connection.
   are all `dynamic(..., { ssr: false })`.
 - `ScrapeJobsProvider` runs background scrape jobs (localStorage-persisted),
   including retry handling for Render cold starts that exceed Vercel's 60 s
-  budget.
+  budget. Jobs go through a **pool capped at 4 concurrent scrapes** — a pasted
+  phone tab dump queues dozens at once, and firing them together floods the single
+  ngrok tunnel or spawns dozens of parallel Playwright launches on the free Render box.
+- Titles arrive from a phone via `/?add=177013,895243` (`DeepLinkAdd` in
+  `NhdbApp`): it opens the add modal, queues the ids, and strips the param so a
+  reload can't re-queue them. `parseInputs` (`lib/utils.ts`) backs both that and
+  the paste box — it takes whole "Copy Links" tab dumps, ids and prose mixed.
 - `alterName` is a **user-managed** custom title; the scraper never writes it,
   on create or re-scrape.
 

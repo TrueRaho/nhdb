@@ -16,7 +16,36 @@ const AddModal = dynamic(() => import("./AddModal").then((m) => ({ default: m.Ad
 const StatsView = dynamic(() => import("./Stats").then((m) => ({ default: m.StatsView })), { ssr: false });
 const NhdbDesktop = dynamic(() => import("./Desktop").then((m) => ({ default: m.NhdbDesktop })), { ssr: false });
 
-import { ScrapeJobsProvider } from "./ScrapeJobsProvider";
+import { ScrapeJobsProvider, useScrapeJobs } from "./ScrapeJobsProvider";
+import { ADD_PARAM, readAddParam } from "../lib/utils";
+
+// Handles `/?add=177013,895243` — the entry point for the iOS share-sheet
+// shortcut and the nhentai bookmarklet, which is how titles arrive from a phone
+// without retyping codes. Renders nothing; it only exists to sit *inside*
+// ScrapeJobsProvider, since NhdbApp itself is the component that mounts it.
+function DeepLinkAdd({ onOpen }: { onOpen: () => void }) {
+  const { startScrape } = useScrapeJobs();
+  const handled = useRef(false);
+  useEffect(() => {
+    // Runs once per mount, and a viewport flip remounts the whole tree — the
+    // ref stops the second mount, and the stripped URL stops a reload.
+    if (handled.current) return;
+    handled.current = true;
+
+    const ids = readAddParam(window.location.search);
+    if (ids.length === 0) return;
+
+    // Drop the param before scraping: leaving it in the address bar means a
+    // pull-to-refresh (or a restored tab) re-queues the same batch later.
+    const url = new URL(window.location.href);
+    url.searchParams.delete(ADD_PARAM);
+    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+
+    onOpen();
+    void startScrape(ids.join(","));
+  }, [onOpen, startScrape]);
+  return null;
+}
 
 // null until mounted: the server renders neither layout, so a phone never
 // downloads the desktop chunk and there is no hydration mismatch.
@@ -173,31 +202,56 @@ export default function NhdbApp({
     setDetailItem(null);
   };
 
+  // Titles deleted this session. onRefresh consults it before committing: a
+  // refresh's scrape can be in flight when the user deletes the title, and
+  // committing the stale result would silently re-create the row (with wiped
+  // read stats). A later re-add via the add flow clears the mark.
+  const deletedRef = useRef<Set<number>>(new Set());
+
   const onDelete = () => {
     if (!detailItem) return;
-    const hashtag = detailItem.hashtag;
+    const removed = detailItem;
+    const hashtag = removed.hashtag;
+    deletedRef.current.add(hashtag);
     setItems(c => c.filter(x => x.hashtag !== hashtag));
     setTotal(t => Math.max(0, t - 1));
     setDetailItem(null);
-    deleteTitleAction(hashtag).catch(err => console.error("Failed to delete title:", err));
+    deleteTitleAction(hashtag).catch(err => {
+      // Roll the optimistic removal back — the row still exists server-side,
+      // and leaving it hidden would misrepresent the collection until reload.
+      console.error("Failed to delete title:", err);
+      deletedRef.current.delete(hashtag);
+      setItems(c => (c.some(x => x.hashtag === hashtag) ? c : [removed, ...c]));
+      setTotal(t => t + 1);
+    });
   };
 
   const onRead = () => {
     if (!detailItem) return;
-    const hashtag = detailItem.hashtag;
-    const updated = { ...detailItem, readCount: detailItem.readCount + 1, lastReadAt: 0 };
+    const prev = detailItem;
+    const hashtag = prev.hashtag;
+    const updated = { ...prev, readCount: prev.readCount + 1, lastReadAt: 0 };
     setDetailItem(updated);
     setItems(c => c.map(x => x.hashtag === hashtag ? updated : x));
-    markReadAction(hashtag).catch(err => console.error("Failed to update read count:", err));
+    markReadAction(hashtag).catch(err => {
+      console.error("Failed to update read count:", err);
+      setDetailItem(cur => (cur && cur.hashtag === hashtag ? prev : cur));
+      setItems(c => c.map(x => x.hashtag === hashtag ? prev : x));
+    });
   };
 
   const onAlterName = (value: string) => {
     if (!detailItem) return;
-    const hashtag = detailItem.hashtag;
-    const updated = { ...detailItem, alterName: value };
+    const prev = detailItem;
+    const hashtag = prev.hashtag;
+    const updated = { ...prev, alterName: value };
     setDetailItem(updated);
     setItems(c => c.map(x => x.hashtag === hashtag ? updated : x));
-    updateAlterNameAction(hashtag, value).catch(err => console.error("Failed to update alter name:", err));
+    updateAlterNameAction(hashtag, value).catch(err => {
+      console.error("Failed to update alter name:", err);
+      setDetailItem(cur => (cur && cur.hashtag === hashtag ? prev : cur));
+      setItems(c => c.map(x => x.hashtag === hashtag ? prev : x));
+    });
   };
 
   // Re-scrape the open title from nhentai and refresh it in place.
@@ -214,6 +268,9 @@ export default function NhdbApp({
       throw new Error(err.error ?? "refresh failed");
     }
     const { scraped } = await res.json();
+    // Deleted while the scrape was in flight — committing now would resurrect
+    // the title as a fresh row with zeroed read history. Drop the result.
+    if (deletedRef.current.has(hashtag)) return;
     const fresh = await commitScrapedAction(scraped);
     // The scrape can take a long time; only swap the modal content if it is
     // still open on the same title — never force it back open or yank a
@@ -230,6 +287,16 @@ export default function NhdbApp({
   // write (notably on Vercel), and a stale cached page would clobber the
   // just-added titles off the top of the list.
   const onAddItems = (newItems: Item[]) => {
+    // Re-added titles are no longer "deleted" for the refresh guard.
+    for (const it of newItems) deletedRef.current.delete(it.hashtag);
+    // Prepend ONLY into the plain default view. Under an active search/filter
+    // the new rows may not match the query (total would lie and load-more would
+    // chase phantom rows forever); under a non-default sort the position is
+    // wrong. In those views the additions simply show up on the next query.
+    const isDefaultView =
+      search === "" && activeFilterCount === 0 &&
+      filters.sortField === "added-at" && filters.sortDir === "desc";
+    if (!isDefaultView) return;
     // Dedup before touching state so `total` only counts rows actually added —
     // counting dropped duplicates would inflate it and skew load-more math.
     const existing = new Set(items.map(x => x.hashtag));
@@ -249,6 +316,7 @@ export default function NhdbApp({
   if (viewport === "desktop") {
     return (
       <ScrapeJobsProvider>
+      <DeepLinkAdd onOpen={() => setAddOpen(true)} />
       <div className="min-h-screen bg-nh-bg">
         <NhdbDesktop
           items={items} total={total} totalEver={totalEver} dataset={dataset}
@@ -270,6 +338,7 @@ export default function NhdbApp({
 
   return (
     <ScrapeJobsProvider>
+    <DeepLinkAdd onOpen={() => setAddOpen(true)} />
     <div className="w-full min-h-screen flex flex-col bg-nh-bg text-nh-text-1 relative overflow-hidden">
       <div className="flex-1 relative">
         <GalleryHeader
