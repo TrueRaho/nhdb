@@ -14,22 +14,34 @@ function galleryHtml({
     <div class="tag-container field-name">Pages:
       <span class="tags"><a class="tag" href="#"><span class="name">225</span></a></span>
     </div>`,
+  artistsRow = `
+    <div class="tag-container field-name">Artists:
+      <span class="tags">
+        <a class="tag" href="/artist/penqech/"><span class="name">penqech</span> <span class="count">79</span></a>
+      </span>
+    </div>`,
+  groupsRow = `<div class="tag-container field-name">Groups:<span class="tags"></span></div>`,
+  parodiesRow = `
+    <div class="tag-container field-name">Parodies:
+      <span class="tags">
+        <a class="tag" href="/parody/original/"><span class="name">original</span> <span class="count">62,050</span></a>
+      </span>
+    </div>`,
 }: {
   title?: string;
   cover?: string;
   time?: string;
   pagesRow?: string;
+  artistsRow?: string;
+  groupsRow?: string;
+  parodiesRow?: string;
 } = {}): string {
   return `<!doctype html><html><body>
     <div id="cover"><a href="/g/177013/1/">${cover}</a></div>
     <div id="info">
       <h1 class="title"><span class="before">[PenNieb] </span><span class="pretty">${title}</span><span class="after"> [English]</span></h1>
       <section id="tags">
-        <div class="tag-container field-name">Parodies:
-          <span class="tags">
-            <a class="tag" href="/parody/original/"><span class="name">original</span> <span class="count">62,050</span></a>
-          </span>
-        </div>
+        ${parodiesRow}
         <div class="tag-container field-name">Characters:
           <span class="tags"></span>
         </div>
@@ -39,14 +51,8 @@ function galleryHtml({
             <a class="tag" href="/tag/dark-skin/"><span class="name">dark skin</span> <span class="count">18,022</span></a>
           </span>
         </div>
-        <div class="tag-container field-name">Artists:
-          <span class="tags">
-            <a class="tag" href="/artist/penqech/"><span class="name">penqech</span> <span class="count">79</span></a>
-          </span>
-        </div>
-        <div class="tag-container field-name">Groups:
-          <span class="tags"></span>
-        </div>
+        ${artistsRow}
+        ${groupsRow}
         ${pagesRow}
         <div class="tag-container field-name">Uploaded: ${time}</div>
       </section>
@@ -63,8 +69,11 @@ describe("parseInfoDiv", () => {
     expect(r.pages).toBe(225);
     expect(r.uploaded_at).toBe("2016-10-18");
     expect(r.tags.map((t) => t.name)).toEqual(["ahegao", "dark skin"]);
-    expect(r.tags[0]).toEqual({ name: "ahegao", link: "/tag/ahegao/", total_works: 21043 });
-    expect(r.artists).toEqual([{ name: "penqech", link: "/artist/penqech/", total_works: 79 }]);
+    // Links are stored absolute, whatever the markup carried.
+    expect(r.tags[0]).toEqual({ name: "ahegao", link: "https://nhentai.net/tag/ahegao/", total_works: 21043 });
+    expect(r.artists).toEqual([
+      { name: "penqech", link: "https://nhentai.net/artist/penqech/", total_works: 79 },
+    ]);
     expect(r.groups).toEqual([]);
     expect(r.characters).toEqual([]);
     expect(r.parodies.map((p) => p.name)).toEqual(["original"]);
@@ -84,6 +93,86 @@ describe("parseInfoDiv", () => {
   it("parses comma-grouped total_works counts", () => {
     const r = parseInfoDiv(galleryHtml(), 1);
     expect(r.parodies[0].total_works).toBe(62050);
+  });
+
+  it("makes every entity link absolute", () => {
+    const r = parseInfoDiv(galleryHtml(), 1);
+    for (const e of [...r.tags, ...r.artists, ...r.parodies]) {
+      expect(e.link.startsWith("https://nhentai.net/")).toBe(true);
+    }
+  });
+
+  it("splits an aliased artist or group into separate credits", () => {
+    // nhentai keeps aliases of one credit on a single page: "pensgfi | pencbfj".
+    const html = galleryHtml({
+      artistsRow: `
+        <div class="tag-container field-name">Artists:
+          <span class="tags">
+            <a class="tag" href="/artist/pensgfi-pencbfj/"><span class="name">pensgfi | pencbfj</span> <span class="count">8</span></a>
+          </span>
+        </div>`,
+      groupsRow: `
+        <div class="tag-container field-name">Groups:
+          <span class="tags">
+            <a class="tag" href="/group/quill-ihak-penqzoj/"><span class="name">quill ihak | penqzoj</span> <span class="count">3</span></a>
+          </span>
+        </div>`,
+    });
+    const r = parseInfoDiv(html, 1);
+
+    expect(r.artists).toEqual([
+      { name: "pensgfi", link: "https://nhentai.net/artist/pensgfi/", total_works: 8 },
+      { name: "pencbfj", link: "https://nhentai.net/artist/pencbfj/", total_works: 8 },
+    ]);
+    expect(r.groups).toEqual([
+      { name: "quill ihak", link: "https://nhentai.net/group/quill-ihak/", total_works: 3 },
+      { name: "penqzoj", link: "https://nhentai.net/group/penqzoj/", total_works: 3 },
+    ]);
+  });
+
+  it("slugs a split half the way nhentai does", () => {
+    const html = galleryHtml({
+      artistsRow: `
+        <div class="tag-container field-name">Artists:
+          <span class="tags">
+            <a class="tag" href="/artist/ckdkh-xmym-px/"><span class="name">ckdkh | quill ruva</span> <span class="count">1</span></a>
+          </span>
+        </div>`,
+    });
+    expect(parseInfoDiv(html, 1).artists.map((a) => a.link)).toEqual([
+      "https://nhentai.net/artist/ckdkh/",
+      "https://nhentai.net/artist/quill-ruva/",
+    ]);
+  });
+
+  it("splits a parody too — uniform rule, even though the halves are JP/EN of one work", () => {
+    // Chosen deliberately (see migration 5): the schema stays uniform at the
+    // cost of one franchise occupying two parody rows.
+    const html = galleryHtml({
+      parodiesRow: `
+        <div class="tag-container field-name">Parodies:
+          <span class="tags">
+            <a class="tag" href="/parody/penvxcz-quill-cuoi/"><span class="name">penvxcz | quill cuoi</span> <span class="count">900</span></a>
+          </span>
+        </div>`,
+    });
+    expect(parseInfoDiv(html, 1).parodies).toEqual([
+      { name: "penvxcz", link: "https://nhentai.net/parody/penvxcz/", total_works: 900 },
+      { name: "quill cuoi", link: "https://nhentai.net/parody/quill-cuoi/", total_works: 900 },
+    ]);
+  });
+
+  it("does not emit the same credit twice when a half is also listed on its own", () => {
+    const html = galleryHtml({
+      artistsRow: `
+        <div class="tag-container field-name">Artists:
+          <span class="tags">
+            <a class="tag" href="/artist/pensgfi/"><span class="name">pensgfi</span> <span class="count">79</span></a>
+            <a class="tag" href="/artist/pensgfi-pencbfj/"><span class="name">pensgfi | pencbfj</span> <span class="count">8</span></a>
+          </span>
+        </div>`,
+    });
+    expect(parseInfoDiv(html, 1).artists.map((a) => a.name)).toEqual(["pensgfi", "pencbfj"]);
   });
 
   it("throws (not returns blank) when the title selector matches nothing", () => {

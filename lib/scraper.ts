@@ -61,6 +61,62 @@ function parseCount(raw: string): number {
   return parseInt(raw.replace(/,/g, ""), 10) || 0;
 }
 
+const NH_ORIGIN = "https://nhentai.net";
+
+// Entity links are stored in one absolute form. The markup carries relative
+// hrefs ("/artist/x/"), and a stored link you cannot open without separately
+// knowing the base is only half a link. Migration 5 backfilled the same shape.
+function absoluteLink(href: string): string {
+  if (!href) return "";
+  try {
+    return new URL(href, NH_ORIGIN).toString();
+  } catch {
+    return href;
+  }
+}
+
+// nhentai slugs a tag page by lowercasing and collapsing every run of
+// non-alphanumerics into a single dash ("quill ruva" → "quill-ruva").
+function slugify(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+// nhentai keeps every alias of one entity on a single tag page with " | "
+// between the names, and every category is split the same way so the tables
+// stay uniform. What that means differs by category and is worth knowing before
+// changing it: for artists and groups the halves are genuinely separate credits
+// ("pensgfi | pencbfj"), while for parodies the separator carries one work's
+// Japanese and English titles, so "pokemon | pocket monsters" becomes two
+// parody rows for one franchise. Uniformity was chosen over nhentai's
+// semantics on purpose — see migration 5.
+type EntityKind = "artist" | "group" | "character" | "parody" | "tag";
+
+function splitAliases(entities: ScrapeEntity[], kind: EntityKind): ScrapeEntity[] {
+  const out: ScrapeEntity[] = [];
+  const seen = new Set<string>();
+  const push = (e: ScrapeEntity) => {
+    if (seen.has(e.name)) return;
+    seen.add(e.name);
+    out.push(e);
+  };
+
+  for (const e of entities) {
+    if (!e.name.includes("|")) {
+      push(e);
+      continue;
+    }
+    for (const raw of e.name.split("|")) {
+      const name = raw.trim();
+      if (!name) continue;
+      // The combined page's own href says nothing about a half, so derive it.
+      // total_works is carried over rather than zeroed: it is write-only data,
+      // and a zero would clobber a real count on an existing row's upsert.
+      push({ name, link: `${NH_ORIGIN}/${kind}/${slugify(name)}/`, total_works: e.total_works });
+    }
+  }
+  return out;
+}
+
 // Exported for tests (lib/scraper.test.ts pins the parse against fixture HTML
 // so nhentai markup drift or a selector edit fails loudly); not part of the
 // module's public surface otherwise.
@@ -107,7 +163,7 @@ export function parseInfoDiv(html: string, hashtag: number): ScrapeResult {
       const name = $(el).find(".name").text().trim();
       const total_works = parseCount($(el).find(".count").text());
       const href = $(el).attr("href") || "";
-      entities.push({ name, link: href, total_works });
+      entities.push({ name, link: absoluteLink(href), total_works });
     });
     return entities;
   };
@@ -118,11 +174,11 @@ export function parseInfoDiv(html: string, hashtag: number): ScrapeResult {
     image_link,
     pages,
     uploaded_at,
-    tags: extractEntities("Tags:"),
-    artists: extractEntities("Artists:"),
-    groups: extractEntities("Groups:"),
-    characters: extractEntities("Characters:"),
-    parodies: extractEntities("Parodies:"),
+    tags: splitAliases(extractEntities("Tags:"), "tag"),
+    artists: splitAliases(extractEntities("Artists:"), "artist"),
+    groups: splitAliases(extractEntities("Groups:"), "group"),
+    characters: splitAliases(extractEntities("Characters:"), "character"),
+    parodies: splitAliases(extractEntities("Parodies:"), "parody"),
   };
 }
 

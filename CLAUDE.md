@@ -79,6 +79,29 @@ decide whether to skip a re-scrape, so it must see live DB state.
 ordering. The client sends a fresh `seed` per new query and reuses it for "load
 more" so pages don't overlap.
 
+### Entity naming rules (migration `5_split_aliases_and_normalize_links`)
+
+nhentai keeps every alias of one entity on a single tag page, separated by
+`" | "` — `pensgfi | pencbfj`, `penvxcz | quill cuoi`. **All five
+categories are split the same way** (`splitAliases` in `lib/scraper.ts`), so a
+title lists each name separately and a half that also exists on its own stops
+being a duplicate row.
+
+Know what that costs before "fixing" it: the separator does **not** mean the
+same thing everywhere. For artists and groups the halves really are separate
+credits. For parodies it carries one work's Japanese and English titles, so
+`penvxcz | quill cuoi` deliberately becomes two parody rows for one
+franchise. Uniform tables were chosen over nhentai's semantics on purpose — do
+not "restore" per-category behaviour without asking.
+
+Entity `*_link` columns are stored **absolute** (`https://nhentai.net/...`);
+`absoluteLink` resolves the markup's relative hrefs before writing. A split
+half's link is *derived* from its name (nhentai's slug rule: lowercase, runs of
+non-alphanumerics → one dash), because the combined page's href says nothing
+about either half. `total_works` is carried over to both halves rather than
+zeroed — it is write-only data, and a zero would clobber a real count on the
+next re-scrape's upsert.
+
 ### Two-layer scraper, hosted off Vercel
 
 `lib/scraper.ts` scrapes in two layers:
@@ -122,6 +145,12 @@ entity the instant its old link was removed, so the re-insert would FK-violate.
 Deferring to commit lets a re-referenced entity survive (only genuine orphans go)
 and also cleans up entities dropped on re-scrape, which the old app-side cleanup
 missed.
+
+The triggers are `AFTER DELETE` **on the join tables**, so they only ever fire
+for an entity that *had* a link and lost it — rows already orphaned when
+migration 4 ran were unreachable by them and simply remained.
+Migration 5 carries the one-time backfill sweep that migration 4 forgot; adding
+a rule to a trigger is not the same as applying it to existing data.
 
 Because of both, `deleteTitle` in `lib/titles.ts` is just
 `prisma.title.deleteMany({ where: { hashtag } })` — the cascade removes the join
