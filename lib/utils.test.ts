@@ -30,6 +30,14 @@ describe("parseInputs", () => {
     expect(parseInputs('"https://nhentai.net/g/831895/"')).toEqual([831895]);
   });
 
+  it("splits URLs concatenated with no separator at all", () => {
+    // A Shortcuts "Text" action that puts [Clipboard][URL] side by side with no
+    // comma produces exactly this — one token, several titles.
+    expect(parseInputs("https://nhentai.net/g/837933/https://nhentai.net/g/177013/"))
+      .toEqual([837933, 177013]);
+    expect(parseInputs("nhentai.net/g/1nhentai.net/g/2nhentai.net/g/3")).toEqual([1, 2, 3]);
+  });
+
   it("mixes bare ids and URLs (the add box placeholder)", () => {
     expect(parseInputs("177013\nnhentai.net/g/895243\n820175, 831895, 563281"))
       .toEqual([177013, 895243, 820175, 831895, 563281]);
@@ -95,6 +103,43 @@ describe("readAddParam", () => {
 
   it("reads a percent-encoded nhentai URL (what a share sheet hands over)", () => {
     expect(readAddParam("?add=https%3A%2F%2Fnhentai.net%2Fg%2F177013%2F")).toEqual([177013]);
+  });
+
+  it("reads a comma-joined clipboard of raw nhentai URLs (the accumulator shortcut)", () => {
+    // What "share each tab, append to clipboard" produces: full URLs, unencoded,
+    // separated by whatever the shortcut joins them with.
+    expect(readAddParam("?add=https://nhentai.net/g/837933/,https://nhentai.net/g/177013/"))
+      .toEqual([837933, 177013]);
+    // A leading separator (first share onto an empty clipboard) must not matter.
+    expect(readAddParam("?add=,837933,177013")).toEqual([837933, 177013]);
+    // Newline-joined survives too, in case the shortcut uses line breaks.
+    expect(readAddParam("?add=https://nhentai.net/g/837933/%0Ahttps://nhentai.net/g/177013/"))
+      .toEqual([837933, 177013]);
+  });
+
+  it("ignores leftover junk sitting in the clipboard accumulator", () => {
+    // The accumulator starts from whatever was already copied, so the list
+    // routinely begins with unrelated text. Only id-shaped tokens may survive.
+    expect(readAddParam("?add=gg,837933,641937")).toEqual([837933, 641937]);
+    expect(readAddParam("?add=some note,837933")).toEqual([837933]);
+  });
+
+  it("survives an accumulator-style dump: leading comma, an encoded page title, a line break", () => {
+    // Shaped like a share-sheet accumulator dump that let a page title through.
+    // The title carries a stray "4" and punctuation; only id-shaped tokens count.
+    const dump =
+      ",246813,259134,318452,Sample%20Story%20Hero-chan%20~%20Surely%20Not%20Defeated!?" +
+      "%20Hero-chan%20Big%20Trouble!!%20%7C%20Sample%20Story%20Hero%204:" +
+      "%20Hero's%20Unlucky%20Losing%20Streak?!%20%C2%BB%20nhentai%0A364571,342687";
+    expect(readAddParam(`?add=${dump}`)).toEqual([246813, 259134, 318452, 364571, 342687]);
+  });
+
+  it("accepts a fully URL-encoded list (the shortcut runs the value through URL Encode)", () => {
+    // Encoding the accumulator turns every separator into %2C and any stray
+    // space into %20 — the decode has to happen before parsing, not after.
+    expect(readAddParam("?add=%2C837933%2C641937")).toEqual([837933, 641937]);
+    expect(readAddParam("?add=gg%2C837933%2C641937")).toEqual([837933, 641937]);
+    expect(readAddParam("?add=old%20note%2C837933")).toEqual([837933]);
   });
 
   it("joins repeated params instead of dropping all but the first", () => {

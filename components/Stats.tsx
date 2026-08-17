@@ -21,7 +21,11 @@ export function StatsView({ dataset, onTagClick }: {
 
   useEffect(() => {
     let cancelled = false;
-    getStatsAction().then((s) => { if (!cancelled) setStats(s); }).catch(console.error);
+    // Bucket the wall-clock charts in the viewer's zone — they are rendered as
+    // local time below. Read here rather than at module scope so it is always
+    // the browser's zone (this component is client-only, never prerendered).
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    getStatsAction(timeZone).then((s) => { if (!cancelled) setStats(s); }).catch(console.error);
     return () => { cancelled = true; };
   }, []);
 

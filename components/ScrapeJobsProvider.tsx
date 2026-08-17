@@ -53,6 +53,18 @@ const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 const MAX_CONCURRENT_SCRAPES = 4;
 const QUEUED_NOTE = "queued…";
 
+// Which side wins when two tabs hold different states for the same job. Both
+// tabs apply the same comparison to the same pair, so the merge converges on
+// one answer instead of each tab reasserting its own copy forever. A job that
+// has reached a terminal state carries data (the scraped payload, the error)
+// that a peer still calling it "scraping" simply doesn't have yet.
+const STATUS_RANK: Record<ScrapeJobStatus, number> = {
+  scraping: 0,
+  error: 1,
+  duplicate: 2,
+  ready: 3,
+};
+
 const JOB_STATUSES: readonly ScrapeJobStatus[] = ["scraping", "ready", "duplicate", "error"];
 
 // Persisted state can be anything (truncated write, old schema, "null"…) — only
@@ -117,6 +129,10 @@ export function ScrapeJobsProvider({ children }: { children: ReactNode }) {
   // Waiting entries and the number of runOne loops currently executing.
   const queue = useRef<{ raw: string; key: string; token: symbol }[]>([]);
   const active = useRef(0);
+  // Keys adopted from another tab that is alive and already driving them — this
+  // tab displays them but must not fetch them too. Cleared when we take
+  // ownership (enqueue) or drop the job (dismiss).
+  const foreign = useRef<Set<string>>(new Set());
   // Latest jobs, readable synchronously (startScrape decides what to scrape
   // outside the setJobs updater, so updaters stay pure).
   const jobsRef = useRef(jobs);
@@ -132,16 +148,64 @@ export function ScrapeJobsProvider({ children }: { children: ReactNode }) {
     return () => ac.abort();
   }, []);
 
-  // Mirror jobs back to storage. The first run rewrites the just-loaded value
-  // (a harmless no-op), so no hydration guard is needed.
+  // Mirror jobs back to storage. Skipping the write when storage already holds
+  // this exact value matters for the cross-tab merge below: a tab that just
+  // adopted another tab's list would otherwise echo it straight back, and the
+  // two would bounce storage events off each other.
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(jobs));
+      const next = JSON.stringify(jobs);
+      if (localStorage.getItem(STORAGE_KEY) !== next) localStorage.setItem(STORAGE_KEY, next);
     } catch {}
   }, [jobs]);
 
+  // Cross-tab sync. Two tabs each mirroring their own array into one key means
+  // the last writer wipes the other's queue, so every tab folds in the other's
+  // list as it lands and they never diverge far enough to clobber. The merge
+  // is deliberately SYMMETRIC — the more advanced status wins, ties go to the
+  // remote — because a "mine always wins" rule makes two tabs overwrite each
+  // other forever. A job only this tab knows about survives while we drive it;
+  // otherwise its absence is read as "the other tab dismissed it".
+  //
+  // Not covered: a tab opened or reloaded while another is mid-scrape adopts
+  // those jobs at mount and drives them too, so one title may be fetched twice.
+  // Harmless — the scrape doesn't persist, and the commit is an idempotent upsert.
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== STORAGE_KEY || e.newValue == null) return;
+      let remote: ScrapeJob[];
+      try {
+        remote = parseStoredJobs(e.newValue);
+      } catch {
+        return; // corrupt write from another tab — keep what we have
+      }
+      setJobs((prev) => {
+        const mineByKey = new Map(prev.map((j) => [j.key, j]));
+        const merged: ScrapeJob[] = [];
+        for (const r of remote) {
+          const mine = mineByKey.get(r.key);
+          const keepMine = mine != null && STATUS_RANK[mine.status] > STATUS_RANK[r.status];
+          merged.push(keepMine ? mine : r);
+          // Someone else is driving what they still call "scraping" — show it,
+          // but leave the fetching to them.
+          if (!keepMine && r.status === "scraping" && !inFlight.current.has(r.key)) {
+            foreign.current.add(r.key);
+          }
+        }
+        const seen = new Set(remote.map((r) => r.key));
+        for (const j of prev) {
+          if (!seen.has(j.key) && inFlight.current.has(j.key)) merged.push(j);
+        }
+        return merged;
+      });
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
   const dismiss = useCallback((key: string) => {
     inFlight.current.delete(key);
+    foreign.current.delete(key);
     setJobs((prev) => prev.filter((j) => j.key !== key));
   }, []);
 
@@ -269,6 +333,8 @@ export function ScrapeJobsProvider({ children }: { children: ReactNode }) {
   // same key can't be driven twice by startScrape, retry and the resume effect.
   const enqueue = useCallback((raw: string, key: string) => {
     if (inFlight.current.has(key)) return;
+    // Taking ownership — from here we drive it, whoever queued it originally.
+    foreign.current.delete(key);
     const token = Symbol(key);
     inFlight.current.set(key, token);
     queue.current.push({ raw, key, token });
@@ -285,7 +351,9 @@ export function ScrapeJobsProvider({ children }: { children: ReactNode }) {
   // inFlight guard makes this safe to run on every jobs change.
   useEffect(() => {
     for (const j of jobs) {
-      if (j.status === "scraping" && !inFlight.current.has(j.key)) enqueue(j.input, j.key);
+      if (j.status === "scraping" && !inFlight.current.has(j.key) && !foreign.current.has(j.key)) {
+        enqueue(j.input, j.key);
+      }
     }
   }, [jobs, enqueue]);
 

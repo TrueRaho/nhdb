@@ -70,8 +70,15 @@ export function parseInputs(text: string): number[] {
   // URL is matched anywhere inside its token, so surrounding punctuation
   // (markdown link syntax, a trailing slash, quotes) is fine.
   for (const token of tokens) {
-    const url = token.match(/nhentai\.net\/g\/(\d+)/)
-    if (url) { push(url[1]); continue }
+    // matchAll, not match: a share-sheet shortcut that appends links without a
+    // separator hands over one token holding several URLs back to back
+    // ("…/g/837933/https://nhentai.net/g/177013/"), and taking only the first
+    // match would silently drop every title but one.
+    const urls = [...token.matchAll(/nhentai\.net\/g\/(\d+)/g)]
+    if (urls.length > 0) {
+      for (const u of urls) push(u[1])
+      continue
+    }
     const m = token.match(bare)
     if (m) push(m[1])
   }

@@ -2,7 +2,9 @@
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ScrapeJobsProvider, useScrapeJobs } from "./ScrapeJobsProvider";
+import { ScrapeJobsProvider, useScrapeJobs, type ScrapeJob } from "./ScrapeJobsProvider";
+
+const STORAGE_KEY = "nhdb.scrapeJobs.v1";
 
 // Server actions go through the network in the real app — stub the module.
 vi.mock("../app/actions", () => ({
@@ -170,6 +172,35 @@ describe("scrape pool", () => {
     expect(f.pending[0].input).toBe("777777");
   });
 
+  it("keeps a finished-but-unsaved scrape across a tab close, payload and all", async () => {
+    // Closing the tab between "scraped" and "add" must not throw the result
+    // away: the scraped payload is what commitReady saves, so losing it would
+    // silently cost a second scrape.
+    localStorage.setItem(
+      "nhdb.scrapeJobs.v1",
+      JSON.stringify([
+        {
+          key: "#888888",
+          input: "888888",
+          status: "ready",
+          item: { hashtag: 888888, titleName: "t888888", tags: [], artists: [] },
+          raw: scrapedFor(888888),
+        },
+      ]),
+    );
+    const f = gatedFetch();
+    mount();
+
+    expect(probe.ctx.readyCount).toBe(1);
+    expect(f.fn).not.toHaveBeenCalled(); // nothing to re-scrape
+
+    let result: Awaited<ReturnType<typeof probe.ctx.commitReady>>;
+    await act(async () => {
+      result = await probe.ctx.commitReady();
+    });
+    expect(result!.saved.map((s) => s.hashtag)).toEqual([888888]);
+  });
+
   it("ignores corrupt persisted state instead of crashing", async () => {
     localStorage.setItem("nhdb.scrapeJobs.v1", '{"not":"an array"}');
     gatedFetch();
@@ -245,5 +276,124 @@ describe("scrape pool", () => {
     expect(result!.saved.map((s) => s.hashtag)).toEqual([111111]);
     expect(result!.failedMsg).toMatch(/db down/);
     expect(probe.ctx.jobs).toEqual([expect.objectContaining({ key: "#222222", status: "ready" })]);
+  });
+});
+
+// The `storage` event fires only in OTHER documents, so a test drives it by
+// hand: write what the peer tab would have written, then dispatch the event.
+function peerWrites(jobs: Partial<ScrapeJob>[]) {
+  const value = JSON.stringify(jobs);
+  localStorage.setItem(STORAGE_KEY, value);
+  window.dispatchEvent(new StorageEvent("storage", { key: STORAGE_KEY, newValue: value }));
+}
+
+describe("cross-tab sync", () => {
+  it("adopts a peer's jobs instead of letting the last writer win", async () => {
+    const f = gatedFetch();
+    mount();
+    await act(async () => probe.ctx.startScrape("111111"));
+    await act(async () => f.ok(f.pending[0]));
+    await waitFor(() => expect(probe.ctx.readyCount).toBe(1));
+
+    // Peer queued a different title and mirrored its own list.
+    await act(async () => {
+      peerWrites([
+        { key: "#111111", input: "111111", status: "ready" },
+        { key: "#222222", input: "222222", status: "scraping" },
+      ]);
+    });
+    expect(probe.ctx.jobs.map((j) => j.key).sort()).toEqual(["#111111", "#222222"]);
+  });
+
+  it("does not fetch a job the peer is already driving", async () => {
+    const f = gatedFetch();
+    mount();
+    await act(async () => {
+      peerWrites([{ key: "#222222", input: "222222", status: "scraping" }]);
+    });
+    // Visible in this tab...
+    expect(probe.ctx.jobs.map((j) => j.key)).toEqual(["#222222"]);
+    // ...but the peer owns the fetch.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(f.fn).not.toHaveBeenCalled();
+  });
+
+  it("never downgrades a local terminal status to a peer's stale 'scraping'", async () => {
+    const f = gatedFetch();
+    mount();
+    await act(async () => probe.ctx.startScrape("111111"));
+    await act(async () => f.ok(f.pending[0]));
+    await waitFor(() => expect(probe.ctx.readyCount).toBe(1));
+    const readyJob = probe.ctx.jobs[0];
+
+    await act(async () => {
+      peerWrites([{ key: "#111111", input: "111111", status: "scraping" }]);
+    });
+    // The scraped payload survives — losing it would strand an unsavable job.
+    expect(probe.ctx.jobs[0].status).toBe("ready");
+    expect(probe.ctx.jobs[0].raw).toEqual(readyJob.raw);
+  });
+
+  it("takes a peer's terminal status over its own 'scraping' (symmetric rule)", async () => {
+    gatedFetch();
+    mount();
+    await act(async () => {
+      peerWrites([{ key: "#222222", input: "222222", status: "scraping" }]);
+    });
+    await act(async () => {
+      peerWrites([{ key: "#222222", input: "222222", status: "error", error: "not found" }]);
+    });
+    expect(probe.ctx.jobs[0]).toMatchObject({ status: "error", error: "not found" });
+  });
+
+  it("propagates a peer's dismissal of a job this tab is not driving", async () => {
+    gatedFetch();
+    mount();
+    await act(async () => {
+      peerWrites([
+        { key: "#111111", input: "111111", status: "ready" },
+        { key: "#222222", input: "222222", status: "ready" },
+      ]);
+    });
+    expect(probe.ctx.jobs).toHaveLength(2);
+    await act(async () => {
+      peerWrites([{ key: "#111111", input: "111111", status: "ready" }]);
+    });
+    expect(probe.ctx.jobs.map((j) => j.key)).toEqual(["#111111"]);
+  });
+
+  it("keeps its own in-flight job the peer has never heard of", async () => {
+    const f = gatedFetch();
+    mount();
+    await act(async () => probe.ctx.startScrape("111111"));
+    await act(async () => {
+      peerWrites([{ key: "#999999", input: "999999", status: "ready" }]);
+    });
+    // Our in-flight #111111 must not vanish just because the peer's snapshot
+    // predates it — that was the original data-loss bug.
+    expect(probe.ctx.jobs.map((j) => j.key).sort()).toEqual(["#111111", "#999999"]);
+    await act(async () => f.ok(f.pending[0]));
+    await waitFor(() => expect(probe.ctx.jobs.find((j) => j.key === "#111111")?.status).toBe("ready"));
+  });
+
+  it("ignores a corrupt peer write rather than dropping the queue", async () => {
+    gatedFetch();
+    mount();
+    await act(async () => probe.ctx.startScrape("111111"));
+    await act(async () => {
+      const value = "{not json";
+      localStorage.setItem(STORAGE_KEY, value);
+      window.dispatchEvent(new StorageEvent("storage", { key: STORAGE_KEY, newValue: value }));
+    });
+    expect(probe.ctx.jobs.map((j) => j.key)).toEqual(["#111111"]);
+  });
+
+  it("does not echo an adopted list back to storage", async () => {
+    gatedFetch();
+    mount();
+    const remote: Partial<ScrapeJob>[] = [{ key: "#222222", input: "222222", status: "ready" }];
+    await act(async () => peerWrites(remote));
+    // Byte-identical to what the peer wrote: no write-back, so no event storm.
+    expect(localStorage.getItem(STORAGE_KEY)).toBe(JSON.stringify(remote));
   });
 });

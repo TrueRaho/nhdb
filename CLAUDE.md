@@ -60,6 +60,17 @@ matching tags, and **which invalidation API you call depends on where you are**:
 - **Route Handlers** (`app/api/scrape/route.ts`) → `revalidateTag(tag, "max")`
   (they can't call `updateTag`).
 
+`getStats(timeZone)` takes the **viewer's IANA zone** (the client passes
+`Intl.DateTimeFormat().resolvedOptions().timeZone`; it is part of the cache
+key, and an unknown zone falls back to UTC). It has to: `read_at`/`created_at`
+are `timestamp` *without* zone holding UTC wall-clock, so hour-of-day and
+day-of-week buckets reach local time via `read_at AT TIME ZONE 'UTC' AT TIME
+ZONE <tz>` — two hops, and the first one is easy to forget. Comparisons against
+`NOW()` go through `NOW() AT TIME ZONE 'UTC'` so nothing silently depends on
+the DB session's `TimeZone`, and `read_at` is formatted to an ISO string *in
+SQL* (the driver would otherwise parse a naive timestamp in the server
+process's zone).
+
 Deliberately **uncached**: `getTitlesByHashtags` — the add flow uses it to
 decide whether to skip a re-scrape, so it must see live DB state.
 
@@ -153,15 +164,32 @@ first making the triggers delta-based.
   staying `null` until mounted so phones never download the desktop chunk and
   there's no hydration mismatch. `DetailModal`, `AddModal`, `Stats`, `Desktop`
   are all `dynamic(..., { ssr: false })`.
+- `ScrapeJobsProvider` syncs its job list **across tabs** through the `storage`
+  event. The merge is deliberately symmetric (higher `STATUS_RANK` wins, ties go
+  to the remote) — a "mine wins" rule makes two tabs overwrite each other
+  forever — and a job only one tab knows about survives while that tab drives
+  it. Adopted `scraping` jobs land in the `foreign` set so the adopting tab
+  displays but does not re-fetch them.
 - `ScrapeJobsProvider` runs background scrape jobs (localStorage-persisted),
   including retry handling for Render cold starts that exceed Vercel's 60 s
   budget. Jobs go through a **pool capped at 4 concurrent scrapes** — a pasted
   phone tab dump queues dozens at once, and firing them together floods the single
   ngrok tunnel or spawns dozens of parallel Playwright launches on the free Render box.
-- Titles arrive from a phone via `/?add=177013,895243` (`DeepLinkAdd` in
-  `NhdbApp`): it opens the add modal, queues the ids, and strips the param so a
-  reload can't re-queue them. `parseInputs` (`lib/utils.ts`) backs both that and
-  the paste box — it takes whole "Copy Links" tab dumps, ids and prose mixed.
+- Two ways titles arrive from a phone, deliberately separate:
+  - **`/add/<id>`** (`app/add/[input]/page.tsx` → `components/QuickAdd.tsx`) is
+    the share-sheet target: **one** title, with its alt-name field, and nothing
+    else. It is its own route segment so Next's code splitting keeps the
+    gallery, dataset and job pool off it — verified by the client-reference
+    manifest, which lists only `QuickAdd.tsx`. Nothing links here; the URL is
+    the only way in. Keep it that way: importing anything from `NhdbApp`'s tree
+    (or adding a prefetching `<Link>`) silently undoes the whole point.
+  - **`/?add=177013,895243`** (`DeepLinkAdd` in `NhdbApp`) is the batch path for
+    the bookmarklet and pasted tab dumps: opens the add modal, queues the ids,
+    strips the param so a reload can't re-queue them.
+  `parseInputs` (`lib/utils.ts`) backs the batch path and the paste box — it
+  takes whole "Copy Links" tab dumps, ids and prose mixed.
+- `SpeedInsights`/`Analytics` live in `app/page.tsx`, **not** the root layout,
+  so `/add/<id>` ships neither script.
 - `alterName` is a **user-managed** custom title; the scraper never writes it,
   on create or re-scrape.
 

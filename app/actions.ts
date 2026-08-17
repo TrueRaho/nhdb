@@ -12,8 +12,16 @@ import type { ScrapeResult } from "../lib/scraper";
 
 // Persist a scraped payload and invalidate caches with read-your-writes
 // semantics (updateTag is only allowed in Server Actions, not Route Handlers).
-export async function commitScrapedAction(scraped: ScrapeResult): Promise<Item> {
+//
+// `alterName` lets the quick-add screen name a title in the same round trip
+// that creates it. It is applied as a separate write on purpose: the scrape
+// path must never touch alterName on its own (a re-scrape would wipe the user's
+// name), so upsertScrapedTitle stays unaware of it. Omitted or blank leaves any
+// existing name untouched.
+export async function commitScrapedAction(scraped: ScrapeResult, alterName?: string): Promise<Item> {
   const saved = await upsertScrapedTitle(scraped);
+  const name = alterName?.trim();
+  if (name) await updateAlterName(scraped.hashtag, name);
   updateTag("titles-list");
   updateTag("dataset");
   updateTag("stats");
@@ -22,7 +30,10 @@ export async function commitScrapedAction(scraped: ScrapeResult): Promise<Item> 
   // Broad tag: cached similar-<other> lists of NEIGHBOR titles (tag overlap)
   // reference this title too and would otherwise go stale forever.
   updateTag("similar");
-  return dbTitleToItem(saved);
+  // `saved` predates the alterName write, so patch the mapped item rather than
+  // re-reading the row with all its relations.
+  const item = dbTitleToItem(saved);
+  return name ? { ...item, alterName: name } : item;
 }
 
 export async function deleteTitleAction(hashtag: number) {
@@ -55,8 +66,11 @@ export async function queryTitlesAction(params: QueryParams): Promise<{ items: I
   return { items: res.items.map(dbTitleToItem), total: res.total };
 }
 
-export async function getStatsAction() {
-  return getStats();
+// timeZone comes from the browser (Intl.resolvedOptions) — the hour-of-day and
+// day-of-week charts are rendered as local wall-clock, so they must be bucketed
+// in the viewer's zone rather than the database's.
+export async function getStatsAction(timeZone?: string) {
+  return getStats(timeZone);
 }
 
 export async function getSimilarAction(hashtag: number, limit = 8) {

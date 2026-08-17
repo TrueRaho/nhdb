@@ -474,12 +474,40 @@ export type StatsPayload = {
   mostRead: { hashtag: number; titleName: string; alterName: string; pages: number; readCount: number; firstArtist: string; imageLink: string }[];
 };
 
-export async function getStats(): Promise<StatsPayload> {
+// An unknown zone makes Postgres throw, and the value arrives from the client,
+// so validate before it reaches SQL. Intl is the authority on IANA names.
+function normalizeTimeZone(tz: string | undefined): string {
+  if (!tz) return "UTC";
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: tz });
+    return tz;
+  } catch {
+    return "UTC";
+  }
+}
+
+/**
+ * @param timeZone IANA zone the wall-clock buckets (hour-of-day, day-of-week,
+ * month) are computed in. Pass the viewer's zone — the client renders these as
+ * local time, so bucketing them in UTC mislabels every read. Defaults to UTC.
+ */
+export async function getStats(timeZone?: string): Promise<StatsPayload> {
   "use cache";
   cacheTag("stats");
   // Time-bounded (not "max"): the NOW()/AGE() buckets below are relative to the
   // query time, so the entry must self-refresh or the buckets freeze forever.
   cacheLife("hours");
+
+  const tz = normalizeTimeZone(timeZone);
+  // read_at / created_at are `timestamp` (no zone) holding UTC wall-clock, so
+  // reaching the viewer's local time takes two hops: label the naive value as
+  // UTC, then shift it into their zone. Comparisons against NOW() go through
+  // `NOW() AT TIME ZONE 'UTC'` for the same reason — mixing timestamptz with a
+  // naive column silently uses the DB session's TimeZone, which is not ours to
+  // rely on.
+  const localRead = Prisma.sql`(read_at AT TIME ZONE 'UTC' AT TIME ZONE ${tz})`;
+  const nowUtc = Prisma.sql`(NOW() AT TIME ZONE 'UTC')`;
+  const nowLocal = Prisma.sql`(NOW() AT TIME ZONE ${tz})`;
 
   const [
     aggRow,
@@ -530,32 +558,38 @@ export async function getStats(): Promise<StatsPayload> {
     `),
     prisma.$queryRaw<{ idx: number; count: bigint }[]>(Prisma.sql`
       SELECT
-        EXTRACT(YEAR FROM AGE(NOW(), read_at))::int * 12
-          + EXTRACT(MONTH FROM AGE(NOW(), read_at))::int AS idx,
+        EXTRACT(YEAR FROM AGE(${nowLocal}, ${localRead}))::int * 12
+          + EXTRACT(MONTH FROM AGE(${nowLocal}, ${localRead}))::int AS idx,
         COUNT(*)::bigint AS count
       FROM read_logs
-      WHERE read_at > NOW() - INTERVAL '12 months'
+      WHERE read_at > ${nowUtc} - INTERVAL '12 months'
       GROUP BY idx
       ORDER BY idx
     `),
     prisma.$queryRaw<{ h: number; count: bigint }[]>(Prisma.sql`
-      SELECT EXTRACT(HOUR FROM read_at)::int AS h, COUNT(*)::bigint AS count
+      SELECT EXTRACT(HOUR FROM ${localRead})::int AS h, COUNT(*)::bigint AS count
       FROM read_logs GROUP BY h ORDER BY h
     `),
     prisma.$queryRaw<{ d: number; count: bigint }[]>(Prisma.sql`
-      SELECT EXTRACT(DOW FROM read_at)::int AS d, COUNT(*)::bigint AS count
+      SELECT EXTRACT(DOW FROM ${localRead})::int AS d, COUNT(*)::bigint AS count
       FROM read_logs GROUP BY d ORDER BY d
     `),
-    prisma.$queryRaw<{ hashtag: number; read_at: Date; title_name: string; alter_name: string | null }[]>(Prisma.sql`
-      SELECT r.hashtag, r.read_at, t.title_name, t.alter_name
+    // read_at is formatted in SQL rather than handed over as a Date: the driver
+    // parses a naive `timestamp` in the *server process's* zone, which would
+    // shift every rendered session time off a non-UTC host. The column holds
+    // UTC, so stamping a literal Z yields the correct instant everywhere.
+    prisma.$queryRaw<{ hashtag: number; read_at: string; title_name: string; alter_name: string | null }[]>(Prisma.sql`
+      SELECT r.hashtag,
+             to_char(r.read_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS read_at,
+             t.title_name, t.alter_name
       FROM read_logs r LEFT JOIN titles t USING (hashtag)
       ORDER BY r.read_at DESC LIMIT 20
     `),
     prisma.$queryRaw<{ bucket: number; count: bigint }[]>(Prisma.sql`
       SELECT bucket, COUNT(*)::bigint AS count FROM (
-        SELECT FLOOR(EXTRACT(EPOCH FROM (NOW() - created_at)) / 86400 / 60)::int AS bucket
+        SELECT FLOOR(EXTRACT(EPOCH FROM (${nowUtc} - created_at)) / 86400 / 60)::int AS bucket
         FROM titles
-        WHERE created_at > NOW() - INTERVAL '360 days'
+        WHERE created_at > ${nowUtc} - INTERVAL '360 days'
       ) s WHERE bucket BETWEEN 0 AND 5 GROUP BY bucket ORDER BY bucket
     `),
     prisma.title.findMany({
@@ -617,7 +651,7 @@ export async function getStats(): Promise<StatsPayload> {
     dowReads,
     recentSessions: recentRows.map((r) => ({
       hashtag: r.hashtag,
-      readAt: r.read_at.toISOString(),
+      readAt: r.read_at,
       name: r.alter_name || r.title_name || `#${r.hashtag}`,
     })),
     additions,
