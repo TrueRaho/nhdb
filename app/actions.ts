@@ -3,8 +3,9 @@
 import { updateTag } from "next/cache";
 import {
   deleteTitle, markRead, updateAlterName, upsertScrapedTitle,
-  queryTitles, getStats, getSimilar, getTitle, getTitlesByHashtags,
-  type QueryParams,
+  queryTitles, getStats, getSimilar, getTitle, getTitlesByHashtags, getTagAffinity,
+  getGhostTagsFor,
+  type QueryParams, type TagAffinityParams,
 } from "../lib/titles";
 import { dbTitleToItem } from "../lib/mappers";
 import type { Item } from "../lib/data";
@@ -75,6 +76,20 @@ export async function getStatsAction(timeZone?: string) {
 
 export async function getSimilarAction(hashtag: number, limit = 8) {
   return getSimilar(hashtag, limit);
+}
+
+// Fetched on demand rather than shipped inside getDataset(): the full
+// tag-to-tag matrix grows with the square of the tag count, and the dataset payload is handed to every
+// client on first render — including phones, which is exactly what the split
+// layout exists to keep light.
+export async function getTagAffinityAction(params: TagAffinityParams) {
+  return getTagAffinity(params);
+}
+
+// One title's inferred tags, for the detail view. Reads the same cached index
+// the query path filters through, so an open modal costs no extra database work.
+export async function getGhostTagsAction(hashtag: number) {
+  return getGhostTagsFor(hashtag);
 }
 
 export async function getTitleAction(hashtag: number): Promise<Item | null> {

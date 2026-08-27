@@ -4,6 +4,55 @@ import { useState } from "react";
 import Image from "next/image";
 import type { Item } from "../lib/data";
 
+/** The options for a plain boolean SegmentedToggle. */
+export const ON_OFF: readonly { id: boolean; label: string }[] = [
+  { id: true, label: "on" },
+  { id: false, label: "off" },
+];
+
+/**
+ * The compact segmented control the filter UI is built out of: option sort,
+ * match mode, related-tag expansion, ghost tags. Four hand-rolled copies of
+ * this markup had drifted into the tree before it was lifted here.
+ *
+ * Generic over the option id so callers keep their own union type — a
+ * MatchToggle still hands back "and" | "or", not a string.
+ */
+export function SegmentedToggle<T extends string | number | boolean>({
+  value, options, onChange, disabled,
+}: {
+  value: T;
+  options: readonly { id: T; label: string }[];
+  onChange: (v: T) => void;
+  /** Greys the whole control out — used where the choice is not yet meaningful. */
+  disabled?: boolean;
+}) {
+  return (
+    <div className="inline-flex rounded-sm border border-nh-border bg-nh-input p-0.5">
+      {options.map(o => {
+        const sel = value === o.id;
+        return (
+          <button
+            // Ids can be booleans, which React will not take as a key.
+            key={String(o.id)}
+            onClick={() => onChange(o.id)}
+            disabled={disabled}
+            // The selected pill was previously distinguished by colour alone.
+            aria-pressed={sel}
+            className="px-1.5 py-px rounded-xs font-mono text-[9px] font-semibold uppercase tracking-wider disabled:opacity-40"
+            style={{
+              background: sel ? "var(--nh-accent)" : "transparent",
+              color: sel ? "#0a0a0a" : "var(--nh-text-3)",
+            }}
+          >
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 // Deterministic PRNG for procedural cover art (titles without an image).
 function mulberry32(seed: number) {
   return function () {

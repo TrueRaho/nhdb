@@ -29,6 +29,8 @@ import { StatsView } from "./Stats";
 import { DetailModal } from "./DetailModal";
 import { AddModal } from "./AddModal";
 import { ScrapeBadge } from "./ScrapeBadge";
+import { RelatedTags } from "./RelatedTags";
+import { GhostTagsToggle } from "./GhostTags";
 import type { Item } from "../lib/data";
 import type { SortField, MatchMode } from "../lib/titles";
 import { READ_OPTIONS, SORT_FIELDS, MatchToggle, OptionSortToggle, sortOptions, defaultFilters, type Filters, type Dataset, type MatchCategory, type OptionSort } from "./HeaderFilter";
@@ -286,7 +288,11 @@ function DesktopSidebar({ filters, setFilters, dataset, activeFilterCount, match
       </SidebarGroup>
 
       <SidebarGroup title={`tags · ${filters.tags.length}`} open={openSection.tags} onToggle={() => tog("tags")}>
-        <SidebarMulti options={dataset.allTags} counts={dataset.tagCounts} selected={filters.tags} onToggle={v => toggle("tags", v)} placeholder="search tags…" defaultLimit={10} mode={filters.matchModes.tags} onModeChange={m => setMode("tags", m)} />
+        <SidebarMulti options={dataset.allTags} counts={dataset.tagCounts} selected={filters.tags} onToggle={v => toggle("tags", v)} placeholder="search tags…" defaultLimit={10} mode={filters.matchModes.tags} onModeChange={m => setMode("tags", m)}
+          related={<>
+            <RelatedTags filters={filters} setFilters={setFilters} />
+            <GhostTagsToggle filters={filters} setFilters={setFilters} />
+          </>} />
       </SidebarGroup>
 
       <SidebarGroup title={`artists · ${filters.artists.length}`} open={openSection.artists} onToggle={() => tog("artists")}>
@@ -362,10 +368,13 @@ function SidebarGroup({ title, open, onToggle, children }: { title: string; open
   );
 }
 
-function SidebarMulti({ options, counts, selected, onToggle, placeholder, defaultLimit, mode, onModeChange }: {
+function SidebarMulti({ options, counts, selected, onToggle, placeholder, defaultLimit, mode, onModeChange, related }: {
   options: string[]; counts: Record<string, number>; selected: string[];
   onToggle: (v: string) => void; placeholder: string; defaultLimit: number;
   mode?: MatchMode; onModeChange?: (m: MatchMode) => void;
+  /** Extra control above the option list — the tag section's related-tag
+   *  expansion. Only tags pass one. */
+  related?: React.ReactNode;
 }) {
   const [search, setSearch] = useState("");
   const [showAll, setShowAll] = useState(false);
@@ -401,6 +410,7 @@ function SidebarMulti({ options, counts, selected, onToggle, placeholder, defaul
           <MatchToggle mode={mode} onChange={onModeChange} />
         </div>
       )}
+      {related}
       <div className="flex flex-col gap-px">
         {visible.map(o => {
           const sel = selected.includes(o);

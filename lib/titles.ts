@@ -1,6 +1,8 @@
 import { cacheLife, cacheTag } from "next/cache";
 import { Prisma } from "./generated/prisma/client";
 import { prisma } from "./db";
+import { MIN_SHARED_TITLES, rankAffinity, type AffinityRow, type TagAffinity } from "./affinity";
+import { inferGhostTags, type GhostSource, type GhostSourceKind, type GhostTag } from "./ghost";
 import type { ScrapeEntity, ScrapeResult } from "./scraper";
 
 // One generic batch-upsert for all five entity kinds: a single
@@ -181,6 +183,20 @@ export type MatchModes = {
 export type QueryParams = {
   search?: string;
   tags?: string[];
+  /**
+   * Related tags OR-ed onto the tag filter — the "suggestions" expansion. Kept
+   * separate from `tags` (rather than merged client-side) so the two stay
+   * distinguishable: only these widen the result set, and the UI has to be able
+   * to show which values it added on the user's behalf.
+   */
+  tagsExpanded?: string[];
+  /**
+   * Let inferred ("ghost") tags satisfy the tag filter and the search box, so a
+   * thinly-tagged title is findable by the tags its artist's other works carry.
+   * Opt-in: roughly two in five ghosts are wrong (see lib/ghost.ts), which is a
+   * fine trade when asked for and a bad default.
+   */
+  ghostTags?: boolean;
   artists?: string[];
   groups?: string[];
   characters?: string[];
@@ -199,24 +215,75 @@ export type QueryParams = {
   offset?: number;
 };
 
-function buildWhere(p: QueryParams): Prisma.TitleWhereInput {
+/**
+ * @param ghostByTag the ghost index's tag→hashtags map, or undefined when the
+ * caller did not ask for ghost tags. Passed in rather than fetched here because
+ * buildWhere is synchronous and the index is a cached async read.
+ */
+function buildWhere(p: QueryParams, ghostByTag?: Record<string, number[]>): Prisma.TitleWhereInput {
   const where: Prisma.TitleWhereInput = {};
   const and: Prisma.TitleWhereInput[] = [];
 
+  // Titles that ghost-carry any of `names`. Null when ghosts are off or none
+  // match, so callers can skip the OR branch entirely.
+  const ghostsFor = (names: string[]): number[] | null => {
+    if (!ghostByTag) return null;
+    const hits = new Set<number>();
+    for (const n of names) for (const h of ghostByTag[n] ?? []) hits.add(h);
+    return hits.size ? [...hits] : null;
+  };
+  const orGhosts = (clause: Prisma.TitleWhereInput, names: string[]): Prisma.TitleWhereInput => {
+    const hits = ghostsFor(names);
+    return hits ? { OR: [clause, { hashtag: { in: hits } }] } : clause;
+  };
+
   // AND = title must have every selected value (one `some` per value);
   // OR  = title matches any selected value (a single `some … in`).
+  const multiClauses = (
+    values: string[] | undefined,
+    mode: MatchMode,
+    clause: (name: string | Prisma.StringFilter) => Prisma.TitleWhereInput,
+  ): Prisma.TitleWhereInput[] => {
+    if (!values?.length) return [];
+    if (mode === "and") return values.map((v) => clause(v));
+    return [clause({ in: values })];
+  };
+
   const pushMulti = (
     values: string[] | undefined,
     mode: MatchMode,
     clause: (name: string | Prisma.StringFilter) => Prisma.TitleWhereInput,
-  ) => {
-    if (!values?.length) return;
-    if (mode === "and") for (const v of values) and.push(clause(v));
-    else and.push(clause({ in: values }));
-  };
+  ) => and.push(...multiClauses(values, mode, clause));
 
   const m = p.matchModes ?? {};
-  pushMulti(p.tags, m.tags ?? "or", (n) => ({ tags: { some: { tag: { tagName: n } } } }));
+
+  const tagClause = (n: string | Prisma.StringFilter): Prisma.TitleWhereInput =>
+    ({ tags: { some: { tag: { tagName: n } } } });
+  // Not multiClauses: a ghost has to satisfy its own tag, so in "all" mode the
+  // OR goes *inside* each per-tag clause ("really has it, or ghost-has it")
+  // rather than around the group. Wrapping the group instead would let one
+  // ghost stand in for the whole selection.
+  const tagMode = m.tags ?? "or";
+  const tagClauses: Prisma.TitleWhereInput[] = !p.tags?.length
+    ? []
+    : tagMode === "and"
+      ? p.tags.map((t) => orGhosts(tagClause(t), [t]))
+      : [orGhosts(tagClause({ in: p.tags }), p.tags)];
+  // The expansion always *widens*: a title carrying a related tag is kept even
+  // when it fails the selected-tag clause. So the OR wraps the base clause as a
+  // whole instead of joining it — in "all" mode the base is several clauses
+  // that must hold together, and OR-ing them individually would silently
+  // downgrade "all" to "any".
+  const expanded = p.tagsExpanded?.filter((t) => !p.tags?.includes(t)) ?? [];
+  const expandedClause = expanded.length ? orGhosts(tagClause({ in: expanded }), expanded) : null;
+  if (tagClauses.length && expandedClause) {
+    and.push({ OR: [{ AND: tagClauses }, expandedClause] });
+  } else if (tagClauses.length) {
+    and.push(...tagClauses);
+  } else if (expandedClause) {
+    and.push(expandedClause);
+  }
+
   pushMulti(p.artists, m.artists ?? "or", (n) => ({ artists: { some: { artist: { artistName: n } } } }));
   pushMulti(p.groups, m.groups ?? "or", (n) => ({ groups: { some: { group: { groupName: n } } } }));
   pushMulti(p.characters, m.characters ?? "or", (n) => ({ characters: { some: { character: { characterName: n } } } }));
@@ -239,6 +306,17 @@ function buildWhere(p: QueryParams): Prisma.TitleWhereInput {
     // Only match hashtag when the digit string fits INT4 — a longer number
     // would overflow the column type and make Prisma reject the whole query.
     if (/^\d+$/.test(q) && q.length <= 9) orClauses.push({ hashtag: parseInt(q, 10) });
+    // Ghosts reach the search box too — typing a tag name is the first thing
+    // anyone does when a title has gone missing, and that is exactly the case
+    // ghost tags exist for. Scanning tag names per query is inexpensive.
+    if (ghostByTag) {
+      const needle = q.toLowerCase();
+      const hits = new Set<number>();
+      for (const [name, hashtags] of Object.entries(ghostByTag)) {
+        if (name.toLowerCase().includes(needle)) for (const h of hashtags) hits.add(h);
+      }
+      if (hits.size) orClauses.push({ hashtag: { in: [...hits] } });
+    }
     and.push({ OR: orClauses });
   }
 
@@ -287,7 +365,10 @@ export async function queryTitles(p: QueryParams): Promise<QueryResult> {
 
   const limit = Math.min(Math.max(Math.floor(p.limit ?? 60), 1), 200);
   const offset = Math.max(Math.floor(p.offset ?? 0), 0);
-  const where = buildWhere(p);
+  // Only pay for the index when the query actually asks for ghosts; it is a
+  // cached read, so the cost is a cache lookup on every query after the first.
+  const ghostByTag = p.ghostTags ? (await getGhostIndex()).byTag : undefined;
+  const where = buildWhere(p, ghostByTag);
   const sortField = p.sortField ?? "added-at";
   const sortDir = p.sortDir ?? "desc";
 
@@ -710,4 +791,207 @@ export async function getSimilar(hashtag: number, limit = 8): Promise<SimilarIte
     pages: r.pages,
     shared: Number(r.shared),
   }));
+}
+
+export type TagAffinityParams = {
+  /** Seed tags — the tags currently selected in the filter. */
+  tags: string[];
+  /**
+   * How the seed *set of titles* is defined, mirroring the tag filter's own
+   * match mode: "and" = titles carrying every seed, "or" = titles carrying any.
+   * Suggestions computed against the wrong seed set describe a population the
+   * user is not looking at.
+   */
+  mode?: MatchMode;
+  limit?: number;
+};
+
+/**
+ * Tags characteristic of the titles matching `tags`, best first.
+ *
+ * Cached under the existing `dataset` tag rather than a new one: every write
+ * that can move these numbers (commit, delete) already invalidates it, so there
+ * is no fresh call site to forget. Reads that don't touch tags — markRead,
+ * updateAlterName — correctly leave it alone.
+ *
+ * Pair counts are computed on demand over the seed set. Evaluation found
+ * round-trip latency dominated computation; materialising the matrix would
+ * add a write-path trigger for little benefit at this scale.
+ */
+export async function getTagAffinity(p: TagAffinityParams): Promise<TagAffinity[]> {
+  "use cache";
+  cacheTag("dataset");
+  cacheLife("max");
+
+  const names = [...new Set(p.tags.map((t) => t.trim()).filter(Boolean))];
+  if (names.length === 0) return [];
+  const take = Math.min(Math.max(Math.floor(p.limit ?? 8) || 1, 1), 50);
+
+  // "and" needs every seed present on the title; "or" needs the grouping only
+  // to dedupe hashtags. COUNT(DISTINCT id_tag) is exact because tag_name is
+  // unique, so a title cannot match one seed name through two rows.
+  const seedHaving =
+    (p.mode ?? "or") === "and"
+      ? Prisma.sql`HAVING COUNT(DISTINCT t.id_tag) = ${names.length}`
+      : Prisma.empty;
+
+  const rows = await prisma.$queryRaw<
+    (AffinityRow & { seed_count: number; collection: number })[]
+  >(Prisma.sql`
+    WITH sel AS (
+      SELECT tt.hashtag
+      FROM titlestotags tt JOIN tags t USING (id_tag)
+      WHERE t.tag_name IN (${Prisma.join(names)})
+      GROUP BY tt.hashtag
+      ${seedHaving}
+    ),
+    counts AS (
+      SELECT (SELECT COUNT(*) FROM sel)::int AS seed_count,
+             (SELECT COUNT(*) FROM titles)::int AS collection
+    )
+    SELECT t.tag_name AS name,
+           COUNT(*)::int AS co,
+           t.title_count AS total,
+           counts.seed_count,
+           counts.collection
+    FROM sel
+    JOIN titlestotags b ON b.hashtag = sel.hashtag
+    JOIN tags t ON t.id_tag = b.id_tag
+    CROSS JOIN counts
+    WHERE t.tag_name NOT IN (${Prisma.join(names)})
+    GROUP BY t.tag_name, t.title_count, counts.seed_count, counts.collection
+    HAVING COUNT(*) >= ${MIN_SHARED_TITLES}
+  `);
+
+  if (rows.length === 0) return [];
+  return rankAffinity(rows, rows[0].seed_count, rows[0].collection).slice(0, take);
+}
+
+/**
+ * Every title's inferred tags, plus the inverted index the query path filters
+ * through. One pass produces both, because building either alone would read the
+ * same three tables anyway.
+ */
+export type GhostIndex = {
+  /** hashtag → its ghost tags, best first. String keys, for serialisation. */
+  byTitle: Record<string, GhostTag[]>;
+  /** tag name → hashtags that ghost-carry it. */
+  byTag: Record<string, number[]>;
+};
+
+/**
+ * Compute ghost tags for the whole collection.
+ *
+ * Whole-collection on purpose: filtering has to answer "which titles ghost-carry
+ * this tag?", which no per-title computation can serve, and the per-title lists
+ * fall out of the same pass for free. Cached under `dataset` like every other
+ * derived read — any write that changes a tag or an entity link already
+ * invalidates it.
+ *
+ * Deliberately **not** a materialised table. Adding one work by an artist moves
+ * the ghosts of every other work by that artist, so a stored table would need a
+ * recompute on the write path — and that path is already constrained by the
+ * serialized-write contract the stat triggers impose.
+ */
+export async function getGhostIndex(): Promise<GhostIndex> {
+  "use cache";
+  cacheTag("dataset");
+  cacheLife("max");
+
+  const [tagRows, entityRows, totalRow] = await Promise.all([
+    prisma.$queryRaw<{ hashtag: number; name: string; total: number }[]>(Prisma.sql`
+      SELECT tt.hashtag, t.tag_name AS name, t.title_count AS total
+      FROM titlestotags tt JOIN tags t USING (id_tag)
+    `),
+    // One UNION rather than four round trips — the shapes are identical and the
+    // scorer treats all four categories the same way.
+    prisma.$queryRaw<{ kind: GhostSourceKind; hashtag: number; name: string }[]>(Prisma.sql`
+      SELECT 'artist' AS kind, ta.hashtag, a.artist_name AS name
+        FROM titlestoartists ta JOIN artists a USING (id_artist)
+      UNION ALL
+      SELECT 'group', tg.hashtag, g.group_name
+        FROM titlestogroups tg JOIN groups g USING (id_group)
+      UNION ALL
+      SELECT 'parody', tp.hashtag, p.parodie_name
+        FROM titlestoparodies tp JOIN parodies p USING (id_parodie)
+      UNION ALL
+      SELECT 'character', tc.hashtag, c.character_name
+        FROM titlestocharacters tc JOIN characters c USING (id_character)
+    `),
+    prisma.$queryRaw<{ n: number }[]>(Prisma.sql`SELECT COUNT(*)::int AS n FROM titles`),
+  ]);
+
+  const collectionCount = totalRow[0]?.n ?? 0;
+  if (collectionCount === 0) return { byTitle: {}, byTag: {} };
+
+  const tagsOf = new Map<number, string[]>();
+  const tagTotals = new Map<string, number>();
+  for (const r of tagRows) {
+    const list = tagsOf.get(r.hashtag);
+    if (list) list.push(r.name);
+    else tagsOf.set(r.hashtag, [r.name]);
+    tagTotals.set(r.name, r.total);
+  }
+
+  // entity key → the titles carrying it. The tag tally is built once per entity
+  // and the scored title subtracted from it below, rather than re-tallied for
+  // every title the entity touches.
+  const entityTitles = new Map<string, number[]>();
+  const entityKind = new Map<string, GhostSourceKind>();
+  const entityName = new Map<string, string>();
+  const linksOf = new Map<number, string[]>();
+  for (const r of entityRows) {
+    const key = `${r.kind} ${r.name}`;
+    const titles = entityTitles.get(key);
+    if (titles) titles.push(r.hashtag);
+    else {
+      entityTitles.set(key, [r.hashtag]);
+      entityKind.set(key, r.kind);
+      entityName.set(key, r.name);
+    }
+    const links = linksOf.get(r.hashtag);
+    if (links) links.push(key);
+    else linksOf.set(r.hashtag, [key]);
+  }
+
+  const entityTally = new Map<string, Map<string, number>>();
+  for (const [key, hashtags] of entityTitles) {
+    const tally = new Map<string, number>();
+    for (const h of hashtags) for (const t of tagsOf.get(h) ?? []) tally.set(t, (tally.get(t) ?? 0) + 1);
+    entityTally.set(key, tally);
+  }
+
+  const byTitle: Record<string, GhostTag[]> = {};
+  const byTag: Record<string, number[]> = {};
+
+  for (const [hashtag, keys] of linksOf) {
+    const own = tagsOf.get(hashtag) ?? [];
+    const ownSet = new Set(own);
+    const sources: GhostSource[] = [];
+    for (const key of keys) {
+      const peers = (entityTitles.get(key)?.length ?? 0) - 1; // never counts itself
+      if (peers <= 0) continue;
+      // The shared tally includes this title, so take its own tags back out —
+      // a work must never become evidence for itself.
+      const shared = entityTally.get(key)!;
+      const tally = new Map<string, number>();
+      for (const [name, n] of shared) {
+        const adjusted = ownSet.has(name) ? n - 1 : n;
+        if (adjusted > 0) tally.set(name, adjusted);
+      }
+      sources.push({ kind: entityKind.get(key)!, name: entityName.get(key)!, peers, tally });
+    }
+    const ghosts = inferGhostTags(own, sources, tagTotals, collectionCount);
+    if (ghosts.length === 0) continue;
+    byTitle[hashtag] = ghosts;
+    for (const g of ghosts) (byTag[g.name] ??= []).push(hashtag);
+  }
+
+  return { byTitle, byTag };
+}
+
+/** One title's ghost tags. Reads the shared index — no separate query path. */
+export async function getGhostTagsFor(hashtag: number): Promise<GhostTag[]> {
+  const index = await getGhostIndex();
+  return index.byTitle[String(hashtag)] ?? [];
 }

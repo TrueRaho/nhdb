@@ -8,6 +8,9 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Slider } from "@/components/ui/slider";
 import { ScrapeBadge } from "./ScrapeBadge";
+import { SegmentedToggle } from "./Primitives";
+import { RelatedTags } from "./RelatedTags";
+import { GhostTagsToggle } from "./GhostTags";
 import {
   Sheet,
   SheetContent,
@@ -25,6 +28,17 @@ export type MatchCategory = (typeof MATCH_CATEGORIES)[number];
 export type Filters = {
   tags: string[]; characters: string[]; parodies: string[]; artists: string[]; groups: string[];
   matchModes: Record<MatchCategory, MatchMode>;
+  /** Related-tag expansion — the user's intent … */
+  expandTags: boolean;
+  /** … its effect: the related tags actually widening the query, each of which
+   *  can be dropped (or put back) on its own … */
+  tagsExpanded: string[];
+  /** … and the seed signature it was computed for. Without it a remount — the
+   *  mobile filter sheet unmounts on close — would overwrite `tagsExpanded`
+   *  with a fresh top-N and resurrect whatever the user had just removed. */
+  expandedFor: string;
+  /** Let inferred ghost tags satisfy the tag filter and the search box. */
+  ghostTags: boolean;
   pageMin: number; pageMax: number;
   read: ReadFilter;
   noAlter: boolean;
@@ -47,6 +61,10 @@ export function defaultFilters(pageMin: number, pageMax: number): Filters {
     // Every category defaults to "any" (OR) — selecting more values widens the
     // results; flip a category to "all" (AND) to require every selected value.
     matchModes: { tags: "or", artists: "or", groups: "or", characters: "or", parodies: "or" },
+    expandTags: false,
+    tagsExpanded: [],
+    expandedFor: "",
+    ghostTags: false,
     pageMin,
     pageMax: pageMax || 999,
     read: "all",
@@ -74,54 +92,18 @@ export function sortOptions(options: string[], counts: Record<string, number>, s
 
 // Compact segmented control for picking an OptionSort.
 export function OptionSortToggle({ value, onChange }: { value: OptionSort; onChange: (s: OptionSort) => void }) {
-  return (
-    <div className="inline-flex rounded-sm border border-nh-border bg-nh-input p-0.5">
-      {OPTION_SORTS.map(o => {
-        const sel = value === o.id;
-        return (
-          <button
-            key={o.id}
-            onClick={() => onChange(o.id)}
-            className="px-1.5 py-px rounded-xs font-mono text-[9px] font-semibold uppercase tracking-wider"
-            style={{
-              background: sel ? "var(--nh-accent)" : "transparent",
-              color: sel ? "#0a0a0a" : "var(--nh-text-3)",
-            }}
-          >
-            {o.label}
-          </button>
-        );
-      })}
-    </div>
-  );
+  return <SegmentedToggle value={value} options={OPTION_SORTS} onChange={onChange} />;
 }
 
 // Compact "all (AND) / any (OR)" segmented control for a multi-select category.
 // Shown only when 2+ values are selected, since the mode is a no-op below that.
+const MATCH_MODES: { id: MatchMode; label: string }[] = [
+  { id: "and", label: "all" },
+  { id: "or", label: "any" },
+];
+
 export function MatchToggle({ mode, onChange }: { mode: MatchMode; onChange: (m: MatchMode) => void }) {
-  return (
-    <div className="inline-flex rounded-sm border border-nh-border bg-nh-input p-0.5">
-      {([
-        { id: "and" as const, label: "all" },
-        { id: "or" as const, label: "any" },
-      ]).map(o => {
-        const sel = mode === o.id;
-        return (
-          <button
-            key={o.id}
-            onClick={() => onChange(o.id)}
-            className="px-1.5 py-px rounded-xs font-mono text-[9px] font-semibold uppercase tracking-wider"
-            style={{
-              background: sel ? "var(--nh-accent)" : "transparent",
-              color: sel ? "#0a0a0a" : "var(--nh-text-3)",
-            }}
-          >
-            {o.label}
-          </button>
-        );
-      })}
-    </div>
-  );
+  return <SegmentedToggle value={mode} options={MATCH_MODES} onChange={onChange} />;
 }
 
 // Canonical sort fields (order + label + icon). Shared by the mobile sort sheet
@@ -328,7 +310,11 @@ export function FilterSheet({ open, onClose, filters, setFilters, dataset, activ
             <FilterMulti search={tagSearch} setSearch={setTagSearch} placeholder="search tags…"
               options={dataset.allTags} selected={filters.tags}
               onToggle={(v) => toggle("tags", v)} counts={dataset.tagCounts}
-              mode={filters.matchModes.tags} onModeChange={(m) => setMode("tags", m)} />
+              mode={filters.matchModes.tags} onModeChange={(m) => setMode("tags", m)}
+              related={<>
+                <RelatedTags filters={filters} setFilters={setFilters} />
+                <GhostTagsToggle filters={filters} setFilters={setFilters} />
+              </>} />
           )}
           {activeSection === "characters" && (
             <FilterMulti options={dataset.allCharacters} selected={filters.characters}
@@ -368,10 +354,13 @@ export function FilterSheet({ open, onClose, filters, setFilters, dataset, activ
   );
 }
 
-function FilterMulti({ options, selected, onToggle, counts, placeholder, mode, onModeChange, search: searchProp, setSearch: setSearchProp }: {
+function FilterMulti({ options, selected, onToggle, counts, placeholder, mode, onModeChange, related, search: searchProp, setSearch: setSearchProp }: {
   options: string[]; selected: string[]; onToggle: (v: string) => void;
   counts: Record<string, number>; placeholder: string;
   mode?: MatchMode; onModeChange?: (m: MatchMode) => void;
+  /** Extra control rendered above the selected chips — the tag section's
+   *  related-tag expansion. Only tags pass one. */
+  related?: React.ReactNode;
   search?: string; setSearch?: (s: string) => void;
 }) {
   const [searchLocal, setSearchLocal] = useState("");
@@ -407,6 +396,7 @@ function FilterMulti({ options, selected, onToggle, counts, placeholder, mode, o
           </span>
         </div>
       )}
+      {related}
       {selected.length > 0 && (
         <div className="flex flex-wrap gap-1">
           {selected.map(s => (

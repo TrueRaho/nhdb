@@ -6,6 +6,7 @@ import { ArrowUpDown } from "lucide-react";
 import type { Item } from "../lib/data";
 import { GalleryGrid } from "./Gallery";
 import { GalleryHeader, FilterSheet, defaultFilters, type Filters, type Dataset } from "./HeaderFilter";
+import { seedSignature } from "./RelatedTags";
 import {
   deleteTitleAction, markReadAction, updateAlterNameAction, queryTitlesAction, commitScrapedAction,
 } from "../app/actions";
@@ -45,6 +46,19 @@ function DeepLinkAdd({ onOpen }: { onOpen: () => void }) {
     void startScrape(ids.join(","));
   }, [onOpen, startScrape]);
   return null;
+}
+
+// Which related tags are actually widening the query right now. The expansion
+// applies only while it is switched on AND still belongs to the current
+// selection: the suggestions are fetched asynchronously, so between toggling a
+// tag and the new list arriving, `tagsExpanded` still describes the *previous*
+// seed set. Checking the stored signature keeps that window unexpanded instead
+// of briefly filtering by the wrong thing — and means nothing ever has to reset
+// those fields.
+function appliedExpansion(f: Filters): string[] {
+  return f.expandTags && f.expandedFor === seedSignature(f.tags, f.matchModes.tags)
+    ? f.tagsExpanded
+    : [];
 }
 
 // null until mounted: the server renders neither layout, so a phone never
@@ -125,6 +139,8 @@ export default function NhdbApp({
     queryTitlesAction({
       search: currentSearch || undefined,
       tags: currentFilters.tags,
+      tagsExpanded: appliedExpansion(currentFilters),
+      ghostTags: currentFilters.ghostTags || undefined,
       artists: currentFilters.artists,
       groups: currentFilters.groups,
       characters: currentFilters.characters,
@@ -181,7 +197,13 @@ export default function NhdbApp({
     filters.parodies.length + filters.artists.length + filters.groups.length +
     ((filters.pageMin > dataset.pageMin || filters.pageMax < dataset.pageMax) ? 1 : 0) +
     (filters.read !== "all" ? 1 : 0) +
-    (filters.noAlter ? 1 : 0),
+    (filters.noAlter ? 1 : 0) +
+    // The expansion changes which titles come back, so it counts as one active
+    // filter — the badge would otherwise under-report the query in effect.
+    (appliedExpansion(filters).length ? 1 : 0) +
+    // Ghosts change the result set on their own — with no tags selected they
+    // still widen the search box — so they count whenever they are switched on.
+    (filters.ghostTags ? 1 : 0),
   [filters, dataset.pageMin, dataset.pageMax]);
 
   const openFilters = (section: string) => {

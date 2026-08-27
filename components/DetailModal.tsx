@@ -11,6 +11,7 @@ import { daysAgoLabel } from "../lib/utils";
 import type { Item } from "../lib/data";
 import type { SimilarItem } from "../lib/titles";
 import { getSimilarAction, getTitleAction } from "../app/actions";
+import { GhostTagChips } from "./GhostTags";
 
 type DetailModalProps = {
   item: Item | null; onClose: () => void;
@@ -199,6 +200,7 @@ function DetailModalInner({ item, onClose, onTagClick, onDelete, onRead, onOpen,
           <ChipGroup label="artists" items={item.artists} color="var(--nh-accent)" onTagClick={onTagClick} />
           <ChipGroup label="groups" items={item.groups} color="var(--nh-text-2)" onTagClick={onTagClick} />
           <ChipGroup label="tags" items={item.tags} color="var(--nh-text-2)" onTagClick={onTagClick} />
+          <GhostTagChips hashtag={item.hashtag} onTagClick={onTagClick} />
         </div>
 
         {similar.length > 0 && (

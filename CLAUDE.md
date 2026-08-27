@@ -74,10 +74,119 @@ process's zone).
 Deliberately **uncached**: `getTitlesByHashtags` — the add flow uses it to
 decide whether to skip a re-scrape, so it must see live DB state.
 
+`getTagAffinity` deliberately reuses the **`dataset`** tag instead of getting
+its own. Every write that can move a tag co-occurrence count (commit, delete)
+already invalidates `dataset`, so there is no new call site to forget; the
+writes that must *not* bust it (`markRead`, `updateAlterName`) correctly leave
+it alone.
+
 `sortField: "random"` is a deterministic seeded shuffle done in app code
 (`hashMix`), not SQL `random()`, because `"use cache"` would freeze a SQL random
 ordering. The client sends a fresh `seed` per new query and reuses it for "load
 more" so pages don't overlap.
+
+### Tag suggestions ("related tags")
+
+`getTagAffinity({tags, mode})` answers "which *other* tags characterise the
+titles matching this selection?", and the tag filter can OR the top few onto the
+query to widen it. Scoring lives in `lib/affinity.ts`, ranked by the **lower
+bound of the Wilson interval on P(B|A), divided by the tag's own base rate**.
+
+Both obvious alternatives were evaluated and fail in opposite directions,
+so don't "simplify" back to either:
+
+- **Raw co-occurrence** ranks by popularity. Two tags each covering about half
+  a collection can share many titles even under independence; a large shared
+  count alone says little about their association.
+- **Raw lift** ranks by smallness — every tag appearing *only* with the seed
+  hits the same ceiling `1/f`, so several poorly supported tags can tie first.
+
+`MIN_LIFT = 1.5` was chosen by sweeping 1.1 → 2.5: focused seeds were stable,
+while a low floor let broad seeds expand until the filter barely filtered.
+Raising the floor further discarded useful associations for broad seeds.
+A tag on fraction `f` of the collection cannot exceed lift `1/f`, so a tag on
+half the collection has a ceiling of 2 and legitimately gets few suggestions.
+The Wilson lower bound penalises weak evidence before division by the base rate.
+
+**No `tag_pairs` table, and don't add one.** The query scans only the seed set,
+not the whole matrix. Evaluation found network round-trip latency dominated
+query computation; precomputing would save little on a cache miss and add a
+trigger to the serialized write path. Revisit if a single seed's join scan
+approaches ~500k rows; benchmark on the deployment being considered.
+
+**The suggested tags are never persisted.** They are recomputed on demand, and
+the expansion in effect lives only in React state (`filters.tagsExpanded`,
+alongside `expandTags` and `expandedFor`) — nothing is written to the database,
+and filters reset on reload like every other filter. `QueryParams.tagsExpanded`
+is kept separate from `QueryParams.tags` so the two stay distinguishable: only
+the expansion widens, and the UI has to show which values it added on the
+user's behalf. `expandedFor` stores the seed signature the list was computed
+for; `appliedExpansion` in `NhdbApp` ignores the expansion whenever that
+signature no longer matches the selection, which is what lets the fetch be the
+only writer of those fields — nothing has to clear them when tags change.
+
+In `buildWhere`, the expansion's `OR` wraps the base tag clause **as a whole**
+(`{OR: [{AND: [...base]}, {in: expanded}]}`). OR-ing it alongside the individual
+base clauses would silently downgrade the tags category's "all" mode to "any" —
+`lib/titles.test.ts` pins this.
+
+### Ghost tags (inferred per-title tags)
+
+A separate feature from the tag suggestions above, solving a different problem:
+a title an uploader tagged with three tags is unfindable, however good the
+filter is. `getGhostIndex` in `lib/titles.ts` infers the tags such a title
+*probably* carries, from the other works sharing its artist / group / parody /
+characters; scoring is `lib/ghost.ts`.
+
+**The features are complementary.** Related tags help narrow seeds find
+informative neighbours. Ghosts help broad tags find titles through artist
+profiles, where the lift ceiling leaves affinity little room. Keeping separate
+controls lets users choose the kind of expansion they want.
+
+**Affinity ranks by lift, ghosts rank by share.** "Which tags characterise
+this selection?" wants the informative tag; "which tag is this title missing?"
+wants the *probable* one. A rare tag A supported by few peers can have higher
+lift than a common tag B supported by most peers, while being a worse prediction.
+
+What the two *do* share lives in `lib/tagstats.ts`: `wilsonLowerBound` and
+`STRUCTURAL_TAGS`, neither of which belongs to either feature. (Ghost inference
+used to import them from `lib/affinity.ts`, which read as though it were built
+on top of suggestion; they are siblings over a common base.) The scoring cores
+are deliberately *not* shared: the overlap is about ten lines of arithmetic, and
+merging them would put the two metrics behind one flag — a one-word edit on the
+axis that determines which question is answered. Revisit at a **third** consumer; "what
+characterises this artist?" is the plausible one, and `getGhostIndex` already
+builds the per-entity tallies it would need.
+
+Evaluation hid tags from well-tagged titles, left three visible, and measured
+recall@10. Artist peers outperformed both popularity and naive Bayes over the
+title's own tags. Combining artist peers with parody and nearest neighbours
+added little for the extra machinery. This is why `lib/ghost.ts` ignores the
+title's own tags as prediction evidence and keeps peer scoring simple.
+
+`MIN_SHARE = 0.5` was chosen by sweeping 0.4 → 0.6: higher shares improved
+precision at the cost of recall. `MIN_PEER_WORKS = 3` rejects peer groups too
+small to support a prediction; `GHOST_LIMIT = 8` keeps the uncertain tail short.
+`MIN_LIFT_OVER_BASE = 1.2` rejects catch-all peer groups: if tag A is as common
+among those peers as in the collection, the group adds no evidence. This gate
+works without a ban-list of entity names.
+
+Ghost predictions remain uncertain. They are opt-in (`QueryParams.ghostTags`,
+off by default), rendered as dashed outlines rather than filled chips, and
+**never written to `titlestotags`** — they must not touch `tags.title_count`,
+`avg_tag_value` or the stats.
+
+In `buildWhere` the ghost `OR` goes *inside* each per-tag clause in "all" mode
+(`{OR: [realHas(t), {hashtag: {in: ghostsOf(t)}}]}` per tag), never around the
+group — wrapping the group would let one ghost satisfy the whole selection.
+`lib/titles.test.ts` pins this. Ghosts also extend the search box, which is
+where a missing title is looked for first.
+
+Like the affinity query, this is computed and cached (under `dataset`), **not
+materialised**: adding one work by an artist moves the ghosts of every other
+work by that artist, so a stored table would need a recompute on the write path
+that the serialized-write contract already constrains. The result is cached,
+and `queryTitles` only pays the computation when `ghostTags` is set.
 
 ### Entity naming rules (migration `5_split_aliases_and_normalize_links`)
 
