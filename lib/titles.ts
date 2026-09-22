@@ -1,12 +1,21 @@
 import { cacheLife, cacheTag } from "next/cache";
 import { Prisma } from "./generated/prisma/client";
 import { prisma } from "./db";
+import { datasetTag, similarAnyTag, similarTag, statsTag, titleTag, titlesListTag } from "./cache-tags";
 import { MIN_SHARED_TITLES, rankAffinity, type AffinityRow, type TagAffinity } from "./affinity";
 import { inferGhostTags, type GhostSource, type GhostSourceKind, type GhostTag } from "./ghost";
 import type { ScrapeEntity, ScrapeResult } from "./scraper";
 
+// Session identity is resolved by callers outside cached scopes. Fail closed if
+// a missing identity reaches this boundary: Prisma omits undefined filters.
+function assertUserId(userId: string): void {
+  if (typeof userId !== "string" || userId.trim().length === 0) {
+    throw new Error("A user ID is required to access the collection");
+  }
+}
+
 // One generic batch-upsert for all five entity kinds: a single
-// INSERT … ON CONFLICT (name) DO UPDATE … RETURNING per category, so a
+// INSERT … ON CONFLICT (user_id, name) DO UPDATE … RETURNING per category, so a
 // re-scrape refreshes link/total_works on existing rows and RETURNING yields
 // every id in one round trip. (The previous createMany({ skipDuplicates }) +
 // findMany-by-name pair never refreshed existing rows, and any row skipped by
@@ -20,6 +29,7 @@ import type { ScrapeEntity, ScrapeResult } from "./scraper";
 // list (defaults to 0 on insert) and the DO UPDATE SET (stays untouched).
 async function batchUpsertEntities(
   db: Prisma.TransactionClient,
+  userId: string,
   items: ScrapeEntity[],
   table: string,
   idCol: string,
@@ -31,9 +41,9 @@ async function batchUpsertEntities(
   // UPDATE errors with "cannot affect row a second time" on duplicate names.
   const deduped = [...new Map(items.map((e) => [e.name, e])).values()];
   const rows = await db.$queryRaw<{ id: number; name: string }[]>(Prisma.sql`
-    INSERT INTO ${Prisma.raw(`"${table}" ("${nameCol}", "${linkCol}", total_works)`)}
-    VALUES ${Prisma.join(deduped.map((e) => Prisma.sql`(${e.name}, ${e.link}, ${e.total_works})`))}
-    ON CONFLICT (${Prisma.raw(`"${nameCol}"`)}) DO UPDATE
+    INSERT INTO ${Prisma.raw(`"${table}" (user_id, "${nameCol}", "${linkCol}", total_works)`)}
+    VALUES ${Prisma.join(deduped.map((e) => Prisma.sql`(${userId}, ${e.name}, ${e.link}, ${e.total_works})`))}
+    ON CONFLICT (user_id, ${Prisma.raw(`"${nameCol}"`)}) DO UPDATE
       SET ${Prisma.raw(`"${linkCol}" = EXCLUDED."${linkCol}"`)}, total_works = EXCLUDED.total_works
     RETURNING ${Prisma.raw(`"${idCol}" AS id, "${nameCol}" AS name`)}
   `);
@@ -43,20 +53,20 @@ async function batchUpsertEntities(
   return items.map((e) => map.get(e.name)!);
 }
 
-const batchUpsertArtists = (db: Prisma.TransactionClient, items: ScrapeEntity[]) =>
-  batchUpsertEntities(db, items, "artists", "id_artist", "artist_name", "artist_link");
+const batchUpsertArtists = (db: Prisma.TransactionClient, userId: string, items: ScrapeEntity[]) =>
+  batchUpsertEntities(db, userId, items, "artists", "id_artist", "artist_name", "artist_link");
 
-const batchUpsertGroups = (db: Prisma.TransactionClient, items: ScrapeEntity[]) =>
-  batchUpsertEntities(db, items, "groups", "id_group", "group_name", "group_link");
+const batchUpsertGroups = (db: Prisma.TransactionClient, userId: string, items: ScrapeEntity[]) =>
+  batchUpsertEntities(db, userId, items, "groups", "id_group", "group_name", "group_link");
 
-const batchUpsertCharacters = (db: Prisma.TransactionClient, items: ScrapeEntity[]) =>
-  batchUpsertEntities(db, items, "characters", "id_character", "character_name", "character_link");
+const batchUpsertCharacters = (db: Prisma.TransactionClient, userId: string, items: ScrapeEntity[]) =>
+  batchUpsertEntities(db, userId, items, "characters", "id_character", "character_name", "character_link");
 
-const batchUpsertParodies = (db: Prisma.TransactionClient, items: ScrapeEntity[]) =>
-  batchUpsertEntities(db, items, "parodies", "id_parodie", "parodie_name", "parodie_link");
+const batchUpsertParodies = (db: Prisma.TransactionClient, userId: string, items: ScrapeEntity[]) =>
+  batchUpsertEntities(db, userId, items, "parodies", "id_parodie", "parodie_name", "parodie_link");
 
-const batchUpsertTags = (db: Prisma.TransactionClient, items: ScrapeEntity[]) =>
-  batchUpsertEntities(db, items, "tags", "id_tag", "tag_name", "tag_link");
+const batchUpsertTags = (db: Prisma.TransactionClient, userId: string, items: ScrapeEntity[]) =>
+  batchUpsertEntities(db, userId, items, "tags", "id_tag", "tag_name", "tag_link");
 
 // Thrown for a malformed client-supplied scrape payload. `name` is set to
 // "ValidationError" so the /api/scrape route's isValidationError() maps it to
@@ -69,23 +79,35 @@ class ScrapePayloadError extends Error {
 // Both the Server Action and the /api/scrape route pass client-supplied data
 // here, so validate the payload shape before touching the database.
 function assertValidScrapePayload(s: ScrapeResult): void {
-  if (!Number.isInteger(s.hashtag) || s.hashtag <= 0)
+  if (!s || typeof s !== "object")
+    throw new ScrapePayloadError("Invalid scrape payload: expected an object");
+  const isDbInteger = (value: unknown): value is number =>
+    typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 2_147_483_647;
+  const isDbString = (value: unknown): value is string =>
+    typeof value === "string" && value.length <= 255;
+  if (!isDbInteger(s.hashtag) || s.hashtag === 0)
     throw new ScrapePayloadError(`Invalid scrape payload: hashtag must be a positive integer, got ${s.hashtag}`);
-  if (typeof s.title_name !== "string")
-    throw new ScrapePayloadError("Invalid scrape payload: title_name must be a string");
-  if (typeof s.image_link !== "string")
-    throw new ScrapePayloadError("Invalid scrape payload: image_link must be a string");
-  if (typeof s.pages !== "number" || Number.isNaN(s.pages) || s.pages < 0)
-    throw new ScrapePayloadError(`Invalid scrape payload: pages must be a non-negative number, got ${s.pages}`);
+  if (!isDbString(s.title_name))
+    throw new ScrapePayloadError("Invalid scrape payload: title_name must be a string of at most 255 characters");
+  if (!isDbString(s.image_link))
+    throw new ScrapePayloadError("Invalid scrape payload: image_link must be a string of at most 255 characters");
+  if (!isDbInteger(s.pages))
+    throw new ScrapePayloadError(`Invalid scrape payload: pages must be a non-negative integer, got ${s.pages}`);
   for (const key of ["tags", "artists", "groups", "characters", "parodies"] as const) {
     if (!Array.isArray(s[key]))
       throw new ScrapePayloadError(`Invalid scrape payload: ${key} must be an array`);
+    for (const entity of s[key]) {
+      if (!entity || typeof entity !== "object" || !isDbString(entity.name) ||
+          !isDbString(entity.link) || !isDbInteger(entity.total_works))
+        throw new ScrapePayloadError(`Invalid scrape payload: ${key} contains an invalid entity`);
+    }
   }
-  if (isNaN(new Date(s.uploaded_at).getTime()))
+  if (typeof s.uploaded_at !== "string" || isNaN(new Date(s.uploaded_at).getTime()))
     throw new ScrapePayloadError(`Invalid scrape payload: uploaded_at is not a valid date, got ${s.uploaded_at}`);
 }
 
-export async function upsertScrapedTitle(s: ScrapeResult) {
+export async function upsertScrapedTitle(userId: string, s: ScrapeResult) {
+  assertUserId(userId);
   assertValidScrapePayload(s);
 
   return prisma.$transaction(async (tx) => {
@@ -99,11 +121,11 @@ export async function upsertScrapedTitle(s: ScrapeResult) {
     // interactive transaction — every tx query serializes on one connection
     // anyway, and concurrent awaits have caused ordering issues on some
     // adapters.
-    const artistIds = await batchUpsertArtists(tx, s.artists);
-    const groupIds = await batchUpsertGroups(tx, s.groups);
-    const characterIds = await batchUpsertCharacters(tx, s.characters);
-    const parodyIds = await batchUpsertParodies(tx, s.parodies);
-    const tagIds = await batchUpsertTags(tx, s.tags);
+    const artistIds = await batchUpsertArtists(tx, userId, s.artists);
+    const groupIds = await batchUpsertGroups(tx, userId, s.groups);
+    const characterIds = await batchUpsertCharacters(tx, userId, s.characters);
+    const parodyIds = await batchUpsertParodies(tx, userId, s.parodies);
+    const tagIds = await batchUpsertTags(tx, userId, s.tags);
 
     // alterName is user-managed (set manually via updateAlterName) — the
     // scrape path never writes it, neither on create nor on re-scrape.
@@ -115,45 +137,45 @@ export async function upsertScrapedTitle(s: ScrapeResult) {
     };
 
     await tx.title.upsert({
-      where: { hashtag: s.hashtag },
-      create: { hashtag: s.hashtag, ...titleData },
+      where: { userId_hashtag: { userId, hashtag: s.hashtag } },
+      create: { userId, hashtag: s.hashtag, ...titleData },
       update: titleData,
     });
 
-    await tx.titleArtist.deleteMany({ where: { hashtag: s.hashtag } });
-    await tx.titleGroup.deleteMany({ where: { hashtag: s.hashtag } });
-    await tx.titleCharacter.deleteMany({ where: { hashtag: s.hashtag } });
-    await tx.titleParody.deleteMany({ where: { hashtag: s.hashtag } });
-    await tx.titleTag.deleteMany({ where: { hashtag: s.hashtag } });
+    await tx.titleArtist.deleteMany({ where: { userId, hashtag: s.hashtag } });
+    await tx.titleGroup.deleteMany({ where: { userId, hashtag: s.hashtag } });
+    await tx.titleCharacter.deleteMany({ where: { userId, hashtag: s.hashtag } });
+    await tx.titleParody.deleteMany({ where: { userId, hashtag: s.hashtag } });
+    await tx.titleTag.deleteMany({ where: { userId, hashtag: s.hashtag } });
 
     if (artistIds.length)
       await tx.titleArtist.createMany({
-        data: artistIds.map((idArtist) => ({ hashtag: s.hashtag, idArtist })),
+        data: artistIds.map((idArtist) => ({ userId, hashtag: s.hashtag, idArtist })),
         skipDuplicates: true,
       });
     if (groupIds.length)
       await tx.titleGroup.createMany({
-        data: groupIds.map((idGroup) => ({ hashtag: s.hashtag, idGroup })),
+        data: groupIds.map((idGroup) => ({ userId, hashtag: s.hashtag, idGroup })),
         skipDuplicates: true,
       });
     if (characterIds.length)
       await tx.titleCharacter.createMany({
-        data: characterIds.map((idCharacter) => ({ hashtag: s.hashtag, idCharacter })),
+        data: characterIds.map((idCharacter) => ({ userId, hashtag: s.hashtag, idCharacter })),
         skipDuplicates: true,
       });
     if (parodyIds.length)
       await tx.titleParody.createMany({
-        data: parodyIds.map((idParodie) => ({ hashtag: s.hashtag, idParodie })),
+        data: parodyIds.map((idParodie) => ({ userId, hashtag: s.hashtag, idParodie })),
         skipDuplicates: true,
       });
     if (tagIds.length)
       await tx.titleTag.createMany({
-        data: tagIds.map((idTag) => ({ hashtag: s.hashtag, idTag })),
+        data: tagIds.map((idTag) => ({ userId, hashtag: s.hashtag, idTag })),
         skipDuplicates: true,
       });
 
     return tx.title.findUniqueOrThrow({
-      where: { hashtag: s.hashtag },
+      where: { userId_hashtag: { userId, hashtag: s.hashtag } },
       include: titleInclude,
     });
   });
@@ -220,8 +242,8 @@ export type QueryParams = {
  * caller did not ask for ghost tags. Passed in rather than fetched here because
  * buildWhere is synchronous and the index is a cached async read.
  */
-function buildWhere(p: QueryParams, ghostByTag?: Record<string, number[]>): Prisma.TitleWhereInput {
-  const where: Prisma.TitleWhereInput = {};
+function buildWhere(userId: string, p: QueryParams, ghostByTag?: Record<string, number[]>): Prisma.TitleWhereInput {
+  const where: Prisma.TitleWhereInput = { userId };
   const and: Prisma.TitleWhereInput[] = [];
 
   // Titles that ghost-carry any of `names`. Null when ghosts are off or none
@@ -358,17 +380,18 @@ function hashMix(h: number, seed: number): number {
   return (t ^ (t >>> 14)) >>> 0;
 }
 
-export async function queryTitles(p: QueryParams): Promise<QueryResult> {
+export async function queryTitles(userId: string, p: QueryParams): Promise<QueryResult> {
   "use cache";
-  cacheTag("titles-list");
+  assertUserId(userId);
+  cacheTag(titlesListTag(userId));
   cacheLife("max");
 
   const limit = Math.min(Math.max(Math.floor(p.limit ?? 60), 1), 200);
   const offset = Math.max(Math.floor(p.offset ?? 0), 0);
   // Only pay for the index when the query actually asks for ghosts; it is a
   // cached read, so the cost is a cache lookup on every query after the first.
-  const ghostByTag = p.ghostTags ? (await getGhostIndex()).byTag : undefined;
-  const where = buildWhere(p, ghostByTag);
+  const ghostByTag = p.ghostTags ? (await getGhostIndex(userId)).byTag : undefined;
+  const where = buildWhere(userId, p, ghostByTag);
   const sortField = p.sortField ?? "added-at";
   const sortDir = p.sortDir ?? "desc";
 
@@ -385,7 +408,7 @@ export async function queryTitles(p: QueryParams): Promise<QueryResult> {
       .map((r) => r.hashtag);
     if (shuffled.length === 0) return { items: [], total: matching.length };
     const items = await prisma.title.findMany({
-      where: { hashtag: { in: shuffled } },
+      where: { userId, hashtag: { in: shuffled } },
       include: titleInclude,
     });
     const order = new Map(shuffled.map((h, i) => [h, i]));
@@ -408,38 +431,42 @@ export async function queryTitles(p: QueryParams): Promise<QueryResult> {
 
 // Deliberately uncached: the add flow uses this to decide whether to skip a
 // re-scrape, so it must always reflect the current DB state.
-export async function getTitlesByHashtags(hashtags: number[]) {
+export async function getTitlesByHashtags(userId: string, hashtags: number[]) {
+  assertUserId(userId);
   if (hashtags.length === 0) return [];
   return prisma.title.findMany({
-    where: { hashtag: { in: hashtags } },
+    where: { userId, hashtag: { in: hashtags } },
     include: titleInclude,
   });
 }
 
-export async function getTitle(hashtag: number) {
+export async function getTitle(userId: string, hashtag: number) {
   "use cache";
-  cacheTag(`title-${hashtag}`);
+  assertUserId(userId);
+  cacheTag(titleTag(userId, hashtag));
   cacheLife("max");
   return prisma.title.findUnique({
-    where: { hashtag },
+    where: { userId_hashtag: { userId, hashtag } },
     include: titleInclude,
   });
 }
 
-export async function deleteTitle(hashtag: number) {
+export async function deleteTitle(userId: string, hashtag: number) {
+  assertUserId(userId);
   // Cascade removes every join row; DB triggers recompute tag stats and delete
   // any now-orphaned entities (migration 4_orphan_cleanup_triggers, deferred so
   // the re-scrape delete+recreate path doesn't FK-violate).
-  await prisma.title.deleteMany({ where: { hashtag } });
+  await prisma.title.deleteMany({ where: { userId, hashtag } });
 }
 
-export async function markRead(hashtag: number) {
+export async function markRead(userId: string, hashtag: number) {
+  assertUserId(userId);
   return prisma.$transaction([
     prisma.title.update({
-      where: { hashtag },
+      where: { userId_hashtag: { userId, hashtag } },
       data: { readCount: { increment: 1 }, lastReadAt: new Date() },
     }),
-    prisma.readLog.create({ data: { hashtag } }),
+    prisma.readLog.create({ data: { userId, hashtag } }),
   ]);
 }
 
@@ -459,39 +486,45 @@ export type DatasetPayload = {
   total: number;
 };
 
-export async function getDataset(): Promise<DatasetPayload> {
+export async function getDataset(userId: string): Promise<DatasetPayload> {
   "use cache";
-  cacheTag("dataset");
+  assertUserId(userId);
+  cacheTag(datasetTag(userId));
   cacheLife("max");
 
   const [tagRows, artistRows, groupRows, charRows, parodyRows, pageAgg, total] = await Promise.all([
     prisma.$queryRaw<{ name: string; n: bigint }[]>(Prisma.sql`
       SELECT t.tag_name AS name, COUNT(*)::bigint AS n
-      FROM titlestotags tt JOIN tags t USING (id_tag)
+      FROM titlestotags tt JOIN tags t USING (user_id, id_tag)
+      WHERE tt.user_id = ${userId}
       GROUP BY t.tag_name ORDER BY n DESC, name ASC
     `),
     prisma.$queryRaw<{ name: string; n: bigint }[]>(Prisma.sql`
       SELECT a.artist_name AS name, COUNT(*)::bigint AS n
-      FROM titlestoartists ta JOIN artists a USING (id_artist)
+      FROM titlestoartists ta JOIN artists a USING (user_id, id_artist)
+      WHERE ta.user_id = ${userId}
       GROUP BY a.artist_name ORDER BY n DESC, name ASC
     `),
     prisma.$queryRaw<{ name: string; n: bigint }[]>(Prisma.sql`
       SELECT g.group_name AS name, COUNT(*)::bigint AS n
-      FROM titlestogroups tg JOIN groups g USING (id_group)
+      FROM titlestogroups tg JOIN groups g USING (user_id, id_group)
+      WHERE tg.user_id = ${userId}
       GROUP BY g.group_name ORDER BY n DESC, name ASC
     `),
     prisma.$queryRaw<{ name: string; n: bigint }[]>(Prisma.sql`
       SELECT c.character_name AS name, COUNT(*)::bigint AS n
-      FROM titlestocharacters tc JOIN characters c USING (id_character)
+      FROM titlestocharacters tc JOIN characters c USING (user_id, id_character)
+      WHERE tc.user_id = ${userId}
       GROUP BY c.character_name ORDER BY n DESC, name ASC
     `),
     prisma.$queryRaw<{ name: string; n: bigint }[]>(Prisma.sql`
       SELECT p.parodie_name AS name, COUNT(*)::bigint AS n
-      FROM titlestoparodies tp JOIN parodies p USING (id_parodie)
+      FROM titlestoparodies tp JOIN parodies p USING (user_id, id_parodie)
+      WHERE tp.user_id = ${userId}
       GROUP BY p.parodie_name ORDER BY n DESC, name ASC
     `),
-    prisma.title.aggregate({ _min: { pages: true }, _max: { pages: true } }),
-    prisma.title.count(),
+    prisma.title.aggregate({ where: { userId }, _min: { pages: true }, _max: { pages: true } }),
+    prisma.title.count({ where: { userId } }),
   ]);
 
   const toMaps = (rows: { name: string; n: bigint }[]) => {
@@ -530,9 +563,10 @@ export async function getDataset(): Promise<DatasetPayload> {
   };
 }
 
-export async function updateAlterName(hashtag: number, alterName: string) {
+export async function updateAlterName(userId: string, hashtag: number, alterName: string) {
+  assertUserId(userId);
   return prisma.title.update({
-    where: { hashtag },
+    where: { userId_hashtag: { userId, hashtag } },
     data: { alterName: alterName.trim() || null },
   });
 }
@@ -572,9 +606,10 @@ function normalizeTimeZone(tz: string | undefined): string {
  * month) are computed in. Pass the viewer's zone — the client renders these as
  * local time, so bucketing them in UTC mislabels every read. Defaults to UTC.
  */
-export async function getStats(timeZone?: string): Promise<StatsPayload> {
+export async function getStats(userId: string, timeZone?: string): Promise<StatsPayload> {
   "use cache";
-  cacheTag("stats");
+  assertUserId(userId);
+  cacheTag(statsTag(userId));
   // Time-bounded (not "max"): the NOW()/AGE() buckets below are relative to the
   // query time, so the entry must self-refresh or the buckets freeze forever.
   cacheLife("hours");
@@ -612,10 +647,10 @@ export async function getStats(timeZone?: string): Promise<StatsPayload> {
         COALESCE(SUM(CASE WHEN read_count > 0 THEN pages * read_count ELSE 0 END), 0)::bigint AS read_pages,
         COALESCE(SUM(CASE WHEN read_count = 0 THEN 1 ELSE 0 END), 0)::bigint AS unread,
         MAX(pages) AS longest
-      FROM titles
+      FROM titles WHERE user_id = ${userId}
     `),
     prisma.$queryRaw<{ median: number | null }[]>(Prisma.sql`
-      SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY pages)::int AS median FROM titles
+      SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY pages)::int AS median FROM titles WHERE user_id = ${userId}
     `),
     prisma.$queryRaw<{ label: string; count: bigint }[]>(Prisma.sql`
       SELECT label, COUNT(*)::bigint AS count FROM (
@@ -634,7 +669,7 @@ export async function getStats(timeZone?: string): Promise<StatsPayload> {
             WHEN pages < 150 THEN 3
             ELSE 4
           END AS ord
-        FROM titles
+        FROM titles WHERE user_id = ${userId}
       ) s GROUP BY label, ord ORDER BY ord
     `),
     prisma.$queryRaw<{ idx: number; count: bigint }[]>(Prisma.sql`
@@ -643,17 +678,17 @@ export async function getStats(timeZone?: string): Promise<StatsPayload> {
           + EXTRACT(MONTH FROM AGE(${nowLocal}, ${localRead}))::int AS idx,
         COUNT(*)::bigint AS count
       FROM read_logs
-      WHERE read_at > ${nowUtc} - INTERVAL '12 months'
+      WHERE user_id = ${userId} AND read_at > ${nowUtc} - INTERVAL '12 months'
       GROUP BY idx
       ORDER BY idx
     `),
     prisma.$queryRaw<{ h: number; count: bigint }[]>(Prisma.sql`
       SELECT EXTRACT(HOUR FROM ${localRead})::int AS h, COUNT(*)::bigint AS count
-      FROM read_logs GROUP BY h ORDER BY h
+      FROM read_logs WHERE user_id = ${userId} GROUP BY h ORDER BY h
     `),
     prisma.$queryRaw<{ d: number; count: bigint }[]>(Prisma.sql`
       SELECT EXTRACT(DOW FROM ${localRead})::int AS d, COUNT(*)::bigint AS count
-      FROM read_logs GROUP BY d ORDER BY d
+      FROM read_logs WHERE user_id = ${userId} GROUP BY d ORDER BY d
     `),
     // read_at is formatted in SQL rather than handed over as a Date: the driver
     // parses a naive `timestamp` in the *server process's* zone, which would
@@ -663,18 +698,19 @@ export async function getStats(timeZone?: string): Promise<StatsPayload> {
       SELECT r.hashtag,
              to_char(r.read_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS read_at,
              t.title_name, t.alter_name
-      FROM read_logs r LEFT JOIN titles t USING (hashtag)
+      FROM read_logs r LEFT JOIN titles t USING (user_id, hashtag)
+      WHERE r.user_id = ${userId}
       ORDER BY r.read_at DESC LIMIT 20
     `),
     prisma.$queryRaw<{ bucket: number; count: bigint }[]>(Prisma.sql`
       SELECT bucket, COUNT(*)::bigint AS count FROM (
         SELECT FLOOR(EXTRACT(EPOCH FROM (${nowUtc} - created_at)) / 86400 / 60)::int AS bucket
         FROM titles
-        WHERE created_at > ${nowUtc} - INTERVAL '360 days'
+        WHERE user_id = ${userId} AND created_at > ${nowUtc} - INTERVAL '360 days'
       ) s WHERE bucket BETWEEN 0 AND 5 GROUP BY bucket ORDER BY bucket
     `),
     prisma.title.findMany({
-      where: { readCount: { gt: 0 } },
+      where: { userId, readCount: { gt: 0 } },
       orderBy: { readCount: "desc" },
       take: 5,
       select: {
@@ -757,12 +793,13 @@ export type SimilarItem = {
   shared: number;
 };
 
-export async function getSimilar(hashtag: number, limit = 8): Promise<SimilarItem[]> {
+export async function getSimilar(userId: string, hashtag: number, limit = 8): Promise<SimilarItem[]> {
   "use cache";
-  // Broad "similar" tag alongside the per-title one: write paths invalidate the
-  // literal "similar" tag to bust every cached similarity list at once.
-  cacheTag(`similar-${hashtag}`);
-  cacheTag("similar");
+  assertUserId(userId);
+  // Writes invalidate all similarity lists for this user, including neighbours
+  // whose overlap changes when this title changes.
+  cacheTag(similarTag(userId, hashtag));
+  cacheTag(similarAnyTag(userId));
   cacheLife("max");
 
   const take = Math.min(Math.max(Math.floor(limit) || 1, 1), 50);
@@ -774,9 +811,9 @@ export async function getSimilar(hashtag: number, limit = 8): Promise<SimilarIte
     SELECT t.hashtag, t.title_name, t.alter_name, t.image_link, t.pages,
            COUNT(*)::bigint AS shared
     FROM titlestotags a
-    JOIN titlestotags b ON a.id_tag = b.id_tag AND a.hashtag <> b.hashtag
-    JOIN titles t ON t.hashtag = b.hashtag
-    WHERE a.hashtag = ${hashtag}
+    JOIN titlestotags b ON a.user_id = b.user_id AND a.id_tag = b.id_tag AND a.hashtag <> b.hashtag
+    JOIN titles t ON t.user_id = b.user_id AND t.hashtag = b.hashtag
+    WHERE a.user_id = ${userId} AND a.hashtag = ${hashtag}
     GROUP BY t.hashtag, t.title_name, t.alter_name, t.image_link, t.pages
     HAVING COUNT(*) >= 2
     ORDER BY shared DESC
@@ -818,9 +855,10 @@ export type TagAffinityParams = {
  * round-trip latency dominated computation; materialising the matrix would
  * add a write-path trigger for little benefit at this scale.
  */
-export async function getTagAffinity(p: TagAffinityParams): Promise<TagAffinity[]> {
+export async function getTagAffinity(userId: string, p: TagAffinityParams): Promise<TagAffinity[]> {
   "use cache";
-  cacheTag("dataset");
+  assertUserId(userId);
+  cacheTag(datasetTag(userId));
   cacheLife("max");
 
   const names = [...new Set(p.tags.map((t) => t.trim()).filter(Boolean))];
@@ -840,14 +878,14 @@ export async function getTagAffinity(p: TagAffinityParams): Promise<TagAffinity[
   >(Prisma.sql`
     WITH sel AS (
       SELECT tt.hashtag
-      FROM titlestotags tt JOIN tags t USING (id_tag)
-      WHERE t.tag_name IN (${Prisma.join(names)})
+      FROM titlestotags tt JOIN tags t USING (user_id, id_tag)
+      WHERE tt.user_id = ${userId} AND t.tag_name IN (${Prisma.join(names)})
       GROUP BY tt.hashtag
       ${seedHaving}
     ),
     counts AS (
       SELECT (SELECT COUNT(*) FROM sel)::int AS seed_count,
-             (SELECT COUNT(*) FROM titles)::int AS collection
+             (SELECT COUNT(*) FROM titles WHERE user_id = ${userId})::int AS collection
     )
     SELECT t.tag_name AS name,
            COUNT(*)::int AS co,
@@ -855,8 +893,8 @@ export async function getTagAffinity(p: TagAffinityParams): Promise<TagAffinity[
            counts.seed_count,
            counts.collection
     FROM sel
-    JOIN titlestotags b ON b.hashtag = sel.hashtag
-    JOIN tags t ON t.id_tag = b.id_tag
+    JOIN titlestotags b ON b.user_id = ${userId} AND b.hashtag = sel.hashtag
+    JOIN tags t ON t.user_id = b.user_id AND t.id_tag = b.id_tag
     CROSS JOIN counts
     WHERE t.tag_name NOT IN (${Prisma.join(names)})
     GROUP BY t.tag_name, t.title_count, counts.seed_count, counts.collection
@@ -893,32 +931,38 @@ export type GhostIndex = {
  * recompute on the write path — and that path is already constrained by the
  * serialized-write contract the stat triggers impose.
  */
-export async function getGhostIndex(): Promise<GhostIndex> {
+export async function getGhostIndex(userId: string): Promise<GhostIndex> {
   "use cache";
-  cacheTag("dataset");
+  assertUserId(userId);
+  cacheTag(datasetTag(userId));
   cacheLife("max");
 
   const [tagRows, entityRows, totalRow] = await Promise.all([
     prisma.$queryRaw<{ hashtag: number; name: string; total: number }[]>(Prisma.sql`
       SELECT tt.hashtag, t.tag_name AS name, t.title_count AS total
-      FROM titlestotags tt JOIN tags t USING (id_tag)
+      FROM titlestotags tt JOIN tags t USING (user_id, id_tag)
+      WHERE tt.user_id = ${userId}
     `),
     // One UNION rather than four round trips — the shapes are identical and the
     // scorer treats all four categories the same way.
     prisma.$queryRaw<{ kind: GhostSourceKind; hashtag: number; name: string }[]>(Prisma.sql`
       SELECT 'artist' AS kind, ta.hashtag, a.artist_name AS name
-        FROM titlestoartists ta JOIN artists a USING (id_artist)
+        FROM titlestoartists ta JOIN artists a USING (user_id, id_artist)
+        WHERE ta.user_id = ${userId}
       UNION ALL
       SELECT 'group', tg.hashtag, g.group_name
-        FROM titlestogroups tg JOIN groups g USING (id_group)
+        FROM titlestogroups tg JOIN groups g USING (user_id, id_group)
+        WHERE tg.user_id = ${userId}
       UNION ALL
       SELECT 'parody', tp.hashtag, p.parodie_name
-        FROM titlestoparodies tp JOIN parodies p USING (id_parodie)
+        FROM titlestoparodies tp JOIN parodies p USING (user_id, id_parodie)
+        WHERE tp.user_id = ${userId}
       UNION ALL
       SELECT 'character', tc.hashtag, c.character_name
-        FROM titlestocharacters tc JOIN characters c USING (id_character)
+        FROM titlestocharacters tc JOIN characters c USING (user_id, id_character)
+        WHERE tc.user_id = ${userId}
     `),
-    prisma.$queryRaw<{ n: number }[]>(Prisma.sql`SELECT COUNT(*)::int AS n FROM titles`),
+    prisma.$queryRaw<{ n: number }[]>(Prisma.sql`SELECT COUNT(*)::int AS n FROM titles WHERE user_id = ${userId}`),
   ]);
 
   const collectionCount = totalRow[0]?.n ?? 0;
@@ -941,7 +985,7 @@ export async function getGhostIndex(): Promise<GhostIndex> {
   const entityName = new Map<string, string>();
   const linksOf = new Map<number, string[]>();
   for (const r of entityRows) {
-    const key = `${r.kind} ${r.name}`;
+    const key = `${r.kind}\0${r.name}`;
     const titles = entityTitles.get(key);
     if (titles) titles.push(r.hashtag);
     else {
@@ -991,7 +1035,8 @@ export async function getGhostIndex(): Promise<GhostIndex> {
 }
 
 /** One title's ghost tags. Reads the shared index — no separate query path. */
-export async function getGhostTagsFor(hashtag: number): Promise<GhostTag[]> {
-  const index = await getGhostIndex();
+export async function getGhostTagsFor(userId: string, hashtag: number): Promise<GhostTag[]> {
+  assertUserId(userId);
+  const index = await getGhostIndex(userId);
   return index.byTitle[String(hashtag)] ?? [];
 }

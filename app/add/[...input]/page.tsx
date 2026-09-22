@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { requireUserIdOrRedirect } from "@/lib/session";
 import type { Metadata } from "next";
 import { extractHashtag } from "@/lib/utils";
 import { QuickAdd } from "@/components/QuickAdd";
@@ -26,6 +27,7 @@ export default function QuickAddPage({ params }: { params: Promise<{ input: stri
 
 async function Resolved({ params }: { params: Promise<{ input: string[] }> }) {
   const { input } = await params;
+  await requireUserIdOrRedirect(`/add/${input.map(encodeURIComponent).join("/")}`);
   // Catch-all on purpose. A share-sheet shortcut may hand over the nhentai URL
   // percent-encoded ("/add/https%3A%2F%2Fnhentai.net%2Fg%2F177013%2F", one
   // segment) or raw ("/add/https:/nhentai.net/g/177013/", several) depending on

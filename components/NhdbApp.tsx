@@ -93,8 +93,9 @@ function datasetFromPayload(d: DatasetPayload): Dataset {
 }
 
 export default function NhdbApp({
-  initialItems, initialTotal, dataset: datasetPayload, pageSize,
+  userId, initialItems, initialTotal, dataset: datasetPayload, pageSize,
 }: {
+  userId: string;
   initialItems: Item[];
   initialTotal: number;
   dataset: DatasetPayload;
@@ -337,7 +338,7 @@ export default function NhdbApp({
 
   if (viewport === "desktop") {
     return (
-      <ScrapeJobsProvider>
+      <ScrapeJobsProvider userId={userId}>
       <DeepLinkAdd onOpen={() => setAddOpen(true)} />
       <div className="min-h-screen bg-nh-bg">
         <NhdbDesktop
@@ -359,7 +360,7 @@ export default function NhdbApp({
   }
 
   return (
-    <ScrapeJobsProvider>
+    <ScrapeJobsProvider userId={userId}>
     <DeepLinkAdd onOpen={() => setAddOpen(true)} />
     <div className="w-full min-h-screen flex flex-col bg-nh-bg text-nh-text-1 relative overflow-hidden">
       <div className="flex-1 relative">

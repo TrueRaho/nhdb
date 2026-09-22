@@ -35,7 +35,7 @@ interface ScrapeJobsValue {
 }
 
 const ScrapeJobsContext = createContext<ScrapeJobsValue | null>(null);
-const STORAGE_KEY = "nhdb.scrapeJobs.v1";
+const storageKeyFor = (userId: string) => `nhdb.scrapeJobs.v2:${userId}`;
 
 // Render's free tier cold-starts (~90s), past Vercel's 60s function budget — so
 // the first proxied scrape after idle comes back as a transient 5xx. We can't
@@ -102,7 +102,13 @@ function itemFromScraped(scraped: ScrapeResult): Item {
   };
 }
 
-export function ScrapeJobsProvider({ children }: { children: ReactNode }) {
+// Remount the entire queue when accounts change, including in-flight requests.
+export function ScrapeJobsProvider({ userId, children }: { userId: string; children: ReactNode }) {
+  return <UserScrapeJobsProvider key={userId} userId={userId}>{children}</UserScrapeJobsProvider>;
+}
+
+function UserScrapeJobsProvider({ userId, children }: { userId: string; children: ReactNode }) {
+  const storageKey = storageKeyFor(userId);
   // Read persisted jobs straight into initial state. This provider only ever
   // mounts client-side (it's gated behind a viewport check that resolves in an
   // effect), so it never takes part in SSR/hydration — reading localStorage in
@@ -113,7 +119,7 @@ export function ScrapeJobsProvider({ children }: { children: ReactNode }) {
   const [jobs, setJobs] = useState<ScrapeJob[]>(() => {
     if (typeof window === "undefined") return [];
     try {
-      const stored = localStorage.getItem(STORAGE_KEY);
+      const stored = localStorage.getItem(storageKey);
       return stored ? parseStoredJobs(stored) : [];
     } catch {
       return [];
@@ -155,9 +161,9 @@ export function ScrapeJobsProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     try {
       const next = JSON.stringify(jobs);
-      if (localStorage.getItem(STORAGE_KEY) !== next) localStorage.setItem(STORAGE_KEY, next);
+      if (localStorage.getItem(storageKey) !== next) localStorage.setItem(storageKey, next);
     } catch {}
-  }, [jobs]);
+  }, [jobs, storageKey]);
 
   // Cross-tab sync. Two tabs each mirroring their own array into one key means
   // the last writer wipes the other's queue, so every tab folds in the other's
@@ -172,7 +178,7 @@ export function ScrapeJobsProvider({ children }: { children: ReactNode }) {
   // Harmless — the scrape doesn't persist, and the commit is an idempotent upsert.
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
-      if (e.key !== STORAGE_KEY || e.newValue == null) return;
+      if (e.key !== storageKey || e.newValue == null) return;
       let remote: ScrapeJob[];
       try {
         remote = parseStoredJobs(e.newValue);
@@ -201,7 +207,7 @@ export function ScrapeJobsProvider({ children }: { children: ReactNode }) {
     };
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
-  }, []);
+  }, [storageKey]);
 
   const dismiss = useCallback((key: string) => {
     inFlight.current.delete(key);

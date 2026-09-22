@@ -1,6 +1,8 @@
 "use server";
 
 import { updateTag } from "next/cache";
+import { requireUserId } from "../lib/session";
+import { titlesListTag, datasetTag, statsTag, titleTag, similarTag, similarAnyTag } from "../lib/cache-tags";
 import {
   deleteTitle, markRead, updateAlterName, upsertScrapedTitle,
   queryTitles, getStats, getSimilar, getTitle, getTitlesByHashtags, getTagAffinity,
@@ -20,17 +22,18 @@ import type { ScrapeResult } from "../lib/scraper";
 // name), so upsertScrapedTitle stays unaware of it. Omitted or blank leaves any
 // existing name untouched.
 export async function commitScrapedAction(scraped: ScrapeResult, alterName?: string): Promise<Item> {
-  const saved = await upsertScrapedTitle(scraped);
+  const userId = await requireUserId();
+  const saved = await upsertScrapedTitle(userId, scraped);
   const name = alterName?.trim();
-  if (name) await updateAlterName(scraped.hashtag, name);
-  updateTag("titles-list");
-  updateTag("dataset");
-  updateTag("stats");
-  updateTag(`title-${scraped.hashtag}`);
-  updateTag(`similar-${scraped.hashtag}`);
+  if (name) await updateAlterName(userId, scraped.hashtag, name);
+  updateTag(titlesListTag(userId));
+  updateTag(datasetTag(userId));
+  updateTag(statsTag(userId));
+  updateTag(titleTag(userId, scraped.hashtag));
+  updateTag(similarTag(userId, scraped.hashtag));
   // Broad tag: cached similar-<other> lists of NEIGHBOR titles (tag overlap)
   // reference this title too and would otherwise go stale forever.
-  updateTag("similar");
+  updateTag(similarAnyTag(userId));
   // `saved` predates the alterName write, so patch the mapped item rather than
   // re-reading the row with all its relations.
   const item = dbTitleToItem(saved);
@@ -38,32 +41,36 @@ export async function commitScrapedAction(scraped: ScrapeResult, alterName?: str
 }
 
 export async function deleteTitleAction(hashtag: number) {
-  await deleteTitle(hashtag);
-  updateTag("titles-list");
-  updateTag(`title-${hashtag}`);
-  updateTag(`similar-${hashtag}`);
-  updateTag("similar"); // neighbors' similar lists may include the deleted title
-  updateTag("dataset");
-  updateTag("stats");
+  const userId = await requireUserId();
+  await deleteTitle(userId, hashtag);
+  updateTag(titlesListTag(userId));
+  updateTag(titleTag(userId, hashtag));
+  updateTag(similarTag(userId, hashtag));
+  updateTag(similarAnyTag(userId)); // neighbors' similar lists may include the deleted title
+  updateTag(datasetTag(userId));
+  updateTag(statsTag(userId));
 }
 
 export async function markReadAction(hashtag: number) {
-  await markRead(hashtag);
-  updateTag("titles-list");
-  updateTag(`title-${hashtag}`);
-  updateTag("stats");
+  const userId = await requireUserId();
+  await markRead(userId, hashtag);
+  updateTag(titlesListTag(userId));
+  updateTag(titleTag(userId, hashtag));
+  updateTag(statsTag(userId));
 }
 
 export async function updateAlterNameAction(hashtag: number, alterName: string) {
-  await updateAlterName(hashtag, alterName);
-  updateTag("titles-list");
-  updateTag(`title-${hashtag}`);
-  updateTag("similar"); // neighbors' similar lists show this title's name
-  updateTag("stats"); // alterName feeds stats.recentSessions.name / mostRead.alterName
+  const userId = await requireUserId();
+  await updateAlterName(userId, hashtag, alterName);
+  updateTag(titlesListTag(userId));
+  updateTag(titleTag(userId, hashtag));
+  updateTag(similarAnyTag(userId)); // neighbors' similar lists show this title's name
+  updateTag(statsTag(userId)); // alterName feeds stats.recentSessions.name / mostRead.alterName
 }
 
 export async function queryTitlesAction(params: QueryParams): Promise<{ items: Item[]; total: number }> {
-  const res = await queryTitles(params);
+  const userId = await requireUserId();
+  const res = await queryTitles(userId, params);
   return { items: res.items.map(dbTitleToItem), total: res.total };
 }
 
@@ -71,11 +78,13 @@ export async function queryTitlesAction(params: QueryParams): Promise<{ items: I
 // day-of-week charts are rendered as local wall-clock, so they must be bucketed
 // in the viewer's zone rather than the database's.
 export async function getStatsAction(timeZone?: string) {
-  return getStats(timeZone);
+  const userId = await requireUserId();
+  return getStats(userId, timeZone);
 }
 
 export async function getSimilarAction(hashtag: number, limit = 8) {
-  return getSimilar(hashtag, limit);
+  const userId = await requireUserId();
+  return getSimilar(userId, hashtag, limit);
 }
 
 // Fetched on demand rather than shipped inside getDataset(): the full
@@ -83,23 +92,27 @@ export async function getSimilarAction(hashtag: number, limit = 8) {
 // client on first render — including phones, which is exactly what the split
 // layout exists to keep light.
 export async function getTagAffinityAction(params: TagAffinityParams) {
-  return getTagAffinity(params);
+  const userId = await requireUserId();
+  return getTagAffinity(userId, params);
 }
 
 // One title's inferred tags, for the detail view. Reads the same cached index
 // the query path filters through, so an open modal costs no extra database work.
 export async function getGhostTagsAction(hashtag: number) {
-  return getGhostTagsFor(hashtag);
+  const userId = await requireUserId();
+  return getGhostTagsFor(userId, hashtag);
 }
 
 export async function getTitleAction(hashtag: number): Promise<Item | null> {
-  const t = await getTitle(hashtag);
+  const userId = await requireUserId();
+  const t = await getTitle(userId, hashtag);
   return t ? dbTitleToItem(t) : null;
 }
 
 // Which of these hashtags are already in the collection? Uncached read —
 // the add flow uses it to skip re-scraping known titles.
 export async function findExistingTitlesAction(hashtags: number[]): Promise<Item[]> {
-  const titles = await getTitlesByHashtags(hashtags);
+  const userId = await requireUserId();
+  const titles = await getTitlesByHashtags(userId, hashtags);
   return titles.map(dbTitleToItem);
 }

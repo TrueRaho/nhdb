@@ -1,4 +1,9 @@
 import { NextResponse } from "next/server";
+import { requireUserId, UnauthorizedError } from "@/lib/session";
+import { consumeScrapeBudget } from "@/lib/rate-limit";
+import { resolveScraperTargets, type ScraperTarget } from "@/lib/scraper-endpoints";
+import { assertReachableHost, UnsafeUrlError } from "@/lib/net-guard";
+import { titlesListTag, datasetTag, statsTag, titleTag, similarTag, similarAnyTag } from "@/lib/cache-tags";
 import { revalidateTag } from "next/cache";
 import { scrapeTitle, ScrapeError, type ScrapeResult, type ScrapeVia } from "@/lib/scraper";
 import { upsertScrapedTitle } from "@/lib/titles";
@@ -22,19 +27,38 @@ type ScraperCall =
 // about the input (404/400) — don't retry elsewhere. "unreachable" = network
 // error, timeout, HTML error page (tunnel down), or a non-input error — the
 // caller should fall through to the next host.
-async function callScraper(baseUrl: string, input: string, timeoutMs: number): Promise<ScraperCall> {
+async function callScraper(target: ScraperTarget, input: string, timeoutMs: number): Promise<ScraperCall> {
+  // Re-checked immediately before connecting, not just when the URL was saved:
+  // a name that resolved to a public address at save time can resolve to
+  // 127.0.0.1 now, and only the check next to the request sees that.
+  try {
+    await assertReachableHost(target.url);
+  } catch (e) {
+    return {
+      kind: "unreachable",
+      response: NextResponse.json(
+        { error: e instanceof UnsafeUrlError ? e.message : "Scraper host is not reachable" },
+        { status: 502 },
+      ),
+    };
+  }
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   let upstream: Response;
   try {
-    upstream = await fetch(`${baseUrl.replace(/\/$/, "")}/scrape`, {
+    upstream = await fetch(`${target.url.replace(/\/$/, "")}/scrape`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...(process.env.SCRAPER_SECRET ? { Authorization: `Bearer ${process.env.SCRAPER_SECRET}` } : {}),
+        ...(target.secret ? { Authorization: `Bearer ${target.secret}` } : {}),
       },
       body: JSON.stringify({ input }),
       signal: controller.signal,
+      // The host is user-supplied, so a redirect is an SSRF bypass: the address
+      // checks above apply to the URL we chose, and a 302 would send the next
+      // request — bearer token attached — somewhere nobody validated.
+      redirect: "error",
     });
   } catch {
     clearTimeout(timer);
@@ -76,15 +100,15 @@ async function callScraper(baseUrl: string, input: string, timeoutMs: number): P
 
 // Route Handlers may not call updateTag — revalidateTag(tag, "max") marks the
 // entries stale instead (the UI goes through commitScrapedAction for instant reads).
-function invalidateAfterUpsert(hashtag: number) {
-  revalidateTag("titles-list", "max");
-  revalidateTag("dataset", "max");
-  revalidateTag("stats", "max");
-  revalidateTag(`title-${hashtag}`, "max");
-  revalidateTag(`similar-${hashtag}`, "max");
+function invalidateAfterUpsert(userId: string, hashtag: number) {
+  revalidateTag(titlesListTag(userId), "max");
+  revalidateTag(datasetTag(userId), "max");
+  revalidateTag(statsTag(userId), "max");
+  revalidateTag(titleTag(userId, hashtag), "max");
+  revalidateTag(similarTag(userId, hashtag), "max");
   // Broad tag: neighbors' similar-<other> lists (tag overlap) reference this
   // title too and would otherwise go stale forever.
-  revalidateTag("similar", "max");
+  revalidateTag(similarAnyTag(userId), "max");
 }
 
 // upsertScrapedTitle validates the payload at the write boundary and throws a
@@ -94,17 +118,35 @@ function isValidationError(e: unknown): e is Error {
 }
 
 export async function POST(req: Request) {
+  let userId: string;
+  try {
+    userId = await requireUserId();
+  } catch (error) {
+    if (error instanceof UnauthorizedError) {
+      return NextResponse.json({ error: error.message }, { status: 401 });
+    }
+    console.error("session lookup failed:", error);
+    return NextResponse.json({ error: "Authentication unavailable" }, { status: 503 });
+  }
   let body: { input?: string; persist?: boolean; scraped?: ScrapeResult };
   try {
-    body = await req.json();
+    const parsed: unknown = await req.json();
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return NextResponse.json({ error: "Expected a JSON object" }, { status: 400 });
+    }
+    body = parsed;
+    if ((body.input !== undefined && typeof body.input !== "string") ||
+        (body.persist !== undefined && typeof body.persist !== "boolean")) {
+      return NextResponse.json({ error: "Invalid input or persist field" }, { status: 400 });
+    }
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
   if (body.scraped && body.persist !== false) {
     try {
-      const saved = await upsertScrapedTitle(body.scraped);
-      invalidateAfterUpsert(body.scraped.hashtag);
+      const saved = await upsertScrapedTitle(userId, body.scraped);
+      invalidateAfterUpsert(userId, body.scraped.hashtag);
       return NextResponse.json({ scraped: body.scraped, saved });
     } catch (e) {
       if (isValidationError(e)) {
@@ -120,14 +162,47 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Missing 'input' field" }, { status: 400 });
   }
 
-  // Try the configured scraper hosts in order. SCRAPER_SERVICE_URL is the
-  // primary — point it at the local ngrok box, whose residential IP lets impit's
-  // fast path pass Cloudflare (~200ms). SCRAPER_SERVICE_URL_FALLBACK (Render) is
-  // used only when the primary is unreachable (Mac asleep / tunnel down), where
-  // every scrape pays the slow browser fallback.
-  const hosts = [process.env.SCRAPER_SERVICE_URL, process.env.SCRAPER_SERVICE_URL_FALLBACK]
-    .map((u) => u?.trim())
-    .filter((u): u is string => Boolean(u));
+  // The scraper is per user: everyone registers their own hosts on /account, in
+  // priority order. Position 0 should be the fast one (a local box behind a
+  // tunnel, whose residential IP lets impit's ~200ms path pass Cloudflare); the
+  // rest are tried only when it is unreachable and typically pay the slow
+  // browser fallback.
+  //
+  // The env vars remain as a DEVELOPMENT-only default so `pnpm dev` works
+  // against a local `pnpm scraper` with no setup. In production they are
+  // ignored: a shared fallback host would quietly put everyone's scraping back
+  // on one person's box, which is the thing per-user endpoints exist to stop.
+  const hosts: ScraperTarget[] = await resolveScraperTargets(userId);
+  if (hosts.length === 0 && process.env.NODE_ENV !== "production") {
+    for (const url of [process.env.SCRAPER_SERVICE_URL, process.env.SCRAPER_SERVICE_URL_FALLBACK]) {
+      const trimmed = url?.trim();
+      if (trimmed) hosts.push({ url: trimmed, secret: process.env.SCRAPER_SECRET ?? null, label: "env" });
+    }
+  }
+
+  // Answered before the budget is charged: an account with nothing configured
+  // is a setup problem, and spending one of the user's hourly scrapes to tell
+  // them so would be a small, confusing theft.
+  if (hosts.length === 0 && process.env.NODE_ENV === "production") {
+    return NextResponse.json(
+      { error: "No scraper host configured. Add one in Account settings." },
+      { status: 409 },
+    );
+  }
+
+  // Charged here rather than at the top of the handler: everything above this
+  // point is a database write the caller makes to their own rows, while
+  // everything below spends real resources — the user's scraper, and a
+  // serverless function held open for up to maxDuration. So a `persist` commit
+  // of an already-scraped payload costs nothing, and a malformed request costs
+  // nothing.
+  const budget = await consumeScrapeBudget(userId);
+  if (!budget.allowed) {
+    return NextResponse.json(
+      { error: `Scrape limit reached (${budget.limit}/hour). Try again later.` },
+      { status: 429, headers: { "Retry-After": String(budget.retryAfterSeconds) } },
+    );
+  }
 
   if (hosts.length > 0) {
     let lastError: NextResponse = NextResponse.json(
@@ -153,8 +228,8 @@ export async function POST(req: Request) {
       }
       if (body.persist === false) return NextResponse.json({ scraped, via });
       try {
-        const saved = await upsertScrapedTitle(scraped);
-        invalidateAfterUpsert(scraped.hashtag);
+        const saved = await upsertScrapedTitle(userId, scraped);
+        invalidateAfterUpsert(userId, scraped.hashtag);
         return NextResponse.json({ scraped, saved, via });
       } catch (e) {
         if (isValidationError(e)) {
@@ -172,8 +247,8 @@ export async function POST(req: Request) {
     if (body.persist === false) {
       return NextResponse.json({ scraped, via });
     }
-    const saved = await upsertScrapedTitle(scraped);
-    invalidateAfterUpsert(scraped.hashtag);
+    const saved = await upsertScrapedTitle(userId, scraped);
+    invalidateAfterUpsert(userId, scraped.hashtag);
     return NextResponse.json({ scraped, saved, via });
   } catch (e) {
     if (e instanceof ScrapeError) {

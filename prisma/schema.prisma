@@ -8,19 +8,20 @@ datasource db {
 }
 
 model Title {
-  hashtag       Int       @id
-  titleName     String    @db.VarChar(255) @map("title_name")
-  alterName     String?   @db.VarChar(255) @map("alter_name")
-  imageLink     String    @db.VarChar(255) @map("image_link")
-  pages         Int
-  uploadedAt    DateTime  @db.Date @map("uploaded_at")
-  createdAt     DateTime  @default(now()) @map("created_at")
-  readCount     Int       @default(0) @map("read_count")
-  lastReadAt    DateTime? @map("last_read_at")
-  // Mean global frequency of this title's tags (a tag's "value" = how many
+  userId      String    @map("user_id") @db.VarChar(64)
+  hashtag     Int
+  titleName   String    @map("title_name") @db.VarChar(255)
+  alterName   String?   @map("alter_name") @db.VarChar(255)
+  imageLink   String    @map("image_link") @db.VarChar(255)
+  pages       Int
+  uploadedAt  DateTime  @map("uploaded_at") @db.Date
+  createdAt   DateTime  @default(now()) @map("created_at")
+  readCount   Int       @default(0) @map("read_count")
+  lastReadAt  DateTime? @map("last_read_at")
+  // Mean per-user frequency of this title's tags (a tag's "value" = how many
   // titles carry it). Maintained by DB triggers on titlestotags — see
   // migration 3_avg_tag_value. Null when the title has no tags.
-  avgTagValue   Float?    @map("avg_tag_value")
+  avgTagValue Float?    @map("avg_tag_value")
 
   artists    TitleArtist[]
   groups     TitleGroup[]
@@ -29,135 +30,192 @@ model Title {
   tags       TitleTag[]
   readLogs   ReadLog[]
 
-  @@index([createdAt(sort: Desc)])
-  @@index([lastReadAt(sort: Desc)])
-  @@index([readCount(sort: Desc)])
-  @@index([uploadedAt(sort: Desc)])
-  @@index([pages])
-  @@index([avgTagValue])
+  @@id([userId, hashtag])
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([userId, lastReadAt(sort: Desc)])
+  @@index([userId, readCount(sort: Desc)])
+  @@index([userId, uploadedAt(sort: Desc)])
+  @@index([userId, pages])
+  @@index([userId, avgTagValue])
   @@map("titles")
 }
 
 model Artist {
-  idArtist   Int           @id @default(autoincrement()) @map("id_artist")
-  artistName String        @unique @db.VarChar(255) @map("artist_name")
-  artistLink String        @unique @db.VarChar(255) @map("artist_link")
-  totalWorks Int?          @map("total_works")
+  userId     String @map("user_id") @db.VarChar(64)
+  idArtist   Int    @id @default(autoincrement()) @map("id_artist")
+  artistName String @map("artist_name") @db.VarChar(255)
+  artistLink String @map("artist_link") @db.VarChar(255)
+  totalWorks Int?   @map("total_works")
 
   titles TitleArtist[]
 
+  @@unique([userId, idArtist])
+  @@unique([userId, artistName])
+  @@unique([userId, artistLink])
   @@map("artists")
 }
 
 model Group {
-  idGroup    Int          @id @default(autoincrement()) @map("id_group")
-  groupName  String       @unique @db.VarChar(255) @map("group_name")
-  groupLink  String       @unique @db.VarChar(255) @map("group_link")
-  totalWorks Int?         @map("total_works")
+  userId     String @map("user_id") @db.VarChar(64)
+  idGroup    Int    @id @default(autoincrement()) @map("id_group")
+  groupName  String @map("group_name") @db.VarChar(255)
+  groupLink  String @map("group_link") @db.VarChar(255)
+  totalWorks Int?   @map("total_works")
 
   titles TitleGroup[]
 
+  @@unique([userId, idGroup])
+  @@unique([userId, groupName])
+  @@unique([userId, groupLink])
   @@map("groups")
 }
 
 model Character {
-  idCharacter   Int              @id @default(autoincrement()) @map("id_character")
-  characterName String           @unique @db.VarChar(255) @map("character_name")
-  characterLink String           @unique @db.VarChar(255) @map("character_link")
-  totalWorks    Int?             @map("total_works")
+  userId        String @map("user_id") @db.VarChar(64)
+  idCharacter   Int    @id @default(autoincrement()) @map("id_character")
+  characterName String @map("character_name") @db.VarChar(255)
+  characterLink String @map("character_link") @db.VarChar(255)
+  totalWorks    Int?   @map("total_works")
 
   titles TitleCharacter[]
 
+  @@unique([userId, idCharacter])
+  @@unique([userId, characterName])
+  @@unique([userId, characterLink])
   @@map("characters")
 }
 
 model Parody {
-  idParodie   Int              @id @default(autoincrement()) @map("id_parodie")
-  parodieName String           @unique @db.VarChar(255) @map("parodie_name")
-  parodieLink String           @unique @db.VarChar(255) @map("parodie_link")
-  totalWorks  Int?             @map("total_works")
+  userId      String @map("user_id") @db.VarChar(64)
+  idParodie   Int    @id @default(autoincrement()) @map("id_parodie")
+  parodieName String @map("parodie_name") @db.VarChar(255)
+  parodieLink String @map("parodie_link") @db.VarChar(255)
+  totalWorks  Int?   @map("total_works")
 
   titles TitleParody[]
 
+  @@unique([userId, idParodie])
+  @@unique([userId, parodieName])
+  @@unique([userId, parodieLink])
   @@map("parodies")
 }
 
 model Tag {
-  idTag      Int        @id @default(autoincrement()) @map("id_tag")
-  tagName    String     @unique @db.VarChar(255) @map("tag_name")
-  tagLink    String     @unique @db.VarChar(255) @map("tag_link")
-  totalWorks Int?       @map("total_works")
+  userId     String @map("user_id") @db.VarChar(64)
+  idTag      Int    @id @default(autoincrement()) @map("id_tag")
+  tagName    String @map("tag_name") @db.VarChar(255)
+  tagLink    String @map("tag_link") @db.VarChar(255)
+  totalWorks Int?   @map("total_works")
   // Number of titles carrying this tag (this tag's "value"). Maintained by DB
   // triggers on titlestotags — see migration 3_avg_tag_value.
-  titleCount Int        @default(0) @map("title_count")
+  titleCount Int    @default(0) @map("title_count")
 
   titles TitleTag[]
 
+  @@unique([userId, idTag])
+  @@unique([userId, tagName])
+  @@unique([userId, tagLink])
   @@map("tags")
 }
 
 model TitleArtist {
+  userId   String @map("user_id") @db.VarChar(64)
   hashtag  Int
   idArtist Int    @map("id_artist")
-  title    Title  @relation(fields: [hashtag], references: [hashtag], onDelete: Cascade, onUpdate: NoAction)
-  artist   Artist @relation(fields: [idArtist], references: [idArtist], onDelete: Cascade, onUpdate: NoAction)
+  title    Title  @relation(fields: [userId, hashtag], references: [userId, hashtag], onDelete: Cascade, onUpdate: NoAction, map: "titlestoartists_title_fkey")
+  artist   Artist @relation(fields: [userId, idArtist], references: [userId, idArtist], onDelete: Cascade, onUpdate: NoAction, map: "titlestoartists_artist_fkey")
 
-  @@id([hashtag, idArtist])
+  @@id([userId, hashtag, idArtist])
   @@index([idArtist])
   @@map("titlestoartists")
 }
 
 model TitleGroup {
+  userId  String @map("user_id") @db.VarChar(64)
   hashtag Int
-  idGroup Int   @map("id_group")
-  title   Title @relation(fields: [hashtag], references: [hashtag], onDelete: Cascade, onUpdate: NoAction)
-  group   Group @relation(fields: [idGroup], references: [idGroup], onDelete: Cascade, onUpdate: NoAction)
+  idGroup Int    @map("id_group")
+  title   Title  @relation(fields: [userId, hashtag], references: [userId, hashtag], onDelete: Cascade, onUpdate: NoAction, map: "titlestogroups_title_fkey")
+  group   Group  @relation(fields: [userId, idGroup], references: [userId, idGroup], onDelete: Cascade, onUpdate: NoAction, map: "titlestogroups_group_fkey")
 
-  @@id([hashtag, idGroup])
+  @@id([userId, hashtag, idGroup])
   @@index([idGroup])
   @@map("titlestogroups")
 }
 
 model TitleCharacter {
+  userId      String    @map("user_id") @db.VarChar(64)
   hashtag     Int
   idCharacter Int       @map("id_character")
-  title       Title     @relation(fields: [hashtag], references: [hashtag], onDelete: Cascade, onUpdate: NoAction)
-  character   Character @relation(fields: [idCharacter], references: [idCharacter], onDelete: Cascade, onUpdate: NoAction)
+  title       Title     @relation(fields: [userId, hashtag], references: [userId, hashtag], onDelete: Cascade, onUpdate: NoAction, map: "titlestocharacters_title_fkey")
+  character   Character @relation(fields: [userId, idCharacter], references: [userId, idCharacter], onDelete: Cascade, onUpdate: NoAction, map: "titlestocharacters_character_fkey")
 
-  @@id([hashtag, idCharacter])
+  @@id([userId, hashtag, idCharacter])
   @@index([idCharacter])
   @@map("titlestocharacters")
 }
 
 model TitleParody {
+  userId    String @map("user_id") @db.VarChar(64)
   hashtag   Int
   idParodie Int    @map("id_parodie")
-  title     Title  @relation(fields: [hashtag], references: [hashtag], onDelete: Cascade, onUpdate: NoAction)
-  parody    Parody @relation(fields: [idParodie], references: [idParodie], onDelete: Cascade, onUpdate: NoAction)
+  title     Title  @relation(fields: [userId, hashtag], references: [userId, hashtag], onDelete: Cascade, onUpdate: NoAction, map: "titlestoparodies_title_fkey")
+  parody    Parody @relation(fields: [userId, idParodie], references: [userId, idParodie], onDelete: Cascade, onUpdate: NoAction, map: "titlestoparodies_parody_fkey")
 
-  @@id([hashtag, idParodie])
+  @@id([userId, hashtag, idParodie])
   @@index([idParodie])
   @@map("titlestoparodies")
 }
 
 model TitleTag {
+  userId  String @map("user_id") @db.VarChar(64)
   hashtag Int
-  idTag   Int   @map("id_tag")
-  title   Title @relation(fields: [hashtag], references: [hashtag], onDelete: Cascade, onUpdate: NoAction)
-  tag     Tag   @relation(fields: [idTag], references: [idTag], onDelete: Cascade, onUpdate: NoAction)
+  idTag   Int    @map("id_tag")
+  title   Title  @relation(fields: [userId, hashtag], references: [userId, hashtag], onDelete: Cascade, onUpdate: NoAction, map: "titlestotags_title_fkey")
+  tag     Tag    @relation(fields: [userId, idTag], references: [userId, idTag], onDelete: Cascade, onUpdate: NoAction, map: "titlestotags_tag_fkey")
 
-  @@id([hashtag, idTag])
+  @@id([userId, hashtag, idTag])
   @@index([idTag])
   @@map("titlestotags")
 }
 
 model ReadLog {
+  userId  String   @map("user_id") @db.VarChar(64)
   id      Int      @id @default(autoincrement())
   hashtag Int
   readAt  DateTime @default(now()) @map("read_at")
-  title   Title    @relation(fields: [hashtag], references: [hashtag], onDelete: Cascade)
+  title   Title    @relation(fields: [userId, hashtag], references: [userId, hashtag], onDelete: Cascade, onUpdate: NoAction, map: "read_logs_title_fkey")
 
-  @@index([readAt(sort: Desc)])
-  @@index([hashtag])
+  @@index([userId, readAt(sort: Desc)])
+  @@index([userId, hashtag])
   @@map("read_logs")
+}
+
+// Per-user scrape budget (migration 7_scrape_budget). Written only through the
+// atomic upsert in lib/rate-limit.ts — the model exists so the table is not
+// schema drift, not because anything uses the generated client for it.
+//
+// No relation to Title: the budget has to be chargeable before a user owns a
+// single row.
+model ScrapeBudget {
+  userId   String   @id @map("user_id") @db.VarChar(64)
+  windowAt DateTime @map("window_at") @db.Timestamptz()
+  used     Int
+
+  @@map("scrape_budget")
+}
+
+// A user's own scraper hosts, tried in `position` order (migration
+// 8_scraper_endpoints). Written only by rewriting the whole list for a user, so
+// positions stay contiguous from 0 without a reordering dance.
+model ScraperEndpoint {
+  userId    String   @map("user_id") @db.VarChar(64)
+  position  Int
+  label     String?  @db.VarChar(64)
+  url       String   @db.VarChar(255)
+  /// AES-256-GCM ciphertext from lib/secret-box.ts. Never leaves the server.
+  secretEnc String?  @map("secret_enc")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  @@id([userId, position])
+  @@map("scraper_endpoints")
 }

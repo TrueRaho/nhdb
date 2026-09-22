@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ScrapeJobsProvider, useScrapeJobs, type ScrapeJob } from "./ScrapeJobsProvider";
 
-const STORAGE_KEY = "nhdb.scrapeJobs.v1";
+const STORAGE_KEY = "nhdb.scrapeJobs.v2:user-a";
 
 // Server actions go through the network in the real app — stub the module.
 vi.mock("../app/actions", () => ({
@@ -58,7 +58,7 @@ function Probe() {
   });
   return null;
 }
-const mount = () => render(<ScrapeJobsProvider><Probe /></ScrapeJobsProvider>);
+const mount = () => render(<ScrapeJobsProvider userId="user-a"><Probe /></ScrapeJobsProvider>);
 
 beforeEach(() => {
   localStorage.clear();
@@ -163,7 +163,7 @@ describe("scrape pool", () => {
 
   it("resumes a job left scraping in storage from a previous session", async () => {
     localStorage.setItem(
-      "nhdb.scrapeJobs.v1",
+      "nhdb.scrapeJobs.v2:user-a",
       JSON.stringify([{ key: "#777777", input: "777777", status: "scraping" }]),
     );
     const f = gatedFetch();
@@ -177,7 +177,7 @@ describe("scrape pool", () => {
     // away: the scraped payload is what commitReady saves, so losing it would
     // silently cost a second scrape.
     localStorage.setItem(
-      "nhdb.scrapeJobs.v1",
+      "nhdb.scrapeJobs.v2:user-a",
       JSON.stringify([
         {
           key: "#888888",
@@ -202,7 +202,7 @@ describe("scrape pool", () => {
   });
 
   it("ignores corrupt persisted state instead of crashing", async () => {
-    localStorage.setItem("nhdb.scrapeJobs.v1", '{"not":"an array"}');
+    localStorage.setItem("nhdb.scrapeJobs.v2:user-a", '{"not":"an array"}');
     gatedFetch();
     mount();
     expect(probe.ctx.jobs).toEqual([]);
@@ -395,5 +395,30 @@ describe("cross-tab sync", () => {
     await act(async () => peerWrites(remote));
     // Byte-identical to what the peer wrote: no write-back, so no event storm.
     expect(localStorage.getItem(STORAGE_KEY)).toBe(JSON.stringify(remote));
+  });
+});
+
+
+describe("account isolation", () => {
+  it("never restores the legacy queue or another account's queue", () => {
+    const job = { key: "#111111", input: "111111", status: "ready", raw: scrapedFor(111111) };
+    localStorage.setItem("nhdb.scrapeJobs.v1", JSON.stringify([job]));
+    localStorage.setItem("nhdb.scrapeJobs.v2:user-b", JSON.stringify([job]));
+    mount();
+    expect(probe.ctx.jobs).toEqual([]);
+  });
+
+  it("resets jobs when the account changes and ignores foreign storage events", async () => {
+    const job = { key: "#111111", input: "111111", status: "ready", raw: scrapedFor(111111) };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify([job]));
+    const view = mount();
+    expect(probe.ctx.jobs).toHaveLength(1);
+    view.rerender(<ScrapeJobsProvider userId="user-b"><Probe /></ScrapeJobsProvider>);
+    expect(probe.ctx.jobs).toEqual([]);
+    await act(async () => {
+      window.dispatchEvent(new StorageEvent("storage", { key: STORAGE_KEY, newValue: JSON.stringify([job]) }));
+    });
+    expect(probe.ctx.jobs).toEqual([]);
+    expect(localStorage.getItem("nhdb.scrapeJobs.v2:user-b")).toBe("[]");
   });
 });

@@ -8,6 +8,7 @@
 //   pnpm rescrape --list        # print targets without scraping
 //   pnpm rescrape --limit=20    # cap the number of titles processed
 //
+// Set NHDB_SESSION_COOKIE to your signed-in browser Cookie header.
 // Set VERCEL_AUTOMATION_BYPASS_SECRET when APP_URL targets a Vercel deployment with Deployment Protection.
 import { config } from "dotenv";
 import { neon } from "@neondatabase/serverless";
@@ -33,12 +34,29 @@ const parsedLimit = limitArg ? parseInt(limitArg.split("=")[1], 10) : Infinity;
 const limit = Number.isNaN(parsedLimit) ? Infinity : parsedLimit;
 
 async function main() {
+  const cookie = process.env.NHDB_SESSION_COOKIE?.trim();
+  if (!cookie) throw new Error("Set NHDB_SESSION_COOKIE to a signed-in browser Cookie header");
+  const sessionResponse = await fetch(`${APP_URL}/api/auth/get-session`, {
+    headers: { ...bypassHeaders, Cookie: cookie },
+    redirect: "error",
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+  if (!sessionResponse.ok) throw new Error(`Session lookup failed (HTTP ${sessionResponse.status})`);
+  const session = await sessionResponse.json() as {
+    session?: { userId?: string };
+    user?: { id?: string; emailVerified?: boolean };
+  } | null;
+  const userId = session?.user?.id;
+  if (!userId || session?.session?.userId !== userId || session.user?.emailVerified !== true) {
+    throw new Error("A verified signed-in session is required");
+  }
   const sql = neon(process.env.DATABASE_URL!);
   const rows = (all
-    ? await sql`SELECT hashtag, title_name FROM titles ORDER BY hashtag`
+    ? await sql`SELECT hashtag, title_name FROM titles WHERE user_id = ${userId} ORDER BY hashtag`
     : await sql`
         SELECT hashtag, title_name FROM titles t
-        WHERE NOT EXISTS (SELECT 1 FROM titlestotags tt WHERE tt.hashtag = t.hashtag)
+        WHERE t.user_id = ${userId}
+          AND NOT EXISTS (SELECT 1 FROM titlestotags tt WHERE tt.user_id = t.user_id AND tt.hashtag = t.hashtag)
         ORDER BY hashtag
       `) as { hashtag: number; title_name: string }[];
 
@@ -54,7 +72,8 @@ async function main() {
     try {
       const res = await fetch(`${APP_URL}/api/scrape`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...bypassHeaders },
+        headers: { "Content-Type": "application/json", ...bypassHeaders, Cookie: cookie },
+        redirect: "error",
         body: JSON.stringify({ input: String(r.hashtag), persist: true }),
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
@@ -71,8 +90,9 @@ async function main() {
     if (i < targets.length - 1) await new Promise((s) => setTimeout(s, DELAY_MS));
   }
   console.log(`done: ${ok} updated, ${fail} failed`);
+  if (fail) process.exitCode = 1;
 }
 
 main()
-  .then(() => process.exit(0))
+  .then(() => process.exit(process.exitCode ?? 0))
   .catch((e) => { console.error(e); process.exit(1); });

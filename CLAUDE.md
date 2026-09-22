@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-nhdb is a personal single-user web app that catalogs an nhentai collection. It
+nhdb is a personal multi-user web app that catalogs an nhentai collection. It
 scrapes title metadata from nhentai, stores it in Neon Postgres via Prisma, and
 serves a filterable/sortable gallery plus reading stats. Next.js 16 App Router,
 React 19, Tailwind v4, pnpm.
@@ -48,11 +48,60 @@ pnpm rescrape       # bulk re-scrape via the running app's /api/scrape
 
 ## Architecture
 
+### Tenancy
+
+Neon Auth identifies each verified user. Pages, Server Actions and the scrape
+API gate access through `lib/session.ts`; the proxy only improves navigation.
+All `lib/titles.ts` functions take `userId` first, including cached reads. Resolve
+it from the session outside `"use cache"`, never from client input. Titles use
+`(user_id, hashtag)` keys; entities and joins belong to the same user, enforced by
+composite foreign keys. Statistics, affinity and ghost tags are per collection.
+Cache tags come from `lib/cache-tags.ts` and include the owner. Browser scrape
+queues use `nhdb.scrapeJobs.v2:<userId>` and reset when accounts change.
+
+Migration 6 parks legacy rows under `nhdb:unclaimed`; `pnpm claim <auth-user-id>`
+transfers them atomically into an empty account. Restart the app after claiming
+so any cached empty reads expire. See README for environment/setup steps.
+
+Sign-up is open, so `/api/scrape` charges a per-user budget
+(`lib/rate-limit.ts`, migration 7) before it spends real resources — the user's
+scraper, and a serverless function held open for up to `maxDuration`.
+It lives in Postgres **because** the app is serverless — an in-memory bucket is
+per lambda instance, which multiplies the limit by the instance count. Charge it
+only on paths that actually scrape: a commit of an already-scraped payload and a
+malformed request both spend nothing. The single-statement upsert is what keeps
+four concurrent pool scrapes from losing updates; don't split it into a read and
+a write.
+
+### Per-user scraper hosts
+
+The collection is shared infrastructure; the scraper is not. Each user registers
+their own hosts on `/account` (`scraper_endpoints`, migration 8), tried in
+`position` order — the per-user version of the old ngrok-then-Render pair. In
+production the `SCRAPER_SERVICE_URL*` env vars are **ignored**; they survive only
+as a dev convenience, because a shared fallback would put everyone's scraping
+back on one person's box.
+
+Three things here are load-bearing and easy to undo:
+
+- **The URL is user input that the server fetches**, i.e. SSRF. `lib/net-guard.ts`
+  requires https, rejects every non-public resolved address (IPv4-mapped and
+  NAT64 IPv6 unwrapped so `::ffff:169.254.169.254` cannot sneak through),
+  re-checks DNS immediately before connecting, and the fetch sets
+  `redirect: "error"`. Removing any one of those re-opens it.
+- **Secrets are AES-GCM encrypted** (`lib/secret-box.ts`, `SCRAPER_CRED_KEY`) and
+  never reach the browser — the UI gets `hasSecret`, not the value. A host whose
+  secret will not decrypt is dropped, never called unauthenticated.
+- **The list is rewritten whole** on save; positions are contiguous from 0, and a
+  kept secret is carried over by URL so a reorder preserves it while repointing a
+  row at another machine does not.
+
 ### Caching contract (the part that's easy to break)
 
 Read functions in `lib/titles.ts` are cached with `"use cache"` +
-`cacheTag(...)` + `cacheLife("max")`. Tags in use: `titles-list`, `dataset`,
-`stats`, `title-<hashtag>`, `similar-<hashtag>`. Any write must invalidate the
+`cacheTag(...)` + `cacheLife("max")`. Tags are scoped by user via `lib/cache-tags.ts`: `titles-list:<userId>`,
+`dataset:<userId>`, `stats:<userId>`, `title:<userId>:<hashtag>`,
+`similar:<userId>:<hashtag>` and `similar:<userId>`. Any write must invalidate the
 matching tags, and **which invalidation API you call depends on where you are**:
 
 - **Server Actions** (`app/actions.ts`) → `updateTag(tag)` for read-your-writes
@@ -60,7 +109,7 @@ matching tags, and **which invalidation API you call depends on where you are**:
 - **Route Handlers** (`app/api/scrape/route.ts`) → `revalidateTag(tag, "max")`
   (they can't call `updateTag`).
 
-`getStats(timeZone)` takes the **viewer's IANA zone** (the client passes
+`getStats(userId, timeZone)` takes the **viewer's IANA zone** (the client passes
 `Intl.DateTimeFormat().resolvedOptions().timeZone`; it is part of the cache
 key, and an unknown zone falls back to UTC). It has to: `read_at`/`created_at`
 are `timestamp` *without* zone holding UTC wall-clock, so hour-of-day and
@@ -87,7 +136,7 @@ more" so pages don't overlap.
 
 ### Tag suggestions ("related tags")
 
-`getTagAffinity({tags, mode})` answers "which *other* tags characterise the
+`getTagAffinity(userId, {tags, mode})` answers "which *other* tags characterise the
 titles matching this selection?", and the tag filter can OR the top few onto the
 query to widen it. Scoring lives in `lib/affinity.ts`, ranked by the **lower
 bound of the Wilson interval on P(B|A), divided by the tag's own base rate**.

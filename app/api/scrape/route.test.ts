@@ -5,8 +5,32 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/titles", () => ({
   upsertScrapedTitle: vi.fn(async () => ({ hashtag: 177013 })),
 }));
+vi.mock("@/lib/session", () => ({
+  requireUserId: vi.fn(async () => "user-a"),
+  UnauthorizedError: class UnauthorizedError extends Error {},
+}));
 vi.mock("next/cache", () => ({
   revalidateTag: vi.fn(),
+}));
+// The budget reaches Postgres. Allowed by default so the existing cases exercise
+// the scrape paths; the throttling cases below override it per test.
+vi.mock("@/lib/rate-limit", () => ({
+  consumeScrapeBudget: vi.fn(async () => ({ allowed: true, used: 1, limit: 120 })),
+}));
+// Scraper hosts are per user and live in the database now. The default pair
+// mirrors the old SCRAPER_SERVICE_URL / _FALLBACK env setup so the existing
+// fallthrough cases still describe the same topology.
+vi.mock("@/lib/scraper-endpoints", () => ({
+  resolveScraperTargets: vi.fn(async () => [
+    { url: "http://primary.test", secret: "s3cret", label: "primary" },
+    { url: "http://fallback.test", secret: "s3cret", label: "fallback" },
+  ]),
+}));
+// The DNS/address check has its own suite (lib/net-guard.test.ts); here it is
+// stubbed to pass so these cases exercise the routing, not the guard.
+vi.mock("@/lib/net-guard", () => ({
+  assertReachableHost: vi.fn(async () => {}),
+  UnsafeUrlError: class UnsafeUrlError extends Error {},
 }));
 // Keep ScrapeError (the route does instanceof checks) but stub the actual
 // network scrape for the no-proxy-hosts path.
@@ -16,6 +40,10 @@ vi.mock("@/lib/scraper", async (importOriginal) => ({
 }));
 
 import { POST } from "./route";
+import { consumeScrapeBudget } from "@/lib/rate-limit";
+import { resolveScraperTargets } from "@/lib/scraper-endpoints";
+import { assertReachableHost } from "@/lib/net-guard";
+import { requireUserId, UnauthorizedError } from "@/lib/session";
 import { revalidateTag } from "next/cache";
 import { upsertScrapedTitle } from "@/lib/titles";
 import { ScrapeError, scrapeTitle } from "@/lib/scraper";
@@ -71,6 +99,7 @@ function stubHosts(...responses: Upstream[]) {
 }
 
 beforeEach(() => {
+  vi.mocked(requireUserId).mockResolvedValue("user-a");
   vi.stubEnv("SCRAPER_SERVICE_URL", "http://primary.test");
   vi.stubEnv("SCRAPER_SERVICE_URL_FALLBACK", "http://fallback.test");
   vi.stubEnv("SCRAPER_SECRET", "s3cret");
@@ -141,10 +170,10 @@ describe("POST /api/scrape — proxy host fallthrough", () => {
     stubHosts({ status: 200, body: { scraped: SCRAPED, via: "impit" } });
     const res = await POST(req({ input: "177013" }));
     expect(res.status).toBe(200);
-    expect(upsertScrapedTitle).toHaveBeenCalledWith(SCRAPED);
+    expect(upsertScrapedTitle).toHaveBeenCalledWith("user-a", SCRAPED);
     const tags = vi.mocked(revalidateTag).mock.calls.map((c) => c[0]);
     expect(tags).toEqual(
-      expect.arrayContaining(["titles-list", "dataset", "stats", "title-177013", "similar-177013", "similar"]),
+      expect.arrayContaining(["titles-list:user-a", "dataset:user-a", "stats:user-a", "title:user-a:177013", "similar:user-a:177013", "similar:user-a"]),
     );
   });
 });
@@ -153,7 +182,7 @@ describe("POST /api/scrape — pre-scraped commit path", () => {
   it("saves a client-supplied scrape and invalidates tags", async () => {
     const res = await POST(req({ scraped: SCRAPED }));
     expect(res.status).toBe(200);
-    expect(upsertScrapedTitle).toHaveBeenCalledWith(SCRAPED);
+    expect(upsertScrapedTitle).toHaveBeenCalledWith("user-a", SCRAPED);
     expect(vi.mocked(revalidateTag).mock.calls.length).toBeGreaterThan(0);
   });
 
@@ -168,8 +197,10 @@ describe("POST /api/scrape — pre-scraped commit path", () => {
 
 describe("POST /api/scrape — direct scrape (no proxy hosts)", () => {
   beforeEach(() => {
+    vi.stubEnv("NODE_ENV", "development");
     vi.stubEnv("SCRAPER_SERVICE_URL", "");
     vi.stubEnv("SCRAPER_SERVICE_URL_FALLBACK", "");
+    vi.mocked(resolveScraperTargets).mockResolvedValue([]);
   });
 
   it("scrapes locally and returns via", async () => {
@@ -186,5 +217,132 @@ describe("POST /api/scrape — direct scrape (no proxy hosts)", () => {
     expect((await POST(req({ input: "x" }))).status).toBe(400);
     vi.mocked(scrapeTitle).mockRejectedValueOnce(new ScrapeError("cf", "CLOUDFLARE"));
     expect((await POST(req({ input: "1" }))).status).toBe(502);
+  });
+});
+
+
+describe("POST /api/scrape — session boundary", () => {
+  it.each([{ input: "177013", persist: false }, { scraped: SCRAPED }])(
+    "rejects guests before any scrape or write: %o", async (body) => {
+      vi.mocked(requireUserId).mockRejectedValueOnce(new UnauthorizedError("Unauthorized"));
+      const fetch = vi.fn();
+      vi.stubGlobal("fetch", fetch);
+      const response = await POST(req(body));
+      expect(response.status).toBe(401);
+      expect(fetch).not.toHaveBeenCalled();
+      expect(scrapeTitle).not.toHaveBeenCalled();
+      expect(upsertScrapedTitle).not.toHaveBeenCalled();
+      expect(revalidateTag).not.toHaveBeenCalled();
+    },
+  );
+
+  it("ignores a forged owner in the request body", async () => {
+    const response = await POST(req({ scraped: SCRAPED, userId: "user-b" }));
+    expect(response.status).toBe(200);
+    expect(upsertScrapedTitle).toHaveBeenCalledWith("user-a", SCRAPED);
+  });
+
+  it.each([null, [], 1, { input: 123 }, { input: "1", persist: "false" }])(
+    "returns 400 for malformed JSON shape: %j", async (body) => {
+      expect((await POST(req(body))).status).toBe(400);
+      expect(upsertScrapedTitle).not.toHaveBeenCalled();
+    },
+  );
+});
+
+describe("POST /api/scrape — scrape budget", () => {
+  it("returns 429 with Retry-After and never reaches a scraper host", async () => {
+    vi.mocked(consumeScrapeBudget).mockResolvedValueOnce({
+      allowed: false, limit: 120, retryAfterSeconds: 1800,
+    });
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+
+    const response = await POST(req({ input: "177013", persist: false }));
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get("Retry-After")).toBe("1800");
+    expect(await response.json()).toEqual({ error: "Scrape limit reached (120/hour). Try again later." });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(scrapeTitle).not.toHaveBeenCalled();
+  });
+
+  it("charges the authenticated user, once, before scraping", async () => {
+    stubHosts({ status: 200, body: { scraped: SCRAPED, via: "impit" } });
+    await POST(req({ input: "177013", persist: false }));
+    expect(consumeScrapeBudget).toHaveBeenCalledExactlyOnceWith("user-a");
+  });
+
+  it("does not spend budget on a commit of an already-scraped payload", async () => {
+    // That path writes the caller's own rows and never touches the shared
+    // scraper, so it must not consume a scrape the user could have spent.
+    const response = await POST(req({ scraped: SCRAPED }));
+    expect(response.status).toBe(200);
+    expect(consumeScrapeBudget).not.toHaveBeenCalled();
+  });
+
+  it("does not spend budget when the request is rejected as malformed", async () => {
+    expect((await POST(req({ persist: false }))).status).toBe(400);
+    expect(consumeScrapeBudget).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /api/scrape — per-user scraper hosts", () => {
+  it("resolves the caller's own hosts and sends each host's own secret", async () => {
+    vi.mocked(resolveScraperTargets).mockResolvedValueOnce([
+      { url: "https://alice-1.test", secret: "alice-token", label: "mac" },
+      { url: "https://alice-2.test", secret: null, label: "render" },
+    ]);
+    const calls = stubHosts({ reject: true }, { status: 200, body: { scraped: SCRAPED, via: "fallback" } });
+
+    const res = await POST(req({ input: "177013", persist: false }));
+
+    expect(res.status).toBe(200);
+    expect(resolveScraperTargets).toHaveBeenCalledWith("user-a");
+    expect(calls.map((c) => c.url)).toEqual(["https://alice-1.test/scrape", "https://alice-2.test/scrape"]);
+    expect((calls[0].init.headers as Record<string, string>).Authorization).toBe("Bearer alice-token");
+    // A host stored without a secret is called without the header — never with
+    // some other host's, and never with a leftover global one.
+    expect((calls[1].init.headers as Record<string, string>).Authorization).toBeUndefined();
+  });
+
+  it("refuses to follow redirects, so a 302 cannot escape the address checks", async () => {
+    const calls = stubHosts({ status: 200, body: { scraped: SCRAPED, via: "impit" } });
+    await POST(req({ input: "177013", persist: false }));
+    expect(calls[0].init.redirect).toBe("error");
+  });
+
+  it("skips a host the address guard rejects, without fetching it", async () => {
+    vi.mocked(assertReachableHost)
+      .mockRejectedValueOnce(new Error("resolves to a private address"))
+      .mockResolvedValueOnce(undefined);
+    const calls = stubHosts({ status: 200, body: { scraped: SCRAPED, via: "fallback" } });
+
+    const res = await POST(req({ input: "177013", persist: false }));
+
+    expect(res.status).toBe(200);
+    expect(calls.map((c) => c.url)).toEqual(["http://fallback.test/scrape"]);
+  });
+
+  it("answers 409 in production when nothing is configured, and spends no budget", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.mocked(resolveScraperTargets).mockResolvedValueOnce([]);
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+
+    const res = await POST(req({ input: "177013", persist: false }));
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/Account settings/);
+    expect(consumeScrapeBudget).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("ignores the env hosts in production", async () => {
+    // A shared fallback would quietly put everyone's scraping back on one
+    // person's box, which is what per-user endpoints exist to prevent.
+    vi.stubEnv("NODE_ENV", "production");
+    vi.mocked(resolveScraperTargets).mockResolvedValueOnce([]);
+    expect((await POST(req({ input: "177013", persist: false }))).status).toBe(409);
   });
 });
