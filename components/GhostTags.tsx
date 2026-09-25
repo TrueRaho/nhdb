@@ -35,6 +35,7 @@ export function GhostTagsToggle({ filters, setFilters }: {
           value={filters.ghostTags}
           options={ON_OFF}
           onChange={(v) => setFilters(f => ({ ...f, ghostTags: v }))}
+          label="Ghost tags"
         />
       </div>
       <span className="font-mono text-[9px] leading-snug text-nh-text-3">

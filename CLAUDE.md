@@ -41,6 +41,13 @@ pnpm rescrape       # bulk re-scrape via the running app's /api/scrape
 - **This is Next.js 16 with breaking changes vs. training data** (per AGENTS.md).
   Read the relevant guide in `node_modules/next/dist/docs/` before writing Next
   code — the caching/`"use cache"` APIs in particular are new.
+- **The auth SDK writes cookies from Server Components, which Next forbids.**
+  Past the 60 s session cache, `auth.getSession()` gets refreshed cookies back
+  from Neon Auth and the stock `createNeonAuth` context throws on storing them
+  — the first page load after a minute idle crashed. `lib/auth/server.ts`
+  builds the server methods on a context that skips that write mid-render, and
+  `proxy.ts` forwards the cache cookie it re-issues into the rendered request.
+  Don't swap `auth` back to plain `createNeonAuth(...)`.
 - **Prisma client lives at `lib/generated/prisma/`**, not `@prisma/client`.
   Import `PrismaClient` / `Prisma` from `./generated/prisma/client` (see
   `lib/db.ts`, `lib/titles.ts`). The directory is gitignored, so a fresh clone

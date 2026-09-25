@@ -8,7 +8,8 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Slider } from "@/components/ui/slider";
 import { ScrapeBadge } from "./ScrapeBadge";
-import { SegmentedToggle } from "./Primitives";
+import { Tabs } from "@base-ui/react/tabs";
+import { Segmented, SegmentedToggle, type SegmentOption } from "./Primitives";
 import { RelatedTags } from "./RelatedTags";
 import { GhostTagsToggle } from "./GhostTags";
 import {
@@ -91,8 +92,10 @@ export function sortOptions(options: string[], counts: Record<string, number>, s
 }
 
 // Compact segmented control for picking an OptionSort.
-export function OptionSortToggle({ value, onChange }: { value: OptionSort; onChange: (s: OptionSort) => void }) {
-  return <SegmentedToggle value={value} options={OPTION_SORTS} onChange={onChange} />;
+// `noun` names the list ("tags", "artists"…): several of these can be on screen
+// at once, and "Sort options" read the same for every one of them.
+export function OptionSortToggle({ value, onChange, noun }: { value: OptionSort; onChange: (s: OptionSort) => void; noun: string }) {
+  return <SegmentedToggle value={value} options={OPTION_SORTS} onChange={onChange} label={`Sort ${noun}`} />;
 }
 
 // Compact "all (AND) / any (OR)" segmented control for a multi-select category.
@@ -102,8 +105,8 @@ const MATCH_MODES: { id: MatchMode; label: string }[] = [
   { id: "or", label: "any" },
 ];
 
-export function MatchToggle({ mode, onChange }: { mode: MatchMode; onChange: (m: MatchMode) => void }) {
-  return <SegmentedToggle value={mode} options={MATCH_MODES} onChange={onChange} />;
+export function MatchToggle({ mode, onChange, noun }: { mode: MatchMode; onChange: (m: MatchMode) => void; noun: string }) {
+  return <SegmentedToggle value={mode} options={MATCH_MODES} onChange={onChange} label={`Match ${noun}`} />;
 }
 
 // Canonical sort fields (order + label + icon). Shared by the mobile sort sheet
@@ -148,13 +151,11 @@ export function GalleryHeader({ search, setSearch, onAdd, onStats, statsActive, 
           onClick={onStats}
           variant="secondary"
           size="icon"
-          className="size-8 rounded-lg bg-nh-input hover:bg-nh-input/80"
-          style={statsActive ? { background: "var(--nh-accent-soft)" } : undefined}
+          aria-label="Analysis"
+          aria-pressed={statsActive}
+          className="size-8 rounded-lg bg-nh-input text-nh-text-2 hover:bg-nh-input/80 aria-pressed:bg-nh-accent-soft aria-pressed:text-nh-accent"
         >
-          <BarChart3
-            className="size-4"
-            style={{ color: statsActive ? "var(--nh-accent)" : "var(--nh-text-2)" }}
-          />
+          <BarChart3 className="size-4" />
         </Button>
         <div className="relative">
           <Button
@@ -271,43 +272,36 @@ export function FilterSheet({ open, onClose, filters, setFilters, dataset, activ
             <X className="size-3.5" />
           </Button>
         </div>
-        <div
-          className="flex items-center gap-1 px-3 shrink-0 border-b border-nh-border scrollbar-none [&::-webkit-scrollbar]:hidden"
-          style={{ overflowX: "auto", height: "44px" }}
-        >
-          {sections.map(s => {
-            const active = activeSection === s.id;
-            return (
-              <Button
+        {/* Sections are a tab bar, so the highlight slides between them like the
+            other segmented controls. Unlike those, tabs here differ in width and
+            the strip scrolls — Base UI's Tabs.Indicator measures the active tab
+            (--active-tab-*) instead of assuming equal columns. */}
+        <Tabs.Root value={activeSection} onValueChange={(v) => setActiveSection(String(v))} className="flex min-h-0 flex-1 flex-col">
+          <Tabs.List
+            aria-label="Filter sections"
+            // Typography on the list, inherited by the tabs: see the note on
+            // SEGMENT_SIZES in Primitives.tsx about font utilities on <button>.
+            className="relative isolate flex h-11 shrink-0 items-center gap-1 overflow-x-auto border-b border-nh-border px-3 font-mono text-[11px] font-semibold tracking-wide [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          >
+            <Tabs.Indicator
+              className="absolute top-0 left-0 -z-10 h-(--active-tab-height) w-(--active-tab-width) translate-x-(--active-tab-left) translate-y-(--active-tab-top) rounded-md bg-nh-accent-soft shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--nh-accent)_35%,transparent)] transition-[translate,width] duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none"
+            />
+            {sections.map(s => (
+              <Tabs.Tab
                 key={s.id}
-                onClick={() => setActiveSection(s.id)}
-                variant="secondary"
-                className="h-auto px-2.5 py-1.5 rounded-md gap-1.5 font-mono text-[11px] font-semibold tracking-wide whitespace-nowrap"
-                style={{
-                  flexShrink: 0,
-                  background: active ? "var(--nh-accent)" : "var(--nh-pill-bg)",
-                  color: active ? "#0a0a0a" : "var(--nh-text-2)",
-                }}
+                value={s.id}
+                className="flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1.5 whitespace-nowrap text-nh-text-2 outline-hidden transition-colors duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] touch-manipulation [-webkit-tap-highlight-color:transparent] hover:text-nh-text-1 focus-visible:ring-2 focus-visible:ring-nh-accent focus-visible:ring-inset data-active:text-nh-accent motion-reduce:transition-none"
               >
                 {s.label}
                 {s.count > 0 && (
-                  <span
-                    className="text-[9px] px-1 rounded-sm"
-                    style={{
-                      background: active ? "rgba(0,0,0,0.25)" : "var(--nh-accent)",
-                      color: active ? "#fff" : "#0a0a0a",
-                    }}
-                  >
-                    {s.count}
-                  </span>
+                  <span className="rounded-sm bg-nh-accent px-1 text-[9px] text-[#0a0a0a]">{s.count}</span>
                 )}
-              </Button>
-            );
-          })}
-        </div>
-        <div className="flex-1 overflow-auto px-3.5 pt-3 pb-20">
+              </Tabs.Tab>
+            ))}
+          </Tabs.List>
+          <Tabs.Panel value={activeSection} className="flex-1 overflow-auto px-3.5 pt-3 pb-20 outline-hidden">
           {activeSection === "tags" && (
-            <FilterMulti search={tagSearch} setSearch={setTagSearch} placeholder="search tags…"
+            <FilterMulti noun="tags" search={tagSearch} setSearch={setTagSearch} placeholder="search tags…"
               options={dataset.allTags} selected={filters.tags}
               onToggle={(v) => toggle("tags", v)} counts={dataset.tagCounts}
               mode={filters.matchModes.tags} onModeChange={(m) => setMode("tags", m)}
@@ -317,29 +311,30 @@ export function FilterSheet({ open, onClose, filters, setFilters, dataset, activ
               </>} />
           )}
           {activeSection === "characters" && (
-            <FilterMulti options={dataset.allCharacters} selected={filters.characters}
+            <FilterMulti noun="characters" options={dataset.allCharacters} selected={filters.characters}
               onToggle={(v) => toggle("characters", v)} counts={dataset.charCounts} placeholder="search characters…"
               mode={filters.matchModes.characters} onModeChange={(m) => setMode("characters", m)} />
           )}
           {activeSection === "parodies" && (
-            <FilterMulti options={dataset.allParodies} selected={filters.parodies}
+            <FilterMulti noun="parodies" options={dataset.allParodies} selected={filters.parodies}
               onToggle={(v) => toggle("parodies", v)} counts={dataset.parodyCounts} placeholder="search parodies…"
               mode={filters.matchModes.parodies} onModeChange={(m) => setMode("parodies", m)} />
           )}
           {activeSection === "artists" && (
-            <FilterMulti options={dataset.allArtists} selected={filters.artists}
+            <FilterMulti noun="artists" options={dataset.allArtists} selected={filters.artists}
               onToggle={(v) => toggle("artists", v)} counts={dataset.artistCounts} placeholder="search artists…"
               mode={filters.matchModes.artists} onModeChange={(m) => setMode("artists", m)} />
           )}
           {activeSection === "groups" && (
-            <FilterMulti options={dataset.allGroups} selected={filters.groups}
+            <FilterMulti noun="groups" options={dataset.allGroups} selected={filters.groups}
               onToggle={(v) => toggle("groups", v)} counts={dataset.groupCounts} placeholder="search groups…"
               mode={filters.matchModes.groups} onModeChange={(m) => setMode("groups", m)} />
           )}
           {activeSection === "pages" && <FilterPageRange filters={filters} setFilters={setFilters} min={dataset.pageMin} max={dataset.pageMax} />}
           {activeSection === "status" && <FilterStatus filters={filters} setFilters={setFilters} />}
           {activeSection === "sort" && <FilterSort filters={filters} setFilters={setFilters} />}
-        </div>
+          </Tabs.Panel>
+        </Tabs.Root>
         <div className="sticky bottom-0 px-3.5 py-2.5 bg-nh-surface border-t border-nh-border">
           <Button
             onClick={onClose}
@@ -354,7 +349,9 @@ export function FilterSheet({ open, onClose, filters, setFilters, dataset, activ
   );
 }
 
-function FilterMulti({ options, selected, onToggle, counts, placeholder, mode, onModeChange, related, search: searchProp, setSearch: setSearchProp }: {
+function FilterMulti({ noun, options, selected, onToggle, counts, placeholder, mode, onModeChange, related, search: searchProp, setSearch: setSearchProp }: {
+  /** What the list holds, for the accessible names of its sort/match controls. */
+  noun: string;
   options: string[]; selected: string[]; onToggle: (v: string) => void;
   counts: Record<string, number>; placeholder: string;
   mode?: MatchMode; onModeChange?: (m: MatchMode) => void;
@@ -385,12 +382,12 @@ function FilterMulti({ options, selected, onToggle, counts, placeholder, mode, o
       </div>
       <div className="flex items-center gap-1.5">
         <span className="font-mono text-[9.5px] uppercase tracking-widest text-nh-text-3">sort</span>
-        <OptionSortToggle value={optSort} onChange={setOptSort} />
+        <OptionSortToggle value={optSort} onChange={setOptSort} noun={noun} />
       </div>
       {mode && onModeChange && selected.length >= 2 && (
         <div className="flex items-center gap-1.5">
           <span className="font-mono text-[9.5px] uppercase tracking-widest text-nh-text-3">match</span>
-          <MatchToggle mode={mode} onChange={onModeChange} />
+          <MatchToggle mode={mode} onChange={onModeChange} noun={noun} />
           <span className="font-mono text-[9px] text-nh-text-3">
             {mode === "and" ? "has all selected" : "has any selected"}
           </span>
@@ -470,60 +467,43 @@ function FilterPageRange({ filters, setFilters, min, max }: {
   );
 }
 
+/** Shared by the desktop sidebar (label only) and the mobile sheet (label + sub). */
+export const SORT_DIRECTIONS: { id: "desc" | "asc"; label: string; sub: string }[] = [
+  { id: "desc", label: "high → low", sub: "newest · most · biggest" },
+  { id: "asc", label: "low → high", sub: "oldest · least · smallest" },
+];
+
 export const READ_OPTIONS: { id: ReadFilter; label: string; sub: string }[] = [
   { id: "all", label: "all", sub: "everything" },
   { id: "unread", label: "unread", sub: "never opened" },
   { id: "read", label: "read", sub: "opened before" },
 ];
 
+// Was a full-width toggle button that, when on, looked exactly like a selected
+// segment sitting under the read-status control — now it is one.
+const ALTER_OPTIONS: SegmentOption<boolean>[] = [
+  { id: false, label: "any", sub: "with or without" },
+  { id: true, label: "missing", sub: "no manual alter name" },
+];
+
 function FilterStatus({ filters, setFilters }: { filters: Filters; setFilters: React.Dispatch<React.SetStateAction<Filters>> }) {
   return (
     <div className="py-1">
       <div className="font-mono text-[9.5px] uppercase tracking-widest text-nh-text-3 mb-1.5">read status</div>
-      <div className="grid grid-cols-3 rounded-lg border border-nh-border bg-nh-input p-0.75">
-        {READ_OPTIONS.map(o => {
-          const sel = filters.read === o.id;
-          return (
-            <Button
-              key={o.id}
-              onClick={() => setFilters(f => ({ ...f, read: o.id }))}
-              variant="ghost"
-              className="flex flex-col items-start gap-0.5 h-auto px-2.5 py-2 rounded-md text-left whitespace-normal"
-              style={{
-                background: sel ? "var(--nh-accent)" : "transparent",
-                color: sel ? "#0a0a0a" : "var(--nh-text-2)",
-              }}
-            >
-              <span className="font-display font-bold text-xs" style={{ letterSpacing: "-0.01em" }}>{o.label}</span>
-              <span
-                className="font-mono text-[9px]"
-                style={{ color: sel ? "rgba(0,0,0,0.55)" : "var(--nh-text-3)", letterSpacing: "0.02em" }}
-              >
-                {o.sub}
-              </span>
-            </Button>
-          );
-        })}
-      </div>
+      <Segmented
+        label="Read status" size="md" fullWidth
+        value={filters.read}
+        options={READ_OPTIONS}
+        onChange={(read) => setFilters(f => ({ ...f, read }))}
+      />
 
       <div className="font-mono text-[9.5px] uppercase tracking-widest text-nh-text-3 mb-1.5 mt-3.5">alter name</div>
-      <Button
-        onClick={() => setFilters(f => ({ ...f, noAlter: !f.noAlter }))}
-        variant="ghost"
-        className="flex flex-col items-start gap-0.5 h-auto w-full px-2.5 py-2 rounded-lg border border-nh-border text-left whitespace-normal"
-        style={{
-          background: filters.noAlter ? "var(--nh-accent)" : "var(--nh-input)",
-          color: filters.noAlter ? "#0a0a0a" : "var(--nh-text-2)",
-        }}
-      >
-        <span className="font-display font-bold text-xs" style={{ letterSpacing: "-0.01em" }}>only without alter name</span>
-        <span
-          className="font-mono text-[9px]"
-          style={{ color: filters.noAlter ? "rgba(0,0,0,0.55)" : "var(--nh-text-3)", letterSpacing: "0.02em" }}
-        >
-          titles missing a manual alter name
-        </span>
-      </Button>
+      <Segmented
+        label="Alter name" size="md" fullWidth
+        value={filters.noAlter}
+        options={ALTER_OPTIONS}
+        onChange={(noAlter) => setFilters(f => ({ ...f, noAlter }))}
+      />
     </div>
   );
 }
@@ -535,47 +515,26 @@ function FilterSort({ filters, setFilters }: { filters: Filters; setFilters: Rea
     <div className="flex flex-col gap-3.5 py-1">
       <div>
         <div className="font-mono text-[9.5px] uppercase tracking-widest text-nh-text-3 mb-1.5">direction</div>
-        <div
-          className="grid grid-cols-2 rounded-lg border border-nh-border bg-nh-input p-0.75"
-          style={{ opacity: isRandom ? 0.4 : 1, pointerEvents: isRandom ? "none" : "auto" }}
-        >
-          {[
-            { id: "desc" as const, label: "high → low", sub: "newest · most · biggest" },
-            { id: "asc" as const, label: "low → high", sub: "oldest · least · smallest" },
-          ].map(d => {
-            const sel = filters.sortDir === d.id;
-            return (
-              <Button
-                key={d.id}
-                onClick={() => setFilters(f => ({ ...f, sortDir: d.id }))}
-                variant="ghost"
-                className="flex flex-col items-start gap-0.5 h-auto px-2.5 py-2 rounded-md text-left whitespace-normal"
-                style={{
-                  background: sel ? "var(--nh-accent)" : "transparent",
-                  color: sel ? "#0a0a0a" : "var(--nh-text-2)",
-                }}
-              >
-                <span className="font-display font-bold text-xs" style={{ letterSpacing: "-0.01em" }}>{d.label}</span>
-                <span
-                  className="font-mono text-[9px]"
-                  style={{ color: sel ? "rgba(0,0,0,0.55)" : "var(--nh-text-3)", letterSpacing: "0.02em" }}
-                >
-                  {d.sub}
-                </span>
-              </Button>
-            );
-          })}
-        </div>
+        <Segmented
+          label="Sort direction" size="md" fullWidth
+          // Random order has no direction, so the choice is shown but inert.
+          disabled={isRandom}
+          value={filters.sortDir}
+          options={SORT_DIRECTIONS}
+          onChange={(sortDir) => setFilters(f => ({ ...f, sortDir }))}
+        />
       </div>
       <div>
         <div className="font-mono text-[9.5px] uppercase tracking-widest text-nh-text-3 mb-1.5">sort by field</div>
-        <div className="flex flex-col">
+        <div role="radiogroup" aria-label="Sort by field" className="flex flex-col">
           {fields.map(o => {
             const sel = filters.sortField === o.id;
             const Icon = o.icon;
             return (
               <button
                 key={o.id}
+                role="radio"
+                aria-checked={sel}
                 onClick={() => setFilters(f => ({ ...f, sortField: o.id }))}
                 className="flex items-center gap-2.5 py-2.5 px-1.5 text-left border-b border-nh-border"
               >

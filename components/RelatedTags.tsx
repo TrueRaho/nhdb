@@ -108,6 +108,7 @@ export function RelatedTags({ filters, setFilters }: {
           options={ON_OFF}
           onChange={(v) => setFilters(f => ({ ...f, expandTags: v }))}
           disabled={!hasSeeds}
+          label="Related tags"
         />
         {loading && <span className="font-mono text-[9px] text-nh-text-3">…</span>}
         {applied.length > 0 && (
@@ -135,6 +136,7 @@ export function RelatedTags({ filters, setFilters }: {
               <button
                 key={s.name}
                 onClick={() => toggleOne(s.name)}
+                aria-pressed={on}
                 title={`${s.co} shared titles · ${Math.round(s.share * 100)}% of the current match · ${s.lift.toFixed(1)}× the collection rate`}
                 className="h-auto rounded-sm border px-1.5 py-1 font-mono text-[10px] leading-none"
                 style={{

@@ -31,9 +31,10 @@ import { AddModal } from "./AddModal";
 import { ScrapeBadge } from "./ScrapeBadge";
 import { RelatedTags } from "./RelatedTags";
 import { GhostTagsToggle } from "./GhostTags";
+import { ON_OFF, Segmented, SegmentedToggle } from "./Primitives";
 import type { Item } from "../lib/data";
 import type { SortField, MatchMode } from "../lib/titles";
-import { READ_OPTIONS, SORT_FIELDS, MatchToggle, OptionSortToggle, sortOptions, defaultFilters, type Filters, type Dataset, type MatchCategory, type OptionSort } from "./HeaderFilter";
+import { READ_OPTIONS, SORT_DIRECTIONS, SORT_FIELDS, MatchToggle, OptionSortToggle, sortOptions, defaultFilters, type Filters, type Dataset, type MatchCategory, type OptionSort } from "./HeaderFilter";
 
 export function NhdbDesktop({
   items, total, totalEver, dataset, activeFilterCount,
@@ -70,7 +71,10 @@ export function NhdbDesktop({
           dataset={dataset} activeFilterCount={activeFilterCount}
           matchingCount={total} totalCount={totalEver}
         />
-        <div className="flex-1 overflow-auto px-7 pt-5 pb-16 min-w-0">
+        <div
+          role="tabpanel" id="nhdb-view" aria-labelledby={`nhdb-view-tab-${view}`}
+          className="flex-1 overflow-auto px-7 pt-5 pb-16 min-w-0"
+        >
           {view === "gallery" && (
             <DesktopGallery items={items} total={total} totalCount={totalEver}
               filters={filters} onOpen={setDetailItem} onTagClick={onTagClick}
@@ -120,6 +124,15 @@ export function NhdbDesktop({
   );
 }
 
+const VIEW_TABS = [
+  { id: "gallery" as const, label: "library", icon: LayoutGrid },
+  { id: "stats" as const, label: "analysis", icon: BarChart3 },
+];
+
+// The sidebar is too narrow for the mobile sheet's second line.
+const READ_LABELS = READ_OPTIONS.map(({ id, label }) => ({ id, label }));
+const SORT_DIRECTION_LABELS = SORT_DIRECTIONS.map(({ id, label }) => ({ id, label }));
+
 function DesktopHeader({ search, setSearch, onAdd, view, setView }: {
   search: string; setSearch: (s: string) => void; onAdd: () => void;
   view: "gallery" | "stats"; setView: (v: "gallery" | "stats") => void;
@@ -153,30 +166,12 @@ function DesktopHeader({ search, setSearch, onAdd, view, setView }: {
         <span className="text-nh-accent">db</span>
       </div>
 
-      <div className="flex gap-1 ml-4">
-        {([
-          { id: "gallery" as const, label: "library", icon: LayoutGrid },
-          { id: "stats" as const, label: "analysis", icon: BarChart3 },
-        ]).map(t => {
-          const sel = view === t.id;
-          const Icon = t.icon;
-          return (
-            <Button
-              key={t.id}
-              onClick={() => setView(t.id)}
-              variant="ghost"
-              className="h-8 px-3 rounded-md gap-1.5 font-mono text-[11px] font-semibold uppercase tracking-wide hover:bg-transparent"
-              style={{
-                background: sel ? "var(--nh-accent-soft)" : "transparent",
-                color: sel ? "var(--nh-accent)" : "var(--nh-text-2)",
-              }}
-            >
-              <Icon className="size-3.25" />
-              {t.label}
-            </Button>
-          );
-        })}
-      </div>
+      <Segmented
+        label="View" kind="tab" tone="soft" size="tab" bare className="ml-4" controls="nhdb-view"
+        value={view}
+        options={VIEW_TABS}
+        onChange={setView}
+      />
 
       <div className="flex-1" />
 
@@ -255,40 +250,25 @@ function DesktopSidebar({ filters, setFilters, dataset, activeFilterCount, match
       </SidebarGroup>
 
       <SidebarGroup title={filters.read === "all" && !filters.noAlter ? "status" : `status · ${[filters.read !== "all" ? filters.read : null, filters.noAlter ? "no alter" : null].filter(Boolean).join(" · ")}`} open={openSection.status} onToggle={() => tog("status")}>
-        <div className="grid grid-cols-3 rounded-md border border-nh-border bg-nh-input p-0.5">
-          {READ_OPTIONS.map(o => {
-            const sel = filters.read === o.id;
-            return (
-              <Button
-                key={o.id}
-                onClick={() => setFilters(f => ({ ...f, read: o.id }))}
-                variant="ghost"
-                className="h-6.5 rounded-sm font-mono text-[10px] font-semibold tracking-wide hover:bg-transparent"
-                style={{
-                  background: sel ? "var(--nh-accent)" : "transparent",
-                  color: sel ? "#0a0a0a" : "var(--nh-text-2)",
-                }}
-              >
-                {o.label}
-              </Button>
-            );
-          })}
+        <Segmented
+          label="Read status" fullWidth
+          value={filters.read}
+          options={READ_LABELS}
+          onChange={(read) => setFilters(f => ({ ...f, read }))}
+        />
+        {/* An on/off setting, drawn as the sidebar's other on/off switches
+            rather than as a full-width bar that looked like a selected segment. */}
+        <div className="mt-2 flex items-center gap-1.5">
+          <span className="font-mono text-[9px] uppercase tracking-wider text-nh-text-3">no alter name</span>
+          <SegmentedToggle
+            label="Only titles without an alter name" value={filters.noAlter} options={ON_OFF}
+            onChange={(noAlter) => setFilters(f => ({ ...f, noAlter }))}
+          />
         </div>
-        <Button
-          onClick={() => setFilters(f => ({ ...f, noAlter: !f.noAlter }))}
-          variant="ghost"
-          className="mt-1.5 h-7 w-full justify-start rounded-md border border-nh-border font-mono text-[10px] font-semibold tracking-wide hover:bg-transparent"
-          style={{
-            background: filters.noAlter ? "var(--nh-accent)" : "transparent",
-            color: filters.noAlter ? "#0a0a0a" : "var(--nh-text-2)",
-          }}
-        >
-          only without alter name
-        </Button>
       </SidebarGroup>
 
       <SidebarGroup title={`tags · ${filters.tags.length}`} open={openSection.tags} onToggle={() => tog("tags")}>
-        <SidebarMulti options={dataset.allTags} counts={dataset.tagCounts} selected={filters.tags} onToggle={v => toggle("tags", v)} placeholder="search tags…" defaultLimit={10} mode={filters.matchModes.tags} onModeChange={m => setMode("tags", m)}
+        <SidebarMulti noun="tags" options={dataset.allTags} counts={dataset.tagCounts} selected={filters.tags} onToggle={v => toggle("tags", v)} placeholder="search tags…" defaultLimit={10} mode={filters.matchModes.tags} onModeChange={m => setMode("tags", m)}
           related={<>
             <RelatedTags filters={filters} setFilters={setFilters} />
             <GhostTagsToggle filters={filters} setFilters={setFilters} />
@@ -296,19 +276,19 @@ function DesktopSidebar({ filters, setFilters, dataset, activeFilterCount, match
       </SidebarGroup>
 
       <SidebarGroup title={`artists · ${filters.artists.length}`} open={openSection.artists} onToggle={() => tog("artists")}>
-        <SidebarMulti options={dataset.allArtists} counts={dataset.artistCounts} selected={filters.artists} onToggle={v => toggle("artists", v)} placeholder="search artists…" defaultLimit={8} mode={filters.matchModes.artists} onModeChange={m => setMode("artists", m)} />
+        <SidebarMulti noun="artists" options={dataset.allArtists} counts={dataset.artistCounts} selected={filters.artists} onToggle={v => toggle("artists", v)} placeholder="search artists…" defaultLimit={8} mode={filters.matchModes.artists} onModeChange={m => setMode("artists", m)} />
       </SidebarGroup>
 
       <SidebarGroup title={`groups · ${filters.groups.length}`} open={openSection.groups} onToggle={() => tog("groups")}>
-        <SidebarMulti options={dataset.allGroups} counts={dataset.groupCounts} selected={filters.groups} onToggle={v => toggle("groups", v)} placeholder="search groups…" defaultLimit={8} mode={filters.matchModes.groups} onModeChange={m => setMode("groups", m)} />
+        <SidebarMulti noun="groups" options={dataset.allGroups} counts={dataset.groupCounts} selected={filters.groups} onToggle={v => toggle("groups", v)} placeholder="search groups…" defaultLimit={8} mode={filters.matchModes.groups} onModeChange={m => setMode("groups", m)} />
       </SidebarGroup>
 
       <SidebarGroup title={`characters · ${filters.characters.length}`} open={openSection.characters} onToggle={() => tog("characters")}>
-        <SidebarMulti options={dataset.allCharacters} counts={dataset.charCounts} selected={filters.characters} onToggle={v => toggle("characters", v)} placeholder="search characters…" defaultLimit={8} mode={filters.matchModes.characters} onModeChange={m => setMode("characters", m)} />
+        <SidebarMulti noun="characters" options={dataset.allCharacters} counts={dataset.charCounts} selected={filters.characters} onToggle={v => toggle("characters", v)} placeholder="search characters…" defaultLimit={8} mode={filters.matchModes.characters} onModeChange={m => setMode("characters", m)} />
       </SidebarGroup>
 
       <SidebarGroup title={`parodies · ${filters.parodies.length}`} open={openSection.parodies} onToggle={() => tog("parodies")}>
-        <SidebarMulti options={dataset.allParodies} counts={dataset.parodyCounts} selected={filters.parodies} onToggle={v => toggle("parodies", v)} placeholder="search parodies…" defaultLimit={8} mode={filters.matchModes.parodies} onModeChange={m => setMode("parodies", m)} />
+        <SidebarMulti noun="parodies" options={dataset.allParodies} counts={dataset.parodyCounts} selected={filters.parodies} onToggle={v => toggle("parodies", v)} placeholder="search parodies…" defaultLimit={8} mode={filters.matchModes.parodies} onModeChange={m => setMode("parodies", m)} />
       </SidebarGroup>
 
       <SidebarGroup title="pages" open={openSection.pages} onToggle={() => tog("pages")}>
@@ -368,7 +348,9 @@ function SidebarGroup({ title, open, onToggle, children }: { title: string; open
   );
 }
 
-function SidebarMulti({ options, counts, selected, onToggle, placeholder, defaultLimit, mode, onModeChange, related }: {
+function SidebarMulti({ noun, options, counts, selected, onToggle, placeholder, defaultLimit, mode, onModeChange, related }: {
+  /** What the list holds, for the accessible names of its sort/match controls. */
+  noun: string;
   options: string[]; counts: Record<string, number>; selected: string[];
   onToggle: (v: string) => void; placeholder: string; defaultLimit: number;
   mode?: MatchMode; onModeChange?: (m: MatchMode) => void;
@@ -402,12 +384,12 @@ function SidebarMulti({ options, counts, selected, onToggle, placeholder, defaul
       </div>
       <div className="flex items-center gap-1.5">
         <span className="font-mono text-[9px] uppercase tracking-wider text-nh-text-3">sort</span>
-        <OptionSortToggle value={optSort} onChange={setOptSort} />
+        <OptionSortToggle value={optSort} onChange={setOptSort} noun={noun} />
       </div>
       {mode && onModeChange && selected.length >= 2 && (
         <div className="flex items-center gap-1.5">
           <span className="font-mono text-[9px] uppercase tracking-wider text-nh-text-3">match</span>
-          <MatchToggle mode={mode} onChange={onModeChange} />
+          <MatchToggle mode={mode} onChange={onModeChange} noun={noun} />
         </div>
       )}
       {related}
@@ -470,31 +452,14 @@ function SortControl({ filters, setFilters }: { filters: Filters; setFilters: Re
           ))}
         </SelectContent>
       </Select>
-      <div
-        className="grid grid-cols-2 rounded-md border border-nh-border bg-nh-input p-0.5"
-        style={{ opacity: isRandom ? 0.4 : 1, pointerEvents: isRandom ? "none" : "auto" }}
-      >
-        {([
-          { id: "desc" as const, label: "high → low" },
-          { id: "asc" as const, label: "low → high" },
-        ]).map(d => {
-          const sel = filters.sortDir === d.id;
-          return (
-            <Button
-              key={d.id}
-              onClick={() => setFilters(f => ({ ...f, sortDir: d.id }))}
-              variant="ghost"
-              className="h-6.5 rounded-sm font-mono text-[10px] font-semibold tracking-wide hover:bg-transparent"
-              style={{
-                background: sel ? "var(--nh-accent)" : "transparent",
-                color: sel ? "#0a0a0a" : "var(--nh-text-2)",
-              }}
-            >
-              {d.label}
-            </Button>
-          );
-        })}
-      </div>
+      <Segmented
+        label="Sort direction" fullWidth
+        // Random order has no direction, so the choice is shown but inert.
+        disabled={isRandom}
+        value={filters.sortDir}
+        options={SORT_DIRECTION_LABELS}
+        onChange={(sortDir) => setFilters(f => ({ ...f, sortDir }))}
+      />
     </div>
   );
 }

@@ -6,7 +6,9 @@ Next.js 16, React 19, Prisma 7, Neon Postgres and Neon Auth.
 ## Local setup
 
 1. Copy `.env.example` to `.env` and fill in the database and Neon Auth values.
-   Enable email/password sign-in and email verification in Neon Auth. The Auth
+   Enable email/password sign-in and email verification in Neon Auth. The verify
+   screen accepts both methods: a numeric code (the only one Neon's shared email
+   provider can send) or a link (needs a custom email provider). The Auth
    endpoint and database must belong to the same Neon branch; allow localhost
    and your deployed origin in Auth's trusted domains.
 2. Run `pnpm install --frozen-lockfile` (also generates the Prisma client).
@@ -43,7 +45,8 @@ as a default when nothing is registered, so `pnpm dev` works against a local
 
 Migration `6_multi_user` preserves existing rows under `nhdb:unclaimed`. After
 creating and verifying your account, assign those rows using the **user ID from
-Neon Auth** (not your email), before adding titles to the account:
+Neon Auth** (not your email; signed in, `/api/auth/get-session` shows it as
+`user.id`), before adding titles to the account:
 
 ```sh
 pnpm claim <neon-auth-user-id>

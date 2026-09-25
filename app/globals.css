@@ -99,6 +99,10 @@ button { font-family: inherit; }
 
 ::selection { background: var(--nh-accent); color: #0a0a0c; }
 
+@media (prefers-reduced-motion: reduce) {
+  .nh-dot-pulse { animation: none; opacity: 0.7; }
+}
+
 @theme inline {
   --font-display: var(--nh-font-display);
   --font-mono: var(--nh-font-mono);

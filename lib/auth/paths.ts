@@ -1,5 +1,17 @@
 export const SIGN_IN_PATH = "/auth/sign-in";
+export const SIGN_UP_PATH = "/auth/sign-up";
 export const VERIFY_PATH = "/auth/verify-email";
+
+/**
+ * Document titles of the auth screens. Distinct titles are what makes switching
+ * between them audible (Next's route announcer speaks on a title change), and
+ * the form sets them itself when it switches sign-in/sign-up without a navigation.
+ */
+export const AUTH_TITLES: Record<string, string> = {
+  "sign-in": "Sign in · nhdb",
+  "sign-up": "Create account · nhdb",
+  "verify-email": "Verify email · nhdb",
+};
 
 /** Only application navigations may be used as post-auth destinations. */
 export function safeReturnPath(value: unknown): string {
