@@ -4,11 +4,13 @@ import { updateTag } from "next/cache";
 import { requireUserId } from "../lib/session";
 import { titlesListTag, datasetTag, statsTag, titleTag, similarTag, similarAnyTag } from "../lib/cache-tags";
 import {
-  deleteTitle, markRead, updateAlterName, upsertScrapedTitle,
+  deleteTitle, deleteTitles, markRead, updateAlterName, upsertScrapedTitle,
   queryTitles, getStats, getSimilar, getTitle, getTitlesByHashtags, getTagAffinity,
-  getGhostTagsFor,
+  getGhostTagsFor, getUnnamedHashtags,
   type QueryParams, type TagAffinityParams,
 } from "../lib/titles";
+import { isHashtag } from "../lib/utils";
+import { CARD_BATCH } from "../lib/swipe";
 import { dbTitleToItem } from "../lib/mappers";
 import type { Item } from "../lib/data";
 import type { ScrapeResult } from "../lib/scraper";
@@ -115,4 +117,42 @@ export async function findExistingTitlesAction(hashtags: number[]): Promise<Item
   const userId = await requireUserId();
   const titles = await getTitlesByHashtags(userId, hashtags);
   return titles.map(dbTitleToItem);
+}
+
+// --- The swipe deck (app/swipe): name what has no name yet, or let it go ---
+
+// Every title without a custom name. The client shuffles — a new order on
+// every open — and loads the cards a few at a time. Read only.
+export async function getSwipeDeckAction(): Promise<number[]> {
+  const userId = await requireUserId();
+  return getUnnamedHashtags(userId);
+}
+
+// The next few cards, in the order asked for. Uncached like the add flow's
+// lookup: a title deleted a moment ago simply doesn't come back.
+export async function getSwipeCardsAction(hashtags: number[]): Promise<Item[]> {
+  const userId = await requireUserId();
+  const ids = Array.isArray(hashtags) ? hashtags.filter(isHashtag).slice(0, CARD_BATCH) : [];
+  if (ids.length === 0) return [];
+  const byHashtag = new Map((await getTitlesByHashtags(userId, ids)).map((t) => [t.hashtag, dbTitleToItem(t)]));
+  return ids.flatMap((h) => byHashtag.get(h) ?? []);
+}
+
+// Empty the deletion list: every title in ONE statement (lib/titles.ts
+// deleteTitles), then what deleteTitleAction invalidates, for each title that
+// was actually deleted.
+export async function deleteTitlesAction(hashtags: number[]): Promise<number[]> {
+  const userId = await requireUserId();
+  const deleted = await deleteTitles(userId, hashtags);
+  if (deleted.length > 0) {
+    updateTag(titlesListTag(userId));
+    for (const hashtag of deleted) {
+      updateTag(titleTag(userId, hashtag));
+      updateTag(similarTag(userId, hashtag));
+    }
+    updateTag(similarAnyTag(userId)); // neighbours' similar lists include the deleted titles
+    updateTag(datasetTag(userId));
+    updateTag(statsTag(userId));
+  }
+  return deleted;
 }

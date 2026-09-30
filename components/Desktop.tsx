@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { BarChart3, ChevronDown, ChevronRight, LayoutGrid, Plus, Search } from "lucide-react";
+import Link from "next/link";
+import { BarChart3, ChevronDown, ChevronRight, Layers, LayoutGrid, Plus, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -186,6 +187,16 @@ function DesktopHeader({ search, setSearch, onAdd, view, setView }: {
         />
         <kbd className="absolute right-2.5 top-1/2 -translate-y-1/2 font-mono text-[9.5px] text-nh-text-3 px-1.5 py-0.5 rounded-sm bg-nh-pill border border-nh-border">⌘K</kbd>
       </div>
+
+      {/* The swipe deck (/swipe): the titles still without a name, one cover at a time. */}
+      <Link
+        href="/swipe"
+        className="inline-flex h-8.5 items-center gap-1.5 rounded-lg border border-nh-border bg-nh-input px-3 font-display text-xs font-bold text-nh-text-2 hover:text-nh-text-1"
+        style={{ letterSpacing: "-0.01em" }}
+      >
+        <Layers className="size-3.5" />
+        swipe
+      </Link>
 
       <div className="relative">
         <Button

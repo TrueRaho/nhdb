@@ -5,6 +5,8 @@ import { datasetTag, similarAnyTag, similarTag, statsTag, titleTag, titlesListTa
 import { MIN_SHARED_TITLES, rankAffinity, type AffinityRow, type TagAffinity } from "./affinity";
 import { inferGhostTags, type GhostSource, type GhostSourceKind, type GhostTag } from "./ghost";
 import type { ScrapeEntity, ScrapeResult } from "./scraper";
+import { isHashtag } from "./utils";
+import { DELETE_BATCH } from "./swipe";
 
 // Session identity is resolved by callers outside cached scopes. Fail closed if
 // a missing identity reaches this boundary: Prisma omits undefined filters.
@@ -429,6 +431,20 @@ export async function queryTitles(userId: string, p: QueryParams): Promise<Query
   return { items, total };
 }
 
+/**
+ * Hashtags of every title without a custom name — the swipe deck (app/swipe),
+ * which the client shuffles. Uncached: the deck is drawn fresh on every open,
+ * and a name saved a moment ago must already keep its title out.
+ */
+export async function getUnnamedHashtags(userId: string): Promise<number[]> {
+  assertUserId(userId);
+  const rows = await prisma.title.findMany({
+    where: { userId, OR: [{ alterName: null }, { alterName: "" }] },
+    select: { hashtag: true },
+  });
+  return rows.map((r) => r.hashtag);
+}
+
 // Deliberately uncached: the add flow uses this to decide whether to skip a
 // re-scrape, so it must always reflect the current DB state.
 export async function getTitlesByHashtags(userId: string, hashtags: number[]) {
@@ -457,6 +473,26 @@ export async function deleteTitle(userId: string, hashtag: number) {
   // any now-orphaned entities (migration 4_orphan_cleanup_triggers, deferred so
   // the re-scrape delete+recreate path doesn't FK-violate).
   await prisma.title.deleteMany({ where: { userId, hashtag } });
+}
+
+/**
+ * Delete several titles in ONE statement — the swipe deck's deletion list.
+ * One statement, never a loop of deleteTitle: the migration-3 count triggers
+ * are statement-level and concurrent writers overwrite each other's counts (the
+ * serialized-write contract), and one DELETE also runs the cascade and the
+ * deferred orphan sweep once for the whole batch. Returns what was actually
+ * deleted, so the caller invalidates exactly that.
+ */
+export async function deleteTitles(userId: string, hashtags: number[]): Promise<number[]> {
+  assertUserId(userId);
+  // Client input: drop junk rather than let one bad id fail the whole list.
+  const ids = Array.isArray(hashtags) ? [...new Set(hashtags.filter(isHashtag))].slice(0, DELETE_BATCH) : [];
+  if (ids.length === 0) return [];
+  const rows = await prisma.$queryRaw<{ hashtag: number }[]>(Prisma.sql`
+    DELETE FROM titles WHERE user_id = ${userId} AND hashtag IN (${Prisma.join(ids)})
+    RETURNING hashtag
+  `);
+  return rows.map((r) => r.hashtag);
 }
 
 export async function markRead(userId: string, hashtag: number) {

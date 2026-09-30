@@ -1,7 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { BarChart3, Plus, Search, SlidersHorizontal, X, Clock, Eye, BookOpen, Shuffle, ArrowUpDown, Gauge } from "lucide-react";
+import Link from "next/link";
+import { BarChart3, Layers, Plus, Search, SlidersHorizontal, X, Clock, Eye, BookOpen, Shuffle, ArrowUpDown, Gauge } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -147,6 +148,14 @@ export function GalleryHeader({ search, setSearch, onAdd, onStats, statsActive, 
           <span className="text-nh-accent">db</span>
         </div>
         <div className="flex-1" />
+        {/* The swipe deck (/swipe): the titles still without a name, one cover at a time. */}
+        <Link
+          href="/swipe"
+          aria-label="Swipe through titles without a name"
+          className="grid size-8 place-items-center rounded-lg bg-nh-input text-nh-text-2 hover:bg-nh-input/80"
+        >
+          <Layers className="size-4" />
+        </Link>
         <Button
           onClick={onStats}
           variant="secondary"

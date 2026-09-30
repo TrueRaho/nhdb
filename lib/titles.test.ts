@@ -42,8 +42,8 @@ vi.mock("next/cache", () => ({ cacheTag: vi.fn(), cacheLife: vi.fn() }));
 
 import { cacheTag } from "next/cache";
 import {
-  deleteTitle, getDataset, getGhostIndex, getGhostTagsFor, getSimilar,
-  getStats, getTagAffinity, getTitle, getTitlesByHashtags, markRead,
+  deleteTitle, deleteTitles, getDataset, getGhostIndex, getGhostTagsFor, getSimilar,
+  getStats, getTagAffinity, getTitle, getTitlesByHashtags, getUnnamedHashtags, markRead,
   queryTitles, updateAlterName, upsertScrapedTitle, type QueryParams,
 } from "./titles";
 import type { ScrapeResult } from "./scraper";
@@ -413,6 +413,7 @@ describe("collection ownership", () => {
       () => getGhostIndex(userId), () => getGhostTagsFor(userId, 42),
       () => deleteTitle(userId, 42), () => updateAlterName(userId, 42, "x"),
       () => markRead(userId, 42), () => upsertScrapedTitle(userId, scrape),
+      () => getUnnamedHashtags(userId), () => deleteTitles(userId, [42]),
     ];
     for (const call of readsAndWrites) await expect(call()).rejects.toThrow("A user ID is required");
     for (const model of Object.values(db)) {
@@ -421,5 +422,37 @@ describe("collection ownership", () => {
     }
     expect(transaction).not.toHaveBeenCalled();
     expect(cacheTag).not.toHaveBeenCalled();
+  });
+});
+
+describe("swipe deck", () => {
+  it("draws only the owner's titles that have no custom name", async () => {
+    findMany.mockResolvedValueOnce([{ hashtag: 3 }, { hashtag: 9 }]);
+    expect(await getUnnamedHashtags(USER)).toEqual([3, 9]);
+    expect(findMany).toHaveBeenCalledWith({
+      where: { userId: USER, OR: [{ alterName: null }, { alterName: "" }] },
+      select: { hashtag: true },
+    });
+  });
+
+  it("deletes the whole list in ONE statement, scoped to the owner", async () => {
+    queryRaw.mockResolvedValueOnce([{ hashtag: 5 }, { hashtag: 7 }]);
+    expect(await deleteTitles(USER, [5, 7, 7, 11])).toEqual([5, 7]);
+    // one statement for the batch — the serialized-write contract
+    expect(queryRaw).toHaveBeenCalledOnce();
+    expect(db.title.deleteMany).not.toHaveBeenCalled();
+    const q = queryRaw.mock.calls[0][0];
+    expect(q.strings.join("?")).toMatch(/DELETE FROM titles WHERE user_id = \? AND hashtag IN \(\?,\?,\?\)\s+RETURNING hashtag/);
+    expect(q.values).toEqual([USER, 5, 7, 11]);
+  });
+
+  it("drops junk ids instead of failing the list, and skips an empty one", async () => {
+    queryRaw.mockResolvedValueOnce([]);
+    await deleteTitles(USER, [0, -1, 1.5, 2 ** 31, 8] as number[]);
+    expect(queryRaw.mock.calls[0][0].values).toEqual([USER, 8]);
+    queryRaw.mockClear();
+    expect(await deleteTitles(USER, [])).toEqual([]);
+    expect(await deleteTitles(USER, "5" as unknown as number[])).toEqual([]);
+    expect(queryRaw).not.toHaveBeenCalled();
   });
 });

@@ -38,6 +38,12 @@ export function extractHashtag(input: string): number | null {
   return null
 }
 
+// A hashtag as the database stores it: a positive integer that fits the INT4
+// column. For ids arriving from the client, where anything can show up.
+export function isHashtag(v: unknown): v is number {
+  return typeof v === "number" && Number.isInteger(v) && v > 0 && v <= 2_147_483_647
+}
+
 // Pull every gallery id out of an arbitrary blob of text, in paste order,
 // deduped. This is the *batch* counterpart to extractHashtag: the add box is
 // filled by pasting far more often than by typing, and iOS Safari's "Copy

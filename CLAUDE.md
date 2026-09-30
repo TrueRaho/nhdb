@@ -48,6 +48,13 @@ pnpm rescrape       # bulk re-scrape via the running app's /api/scrape
   builds the server methods on a context that skips that write mid-render, and
   `proxy.ts` forwards the cache cookie it re-issues into the rendered request.
   Don't swap `auth` back to plain `createNeonAuth(...)`.
+- **Leaving a page does not unmount it.** With Cache Components, Next keeps up
+  to 3 visited routes alive in React `<Activity>` (hidden, `display: none`):
+  coming back shows the same state, and every effect runs again (verified in
+  this app: a layout-effect cleanup fires on leave, effects re-run on return).
+  So `NhdbApp` re-queries its first page whenever you return to the gallery
+  (its filters effect re-runs), and anything that must start fresh per visit
+  resets itself in a `useLayoutEffect` cleanup — see `components/Swipe.tsx`.
 - **Prisma client lives at `lib/generated/prisma/`**, not `@prisma/client`.
   Import `PrismaClient` / `Prisma` from `./generated/prisma/client` (see
   `lib/db.ts`, `lib/titles.ts`). The directory is gitignored, so a fresh clone
@@ -382,6 +389,20 @@ first making the triggers delta-based.
     strips the param so a reload can't re-queue them.
   `parseInputs` (`lib/utils.ts`) backs the batch path and the paste box — it
   takes whole "Copy Links" tab dumps, ids and prose mixed.
+- **`/swipe`** (`app/swipe/page.tsx` → `components/Swipe.tsx`, rules in
+  `lib/swipe.ts`) goes through the titles that have **no alter name**, one
+  full-screen cover at a time, reshuffled on every visit (the deck is fetched as
+  hashtags, shuffled in the browser, and loaded a few cards ahead). Right keeps
+  a title — only with a name typed in, saved through `updateAlterNameAction`,
+  which is also what keeps it out of later decks. Left puts it on a deletion
+  list; down brings it back `POSTPONE_GAP` cards later; up is not assigned yet.
+  A tap opens nhentai **without** `markRead`: a pass over a few hundred unnamed
+  titles would otherwise flood the reading stats. The deletion list is a list
+  of intentions, so it lives in localStorage per account
+  (`nhdb.swipe.trash.v1:<userId>`), not in the database; `deleteTitlesAction`
+  empties it with ONE `DELETE` (the serialized-write contract). Like `/add/<id>`
+  it is its own segment and imports nothing from `NhdbApp`'s tree; it mounts
+  client-only (`components/SwipeEntry.tsx`) because it reads storage on setup.
 - `SpeedInsights`/`Analytics` live in `app/page.tsx`, **not** the root layout,
   so `/add/<id>` ships neither script.
 - `alterName` is a **user-managed** custom title; the scraper never writes it,
