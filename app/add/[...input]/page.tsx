@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import { requireUserIdOrRedirect } from "@/lib/session";
 import type { Metadata } from "next";
-import { extractHashtag } from "@/lib/utils";
+import { parseTitleRef } from "@/lib/sources";
 import { QuickAdd } from "@/components/QuickAdd";
 
 // The share-sheet target: one title, one screen, opened straight from a phone.
@@ -28,16 +28,17 @@ export default function QuickAddPage({ params }: { params: Promise<{ input: stri
 async function Resolved({ params }: { params: Promise<{ input: string[] }> }) {
   const { input } = await params;
   await requireUserIdOrRedirect(`/add/${input.map(encodeURIComponent).join("/")}`);
-  // Catch-all on purpose. A share-sheet shortcut may hand over the nhentai URL
+  // Catch-all on purpose. A share-sheet shortcut may hand over the gallery URL
   // percent-encoded ("/add/https%3A%2F%2Fnhentai.net%2Fg%2F177013%2F", one
-  // segment) or raw ("/add/https:/nhentai.net/g/177013/", several) depending on
-  // whether its URL-encode step escapes slashes. Rejoining the segments makes
-  // both spellings — and a plain "/add/177013" — land on the same title, so the
-  // shortcut cannot be built wrong.
+  // segment) or raw ("/add/https:/hitomi.la/galleries/1234567.html", several)
+  // depending on whether its URL-encode step escapes slashes. Rejoining the
+  // segments makes both spellings — and a plain "/add/177013" — land on the
+  // same title, so the shortcut cannot be built wrong. Only a title link from a
+  // supported site gets past this line (lib/sources.ts).
   const raw = input.map(safeDecode).join("/");
-  const hashtag = extractHashtag(raw);
-  if (!hashtag) return <Shell note={`not a title id: ${raw}`} error />;
-  return <QuickAdd hashtag={hashtag} />;
+  const ref = parseTitleRef(raw);
+  if (!ref) return <Shell note={`not a title link from a supported site: ${raw}`} error />;
+  return <QuickAdd titleRef={ref} />;
 }
 
 // decodeURIComponent throws on a malformed escape ("%"), which would turn a

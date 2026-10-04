@@ -49,7 +49,8 @@ import { upsertScrapedTitle } from "@/lib/titles";
 import { ScrapeError, scrapeTitle } from "@/lib/scraper";
 
 const SCRAPED = {
-  hashtag: 177013,
+  source: "nhentai" as const,
+  source_id: "177013",
   title_name: "PenXjbs",
   image_link: "https://t.nhentai.net/x/cover.jpg",
   pages: 225,
@@ -214,7 +215,7 @@ describe("POST /api/scrape — direct scrape (no proxy hosts)", () => {
     vi.mocked(scrapeTitle).mockRejectedValueOnce(new ScrapeError("nope", "NOT_FOUND"));
     expect((await POST(req({ input: "1" }))).status).toBe(404);
     vi.mocked(scrapeTitle).mockRejectedValueOnce(new ScrapeError("bad", "BAD_INPUT"));
-    expect((await POST(req({ input: "x" }))).status).toBe(400);
+    expect((await POST(req({ input: "hitomi:1" }))).status).toBe(400);
     vi.mocked(scrapeTitle).mockRejectedValueOnce(new ScrapeError("cf", "CLOUDFLARE"));
     expect((await POST(req({ input: "1" }))).status).toBe(502);
   });
@@ -344,5 +345,95 @@ describe("POST /api/scrape — per-user scraper hosts", () => {
     vi.stubEnv("NODE_ENV", "production");
     vi.mocked(resolveScraperTargets).mockResolvedValueOnce([]);
     expect((await POST(req({ input: "177013", persist: false }))).status).toBe(409);
+  });
+});
+
+describe("POST /api/scrape — only titles", () => {
+  it.each([
+    "https://hentaifox.com/search/?q=quill+mfnd",
+    "https://e-hentai.org/?f_search=quill+mfnd",
+    "https://hitomi.la/search.html?quill%20mfnd",
+    "https://imhentai.xxx/search/?key=quill+mfnd",
+    "https://example.com/g/177013/",
+    "http://169.254.169.254/latest/meta-data/",
+    "hello",
+  ])("400s %s before charging the budget or contacting a host", async (input) => {
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    const res = await POST(req({ input, persist: false }));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "Not a title link from a supported site", code: "BAD_INPUT" });
+    expect(consumeScrapeBudget).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+    expect(scrapeTitle).not.toHaveBeenCalled();
+  });
+
+  const HITOMI = {
+    ...SCRAPED,
+    source: "hitomi" as const,
+    source_id: "1234567",
+    image_link: "https://tn.gold-usergeneratedcontent.net/webpbigtn/a/bc/x.webp",
+  };
+
+  it("asks the host for the rebuilt gallery address, not the pasted text", async () => {
+    const calls = stubHosts({ status: 200, body: { scraped: HITOMI, via: "impit" } });
+    const res = await POST(req({ input: "see https://hitomi.la/reader/1234567.html#5?evil=1", persist: false }));
+    expect(res.status).toBe(200);
+    expect(JSON.parse(calls[0].init.body as string)).toEqual({ input: "https://hitomi.la/galleries/1234567.html" });
+  });
+
+  it("keeps asking for nhentai by the bare id every host version understands", async () => {
+    const calls = stubHosts({ status: 200, body: { scraped: SCRAPED, via: "impit" } });
+    await POST(req({ input: "https://nhentai.net/g/177013/", persist: false }));
+    expect(JSON.parse(calls[0].init.body as string)).toEqual({ input: "177013" });
+  });
+
+  it("reads an older host's nhentai-only answer", async () => {
+    const legacy = { ...SCRAPED, source: undefined, source_id: undefined, hashtag: 177013 };
+    stubHosts({ status: 200, body: { scraped: legacy, via: "impit" } });
+    const res = await POST(req({ input: "177013", persist: false }));
+    expect(res.status).toBe(200);
+    expect((await res.json()).scraped).toEqual(SCRAPED);
+  });
+
+  it("does not pass on or store what a host made up, and tries the next host", async () => {
+    const calls = stubHosts(
+      { status: 200, body: { scraped: { ...HITOMI, image_link: "https://evil.example/x.jpg" }, via: "impit" } },
+      { status: 200, body: { scraped: HITOMI, via: "fallback" } },
+    );
+    const res = await POST(req({ input: "hitomi:1234567" }));
+    expect(res.status).toBe(200);
+    expect(calls).toHaveLength(2);
+    expect(upsertScrapedTitle).toHaveBeenCalledExactlyOnceWith("user-a", HITOMI);
+  });
+
+  it("refuses a host's answer about a different title", async () => {
+    stubHosts({ status: 200, body: { scraped: { ...HITOMI, source_id: "7" }, via: "impit" } });
+    const res = await POST(req({ input: "hitomi:1234567" }));
+    expect(res.status).toBe(502);
+    expect((await res.json()).error).toBe("Scraper host returned a different title");
+    expect(upsertScrapedTitle).not.toHaveBeenCalled();
+  });
+
+  it("explains an outdated host and lets a newer one try", async () => {
+    const calls = stubHosts(
+      { status: 400, body: { error: "Could not parse hashtag", code: "BAD_INPUT" } },
+      { status: 200, body: { scraped: HITOMI, via: "fallback" } },
+    );
+    const res = await POST(req({ input: "hitomi:1234567", persist: false }));
+    expect(res.status).toBe(200);
+    expect(calls).toHaveLength(2);
+
+    stubHosts({ status: 400, body: { error: "Could not parse hashtag" } }, { status: 400, body: {} });
+    const both = await POST(req({ input: "hitomi:1234567", persist: false }));
+    expect(both.status).toBe(400);
+    expect((await both.json()).error).toMatch(/older version/);
+  });
+
+  it("invalidates the key the database filed the title under", async () => {
+    vi.mocked(upsertScrapedTitle).mockResolvedValueOnce({ hashtag: 1_000_000_003 } as never);
+    stubHosts({ status: 200, body: { scraped: HITOMI, via: "impit" } });
+    await POST(req({ input: "hitomi:1234567" }));
+    expect(vi.mocked(revalidateTag).mock.calls.map((c) => c[0])).toContain("title:user-a:1000000003");
   });
 });

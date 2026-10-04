@@ -163,7 +163,7 @@ export function StatsView({ dataset, onTagClick }: {
                 >
                   <div className="flex-1 min-w-0">
                     <div className="font-display font-semibold text-xs text-nh-text-1 truncate">{s.name}</div>
-                    <div className="font-mono text-[9.5px] text-nh-text-3">#{s.hashtag}</div>
+                    <div className="font-mono text-[9.5px] text-nh-text-3">{s.label}</div>
                   </div>
                   <div className="text-right shrink-0">
                     <div className="font-mono text-[10px] text-nh-text-2">{timeStr}</div>

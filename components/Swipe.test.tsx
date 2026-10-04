@@ -17,7 +17,7 @@ import type { Item } from "../lib/data";
 const USER = "user-a";
 
 const item = (hashtag: number): Item => ({
-  hashtag, titleName: `title ${hashtag}`, alterName: "", imageLink: "", pages: 20 + hashtag,
+  hashtag, source: "nhentai", sourceId: String(hashtag), titleName: `title ${hashtag}`, alterName: "", imageLink: "", pages: 20 + hashtag,
   uploadedAt: 300, addedAt: 40, readCount: 0, lastReadAt: null,
   tags: ["tag one"], artists: ["someone"], groups: [], parodies: [], characters: [],
 });
@@ -129,6 +129,19 @@ describe("SwipeDeck", () => {
     expect(opened).toEqual(["https://nhentai.net/g/1/"]);
     expect(updateAlterNameAction).not.toHaveBeenCalled();
     expect(screen.getByText("2 without a name")).toBeTruthy();
+  });
+
+  it("opens a title from another site on that site", async () => {
+    vi.mocked(getSwipeDeckAction).mockResolvedValue([1_000_000_001]);
+    vi.mocked(getSwipeCardsAction).mockImplementation(async () => [
+      { ...item(1), hashtag: 1_000_000_001, source: "hitomi", sourceId: "1234567" },
+    ]);
+    render(<SwipeDeck userId={USER} />);
+    const hitomiCard = await screen.findByRole("group", { name: /tap to open on Hitomi/ });
+    expect(screen.getByText(/hitomi 1234567 ·/)).toBeTruthy();
+    fireEvent.pointerDown(hitomiCard, { pointerId: 1, clientX: 200, clientY: 300 });
+    fireEvent.pointerUp(hitomiCard, { pointerId: 1, clientX: 201, clientY: 301 });
+    expect(opened).toEqual(["https://hitomi.la/galleries/1234567.html"]);
   });
 
   it("reads a drag: left to the list, up to nothing", async () => {

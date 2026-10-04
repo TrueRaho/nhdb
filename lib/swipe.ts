@@ -6,7 +6,7 @@
 //   left   onto the deletion list; nothing is deleted until the list is emptied
 //   down   not now — it comes back POSTPONE_GAP cards later
 //   up     not assigned yet
-//   tap    open the title on nhentai
+//   tap    open the title on its own site
 //
 // Everything here is pure or a thin guard around localStorage, so the rules are
 // testable without a DOM. The UI is components/Swipe.tsx.
@@ -88,7 +88,14 @@ export function classifyGesture(dx: number, dy: number, ms: number, width: numbe
 // (cleared storage, another device) costs nothing but a re-swipe. Enough is
 // kept per entry to show the list without refetching the titles.
 
-export type TrashEntry = { hashtag: number; titleName: string; imageLink: string; pages: number };
+export type TrashEntry = {
+  hashtag: number;
+  /** How the list names the title ("#177013", "hitomi 1234567"). */
+  label: string;
+  titleName: string;
+  imageLink: string;
+  pages: number;
+};
 
 export const trashKey = (userId: string) => `nhdb.swipe.trash.v1:${userId}`;
 
@@ -106,11 +113,13 @@ export function parseTrash(raw: string | null): TrashEntry[] {
   const out: TrashEntry[] = [];
   for (const e of parsed) {
     if (!e || typeof e !== "object") continue;
-    const { hashtag, titleName, imageLink, pages } = e as Record<string, unknown>;
+    const { hashtag, label, titleName, imageLink, pages } = e as Record<string, unknown>;
     if (!isHashtag(hashtag) || seen.has(hashtag)) continue;
     seen.add(hashtag);
     out.push({
       hashtag,
+      // Lists saved before titles came from several sites carry no label.
+      label: typeof label === "string" && label.length > 0 && label.length <= 80 ? label : `#${hashtag}`,
       titleName: typeof titleName === "string" ? titleName : `#${hashtag}`,
       imageLink: typeof imageLink === "string" ? imageLink : "",
       pages: typeof pages === "number" && Number.isFinite(pages) ? pages : 0,

@@ -7,9 +7,17 @@ import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { NhCover } from "./Primitives";
-import type { Item } from "../lib/data";
-import { parseInputs } from "../lib/utils";
+import { itemKey, itemLabel, type Item } from "../lib/data";
+import { parseInputs, parseTitleRef, refLabel, SOURCE_IDS, SOURCES } from "../lib/sources";
 import { useScrapeJobs, type ScrapeJob } from "./ScrapeJobsProvider";
+
+const SITE_NAMES = SOURCE_IDS.map((id) => SOURCES[id].name.toLowerCase()).join(", ");
+
+// A job's key is its title ref; show it the way the rest of the app labels titles.
+function jobLabel(job: ScrapeJob): string {
+  const ref = parseTitleRef(job.key);
+  return ref ? refLabel(ref) : job.input;
+}
 
 export function AddModal({ open, onClose, recentAdds, embedded, onAdd }: {
   open: boolean; onClose: () => void; recentAdds: Item[]; embedded?: boolean;
@@ -107,12 +115,12 @@ export function AddModal({ open, onClose, recentAdds, embedded, onAdd }: {
 
         <div className="flex-1 overflow-auto min-h-0 p-4">
           <div className="font-mono text-[9.5px] uppercase tracking-widest text-nh-text-3 mb-1.5">
-            nhentai urls or hashtags · paste a whole tab dump — titles are ignored
+            title links from {SITE_NAMES} · bare numbers are nhentai ids · paste a whole tab dump — anything that is not a title is ignored
           </div>
           <Textarea
             value={input}
             onChange={e => setInput(e.target.value)}
-            placeholder={"177013\nnhentai.net/g/895243\n820175, 831895, 563281"}
+            placeholder={"177013\nhttps://hitomi.la/galleries/1234567.html\nhttps://e-hentai.org/g/899557/edd545586a/"}
             className="min-h-20 w-full rounded-lg bg-nh-input border-nh-border px-3 py-2.5 font-mono text-xs tracking-wide text-nh-text-1 resize-y"
           />
           {saveError && (
@@ -201,14 +209,14 @@ export function AddModal({ open, onClose, recentAdds, embedded, onAdd }: {
               <div className="font-mono text-[9.5px] uppercase tracking-widest text-nh-text-3 mb-2">recently added</div>
               <div className="flex flex-col">
                 {recentAdds.map(r => (
-                  <div key={r.hashtag} className="flex items-center gap-2.5 py-2 border-b border-nh-border">
+                  <div key={itemKey(r)} className="flex items-center gap-2.5 py-2 border-b border-nh-border">
                     <div className="w-8 h-11 shrink-0 rounded-sm overflow-hidden">
                       <NhCover item={r} size="sm"/>
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="font-display font-semibold text-xs text-nh-text-1 truncate">{r.titleName}</div>
                       <div className="font-mono text-[10px] text-nh-text-3">
-                        #{r.hashtag} · {r.pages}p · {r.addedAt === 0 ? "today" : `${r.addedAt}d ago`}
+                        {itemLabel(r)} · {r.pages}p · {r.addedAt === 0 ? "today" : `${r.addedAt}d ago`}
                       </div>
                     </div>
                   </div>
@@ -243,7 +251,7 @@ function DismissButton({ onClick }: { onClick: () => void }) {
 }
 
 function ScrapingRow({ job, onDismiss }: { job: ScrapeJob; onDismiss: () => void }) {
-  const label = job.key.startsWith("#") ? job.key : job.input;
+  const label = jobLabel(job);
   return (
     <div className="flex items-center gap-2.5 p-2 rounded-lg bg-nh-surface-2 border border-nh-border border-dashed">
       <div className="w-14 h-18.5 shrink-0 rounded-sm bg-nh-pill animate-pulse" />
@@ -259,7 +267,7 @@ function ScrapingRow({ job, onDismiss }: { job: ScrapeJob; onDismiss: () => void
 }
 
 function ErrorRow({ job, onDismiss, onRetry }: { job: ScrapeJob; onDismiss: () => void; onRetry: () => void }) {
-  const label = job.key.startsWith("#") ? job.key : job.input;
+  const label = jobLabel(job);
   return (
     <div
       className="flex items-center gap-2.5 p-2 rounded-lg border"
@@ -291,7 +299,7 @@ function DuplicateRow({ item, onDismiss }: { item: Item; onDismiss: () => void }
         <NhCover item={item} size="sm"/>
       </div>
       <div className="flex-1 min-w-0 flex flex-col gap-1">
-        <div className="font-mono text-[9.5px] tracking-wider text-nh-text-3">#{item.hashtag}</div>
+        <div className="font-mono text-[9.5px] tracking-wider text-nh-text-3">{itemLabel(item)}</div>
         <div
           className="font-display font-bold text-[13px] text-nh-text-2 truncate"
           style={{ letterSpacing: "-0.01em" }}
@@ -320,7 +328,7 @@ function PreviewRow({ item, via, onDismiss }: { item: Item; via?: ScrapeJob["via
       </div>
       <div className="flex-1 min-w-0 flex flex-col gap-1">
         <div className="flex items-center gap-1.5">
-          <span className="font-mono text-[9.5px] tracking-wider text-nh-accent">#{item.hashtag}</span>
+          <span className="font-mono text-[9.5px] tracking-wider text-nh-accent">{itemLabel(item)}</span>
           {via === "fallback" && (
             <span
               className="inline-flex items-center gap-0.5 font-mono text-[8.5px] uppercase tracking-wider rounded-sm px-1 py-0.5"

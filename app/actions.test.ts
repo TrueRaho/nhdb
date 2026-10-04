@@ -5,14 +5,14 @@ vi.mock("next/cache", () => ({ updateTag: vi.fn() }));
 vi.mock("../lib/titles", () => ({
   deleteTitle: vi.fn(), markRead: vi.fn(), updateAlterName: vi.fn(), upsertScrapedTitle: vi.fn(),
   queryTitles: vi.fn(), getStats: vi.fn(), getSimilar: vi.fn(), getTitle: vi.fn(),
-  getTitlesByHashtags: vi.fn(), getTagAffinity: vi.fn(), getGhostTagsFor: vi.fn(),
+  getTitlesByHashtags: vi.fn(), getTitlesByRefs: vi.fn(), getTagAffinity: vi.fn(), getGhostTagsFor: vi.fn(),
   getUnnamedHashtags: vi.fn(), deleteTitles: vi.fn(),
 }));
 import * as actions from "./actions";
 import * as titles from "../lib/titles";
 import { requireUserId } from "../lib/session";
 import { updateTag } from "next/cache";
-import type { ScrapeResult } from "../lib/scraper";
+import type { ScrapeResult } from "../lib/scrape-payload";
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -30,7 +30,7 @@ const protectedCalls: [string, () => Promise<unknown>][] = [
   ["affinity", () => actions.getTagAffinityAction({ tags: ["tag"] })],
   ["ghost", () => actions.getGhostTagsAction(1)],
   ["title", () => actions.getTitleAction(1)],
-  ["existing", () => actions.findExistingTitlesAction([1])],
+  ["existing", () => actions.findExistingTitlesAction(["nhentai:1"])],
   ["swipe deck", () => actions.getSwipeDeckAction()],
   ["swipe cards", () => actions.getSwipeCardsAction([1])],
   ["delete list", () => actions.deleteTitlesAction([1])],
@@ -70,7 +70,7 @@ describe("Server Action authorization", () => {
 
 describe("swipe deck actions", () => {
   const title = (hashtag: number) => ({
-    hashtag, titleName: `t${hashtag}`, alterName: null, imageLink: "", pages: 1,
+    hashtag, source: "nhentai", sourceId: String(hashtag), titleName: `t${hashtag}`, alterName: null, imageLink: "", pages: 1,
     uploadedAt: new Date("2026-01-01"), createdAt: new Date("2026-01-01"), readCount: 0, lastReadAt: null,
     artists: [], groups: [], characters: [], parodies: [], tags: [],
   });
@@ -108,5 +108,38 @@ describe("swipe deck actions", () => {
     vi.mocked(titles.deleteTitles).mockResolvedValue([]);
     await actions.deleteTitlesAction([404]);
     expect(updateTag).not.toHaveBeenCalled();
+  });
+});
+
+describe("add flow actions", () => {
+  it("files a commit under the key the database returned, not one from the payload", async () => {
+    vi.mocked(titles.upsertScrapedTitle).mockResolvedValue({
+      hashtag: 1_000_000_004, source: "hitomi", sourceId: "1234567", titleName: "t", alterName: null,
+      imageLink: "", pages: 1, uploadedAt: null, createdAt: new Date(), readCount: 0, lastReadAt: null,
+      avgTagValue: null, userId: "user-a", artists: [], groups: [], characters: [], parodies: [], tags: [],
+    } as unknown as Awaited<ReturnType<typeof titles.upsertScrapedTitle>>);
+    const payload = { source: "hitomi", source_id: "1234567", hashtag: 5 } as unknown as ScrapeResult;
+    const item = await actions.commitScrapedAction(payload, "  my name ");
+    expect(titles.upsertScrapedTitle).toHaveBeenCalledWith("user-a", payload);
+    expect(titles.updateAlterName).toHaveBeenCalledWith("user-a", 1_000_000_004, "my name");
+    expect(vi.mocked(updateTag).mock.calls.map(([tag]) => tag)).toContain("title:user-a:1000000004");
+    expect(item).toMatchObject({ hashtag: 1_000_000_004, source: "hitomi", alterName: "my name" });
+  });
+
+  it("looks up only well-formed refs, deduped and capped", async () => {
+    vi.mocked(titles.getTitlesByRefs).mockResolvedValue([]);
+    await actions.findExistingTitlesAction([
+      "hitomi:1", "https://hitomi.la/galleries/1.html", "nhentai:2", "garbage", 5 as unknown as string,
+      ...Array.from({ length: 300 }, (_, i) => `imhentai:${i + 1}`),
+    ]);
+    const [, refs] = vi.mocked(titles.getTitlesByRefs).mock.calls[0];
+    expect(refs.slice(0, 2)).toEqual([{ source: "hitomi", id: "1" }, { source: "nhentai", id: "2" }]);
+    expect(refs.length).toBeLessThanOrEqual(200);
+    expect(refs.every((r) => r.source !== undefined)).toBe(true);
+  });
+
+  it("does not touch the database for nothing usable", async () => {
+    expect(await actions.findExistingTitlesAction(["nope", ""])).toEqual([]);
+    expect(titles.getTitlesByRefs).not.toHaveBeenCalled();
   });
 });

@@ -14,7 +14,7 @@ import { prisma } from "./db";
  *
  * Sized against the workload it has to leave alone, not against the attack: the
  * batch path exists for pasting a phone's whole tab list, which can be dozens of
- * ids in one go (see lib/utils.ts `parseInputs`). 120/hour allows several such pastes
+ * ids in one go (see lib/sources.ts `parseInputs`). 120/hour allows several such pastes
  * back to back, while capping one account at 120 Playwright pages an hour on the
  * free Render box.
  */

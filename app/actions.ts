@@ -5,15 +5,16 @@ import { requireUserId } from "../lib/session";
 import { titlesListTag, datasetTag, statsTag, titleTag, similarTag, similarAnyTag } from "../lib/cache-tags";
 import {
   deleteTitle, deleteTitles, markRead, updateAlterName, upsertScrapedTitle,
-  queryTitles, getStats, getSimilar, getTitle, getTitlesByHashtags, getTagAffinity,
+  queryTitles, getStats, getSimilar, getTitle, getTitlesByHashtags, getTitlesByRefs, getTagAffinity,
   getGhostTagsFor, getUnnamedHashtags,
   type QueryParams, type TagAffinityParams,
 } from "../lib/titles";
 import { isHashtag } from "../lib/utils";
+import { parseTitleRef, refKey, type TitleRef } from "../lib/sources";
 import { CARD_BATCH } from "../lib/swipe";
 import { dbTitleToItem } from "../lib/mappers";
 import type { Item } from "../lib/data";
-import type { ScrapeResult } from "../lib/scraper";
+import type { ScrapeResult } from "../lib/scrape-payload";
 
 // Persist a scraped payload and invalidate caches with read-your-writes
 // semantics (updateTag is only allowed in Server Actions, not Route Handlers).
@@ -23,16 +24,22 @@ import type { ScrapeResult } from "../lib/scraper";
 // path must never touch alterName on its own (a re-scrape would wipe the user's
 // name), so upsertScrapedTitle stays unaware of it. Omitted or blank leaves any
 // existing name untouched.
+//
+// The payload comes back from the browser, so it is untrusted here:
+// upsertScrapedTitle re-validates it, and the key the title is filed under is
+// the one the database returns (a title from another site has none until its
+// first save) — never anything the payload claims.
 export async function commitScrapedAction(scraped: ScrapeResult, alterName?: string): Promise<Item> {
   const userId = await requireUserId();
   const saved = await upsertScrapedTitle(userId, scraped);
+  const { hashtag } = saved;
   const name = alterName?.trim();
-  if (name) await updateAlterName(userId, scraped.hashtag, name);
+  if (name) await updateAlterName(userId, hashtag, name);
   updateTag(titlesListTag(userId));
   updateTag(datasetTag(userId));
   updateTag(statsTag(userId));
-  updateTag(titleTag(userId, scraped.hashtag));
-  updateTag(similarTag(userId, scraped.hashtag));
+  updateTag(titleTag(userId, hashtag));
+  updateTag(similarTag(userId, hashtag));
   // Broad tag: cached similar-<other> lists of NEIGHBOR titles (tag overlap)
   // reference this title too and would otherwise go stale forever.
   updateTag(similarAnyTag(userId));
@@ -111,11 +118,21 @@ export async function getTitleAction(hashtag: number): Promise<Item | null> {
   return t ? dbTitleToItem(t) : null;
 }
 
-// Which of these hashtags are already in the collection? Uncached read —
-// the add flow uses it to skip re-scraping known titles.
-export async function findExistingTitlesAction(hashtags: number[]): Promise<Item[]> {
+// One paste's worth; parseInputs output beyond this is not a human's paste.
+const MAX_LOOKUP = 200;
+
+// Which of these titles (`source:id` refs) are already in the collection?
+// Uncached read — the add flow uses it to skip re-scraping known titles.
+// Anything that does not parse as a ref is simply not looked up.
+export async function findExistingTitlesAction(refs: string[]): Promise<Item[]> {
   const userId = await requireUserId();
-  const titles = await getTitlesByHashtags(userId, hashtags);
+  const parsed = new Map<string, TitleRef>();
+  for (const raw of Array.isArray(refs) ? refs.slice(0, MAX_LOOKUP) : []) {
+    const ref = typeof raw === "string" ? parseTitleRef(raw) : null;
+    if (ref) parsed.set(refKey(ref), ref);
+  }
+  if (parsed.size === 0) return [];
+  const titles = await getTitlesByRefs(userId, [...parsed.values()]);
   return titles.map(dbTitleToItem);
 }
 

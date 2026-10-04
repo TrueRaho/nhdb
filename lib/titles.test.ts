@@ -43,10 +43,10 @@ vi.mock("next/cache", () => ({ cacheTag: vi.fn(), cacheLife: vi.fn() }));
 import { cacheTag } from "next/cache";
 import {
   deleteTitle, deleteTitles, getDataset, getGhostIndex, getGhostTagsFor, getSimilar,
-  getStats, getTagAffinity, getTitle, getTitlesByHashtags, getUnnamedHashtags, markRead,
+  getStats, getTagAffinity, getTitle, getTitlesByHashtags, getTitlesByRefs, getUnnamedHashtags, markRead,
   queryTitles, updateAlterName, upsertScrapedTitle, type QueryParams,
 } from "./titles";
-import type { ScrapeResult } from "./scraper";
+import type { ScrapeResult } from "./scrape-payload";
 
 const USER = "alice";
 
@@ -228,17 +228,41 @@ describe("queryTitles — ghost tags", () => {
   });
 });
 
+describe("search across sites", () => {
+  const orOf = async (search: string) =>
+    ((await whereFor({ search })) as { AND: [{ OR: unknown[] }] }).AND[0].OR;
+
+  it("matches a number as an nhentai key and as any site's id", async () => {
+    const or = await orOf("1234567");
+    expect(or).toContainEqual({ hashtag: 1234567 });
+    expect(or).toContainEqual({ sourceId: "1234567" });
+    expect(or).toContainEqual({ sourceId: { startsWith: "1234567/" } }); // an E-Hentai gid
+  });
+
+  it("never sends a number too large for the key column", async () => {
+    const or = await orOf("12345678901");
+    expect(or.some((c) => "hashtag" in (c as object))).toBe(false);
+    expect(or).toContainEqual({ sourceId: "12345678901" });
+  });
+
+  it("finds a title by a pasted gallery link", async () => {
+    expect(await orOf("https://hitomi.la/reader/1234567.html#3")).toContainEqual({ source: "hitomi", sourceId: "1234567" });
+  });
+});
+
+const NH = "https://nhentai.net";
 const scrape: ScrapeResult = {
-  hashtag: 42,
+  source: "nhentai",
+  source_id: "42",
   title_name: "Shared source title",
-  image_link: "https://example.test/cover.jpg",
+  image_link: "https://t.nhentai.net/galleries/1/cover.jpg",
   pages: 20,
   uploaded_at: "2026-01-01",
-  artists: [{ name: "artist", link: "/artist/artist/", total_works: 10 }],
-  groups: [{ name: "group", link: "/group/group/", total_works: 10 }],
-  characters: [{ name: "character", link: "/character/character/", total_works: 10 }],
-  parodies: [{ name: "parody", link: "/parody/parody/", total_works: 10 }],
-  tags: [{ name: "tag", link: "/tag/tag/", total_works: 10 }],
+  artists: [{ name: "artist", link: `${NH}/artist/artist/`, total_works: 10 }],
+  groups: [{ name: "group", link: `${NH}/group/group/`, total_works: 10 }],
+  characters: [{ name: "character", link: `${NH}/character/character/`, total_works: 10 }],
+  parodies: [{ name: "parody", link: `${NH}/parody/parody/`, total_works: 10 }],
+  tags: [{ name: "tag", link: `${NH}/tag/tag/`, total_works: 10 }],
 };
 
 describe("scrape payload validation", () => {
@@ -246,14 +270,16 @@ describe("scrape payload validation", () => {
     null,
     { ...scrape, pages: 1.5 },
     { ...scrape, pages: Infinity },
-    { ...scrape, hashtag: 2_147_483_648 },
-    { ...scrape, uploaded_at: null },
+    { ...scrape, source_id: "2147483648" },
+    { ...scrape, source: "example" },
+    { ...scrape, image_link: "https://example.test/cover.jpg" },
     { ...scrape, title_name: "x".repeat(256) },
     { ...scrape, tags: [null] },
     { ...scrape, artists: [{ ...scrape.artists[0], total_works: -1 }] },
     { ...scrape, groups: [{ ...scrape.groups[0], link: false }] },
+    { ...scrape, groups: [{ ...scrape.groups[0], link: "https://evil.example/group/" }] },
   ])("rejects malformed payload %# before starting a transaction", async (payload) => {
-    await expect(upsertScrapedTitle(USER, payload as ScrapeResult)).rejects.toMatchObject({ name: "ValidationError" });
+    await expect(upsertScrapedTitle(USER, payload)).rejects.toMatchObject({ name: "ValidationError" });
     expect(transaction).not.toHaveBeenCalled();
     expect(queryRaw).not.toHaveBeenCalled();
   });
@@ -307,21 +333,30 @@ describe("collection ownership", () => {
     expect(transaction.mock.calls[0][0]).toHaveLength(2);
   });
 
+  // The entity upserts answer with ids; the title upsert answers with the key
+  // the row ended up under.
+  const answerUpserts = (hashtag: number) =>
+    queryRaw.mockImplementation(async (q) =>
+      q.strings.join("").includes("INSERT INTO titles") ? [{ hashtag }] : [{ id: 7, name: q.values[1] }]);
+  const titleStatement = () =>
+    queryRaw.mock.calls.map(([q]) => q).find((q) => q.strings.join("").includes("INSERT INTO titles"))!;
+
   it("upserts entities, the title, and replacement links under the same owner", async () => {
-    queryRaw.mockImplementation(async (q) => [{ id: 7, name: q.values[1] }]);
+    answerUpserts(42);
     await upsertScrapedTitle(USER, scrape);
     expect(transaction).toHaveBeenCalledOnce();
-    expect(queryRaw).toHaveBeenCalledTimes(5);
+    expect(queryRaw).toHaveBeenCalledTimes(6);
     for (const [q] of queryRaw.mock.calls) {
       expect(q.strings.join("?")).toContain("(user_id,");
       expect(q.strings.join("?")).toContain("ON CONFLICT (user_id,");
       expect(q.values[0]).toBe(USER);
     }
-    expect(db.title.upsert).toHaveBeenCalledWith({
-      where: { userId_hashtag: { userId: USER, hashtag: 42 } },
-      create: expect.objectContaining({ userId: USER, hashtag: 42 }),
-      update: expect.not.objectContaining({ userId: expect.anything(), alterName: expect.anything() }),
-    });
+    // nhentai keeps its gallery id as the key; the scrape never writes alterName.
+    const title = titleStatement();
+    expect(title.strings.join("?")).toContain("ON CONFLICT (user_id, source, source_id) DO UPDATE");
+    expect(title.strings.join("?")).not.toContain("alter_name");
+    expect(title.strings.join("?")).not.toContain("nextval");
+    expect(title.values.slice(0, 4)).toEqual([USER, 42, "nhentai", "42"]);
     for (const model of [db.titleArtist, db.titleGroup, db.titleCharacter, db.titleParody, db.titleTag]) {
       expect(model.deleteMany).toHaveBeenCalledWith({ where: { userId: USER, hashtag: 42 } });
       expect(model.createMany).toHaveBeenCalledWith({
@@ -331,6 +366,45 @@ describe("collection ownership", () => {
     }
     expect(db.title.findUniqueOrThrow).toHaveBeenCalledWith(expect.objectContaining({
       where: { userId_hashtag: { userId: USER, hashtag: 42 } },
+    }));
+  });
+
+  it("files another site's title under the key the database hands out", async () => {
+    answerUpserts(1_000_000_005);
+    await upsertScrapedTitle(USER, {
+      ...scrape,
+      source: "hitomi",
+      source_id: "1234567",
+      image_link: "",
+      uploaded_at: null,
+      artists: [], groups: [], characters: [], parodies: [],
+      tags: [{ name: "tag", link: "https://hitomi.la/tag/tag-all.html", total_works: 0 }],
+    });
+    const title = titleStatement();
+    const sql = title.strings.join("?");
+    // Reuse the row's key, else draw one — never trust a key from the payload.
+    expect(sql).toMatch(/COALESCE\(\s*\(SELECT hashtag FROM titles WHERE user_id = \? AND source = \? AND source_id = \?\),\s*nextval\('titles_foreign_hashtag_seq'\)\)/);
+    expect(title.values).toEqual([USER, USER, "hitomi", "1234567", "hitomi", "1234567", scrape.title_name, "", 20, null]);
+    expect(db.titleTag.createMany).toHaveBeenCalledWith({
+      data: [{ userId: USER, hashtag: 1_000_000_005, idTag: 7 }],
+      skipDuplicates: true,
+    });
+  });
+
+  it("does not let a site without counts zero another site's count", async () => {
+    answerUpserts(42);
+    await upsertScrapedTitle(USER, scrape);
+    const tags = queryRaw.mock.calls.map(([q]) => q.strings.join("?")).find((q) => q.includes('INSERT INTO "tags"'))!;
+    expect(tags).toContain('total_works = COALESCE(NULLIF(EXCLUDED.total_works, 0), "tags".total_works)');
+  });
+
+  it("looks titles up by where they come from, inside the collection", async () => {
+    await getTitlesByRefs(USER, [{ source: "hitomi", id: "1" }, { source: "nhentai", id: "2" }]);
+    expect(findMany).toHaveBeenLastCalledWith(expect.objectContaining({
+      where: {
+        userId: USER,
+        OR: [{ source: "hitomi", sourceId: "1" }, { source: "nhentai", sourceId: "2" }],
+      },
     }));
   });
 

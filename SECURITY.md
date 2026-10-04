@@ -32,10 +32,10 @@ produced:
 | `requireUserIdOrRedirect()` | redirecting to sign-in | Server Components |
 | `getUserId()` | returning `null` | "is anyone signed in?" branches |
 
-Every one of the eleven Server Actions in `app/actions.ts` calls
+Every one of the Server Actions in `app/actions.ts` calls
 `requireUserId()` **before touching data**, and `POST /api/scrape` returns 401
 without a session (and 503, not 200, if the Auth service itself is unreachable —
-it fails closed). `app/actions.test.ts` pins this for all eleven.
+it fails closed). `app/actions.test.ts` pins this for every one of them.
 
 A `userId` is **never accepted from the client**. A forged `userId` inside a
 query payload is ignored because the action overwrites it with the session's —
@@ -69,8 +69,9 @@ else's cached pages.
 **In the database.** Migration `6_multi_user` makes a cross-tenant row
 *unrepresentable* rather than merely unwritten:
 
-- `titles` is keyed `(user_id, hashtag)` — the hashtag is an nhentai gallery id,
-  so two people legitimately own the same one.
+- `titles` is keyed `(user_id, hashtag)` — two people legitimately own the same
+  gallery. (For nhentai the hashtag is the gallery id; titles from the other
+  sites get a key ≥ 1e9 — see "What can be stored" below.)
 - The five entity tables are per-user, with `UNIQUE (user_id, name)`.
 - Every join row carries `user_id` and proves it **twice**, with composite
   foreign keys to both the title *and* the entity.
@@ -91,6 +92,41 @@ inaccessible until `pnpm claim <neon-auth-user-id>` transfers it. The claim
 takes a table lock, defers the composite foreign keys for the rename, and
 **refuses to run if the target account already has a collection**, so it can
 never merge two libraries or overwrite one.
+
+## What can be stored: titles, and only titles
+
+Titles come from seven sites (nhentai, E-Hentai, Hitomi, HentaiFox, IMHentai,
+Pururin, Hentai2Read). Anything a user types or pastes is untrusted, and so is
+anything their scraper host answers, so there are three gates — each refuses on
+its own, and none trusts the one before it:
+
+1. **Input is an allow-list of gallery pages** (`lib/sources.ts`). A link is
+   accepted only if it matches one site's *title* page pattern (`/g/<id>/`,
+   `/gallery/<id>/`, `/galleries/<id>.html`, a Hentai2Read slug that is not one
+   of the site's own sections…). Search pages, tag pages, home pages and links
+   to any other host match nothing and are dropped — in the paste box, in
+   `?add=`, in `/add/<link>`, in `/api/scrape` (a `400` before the scrape budget
+   is charged or any host is contacted) and again on the scraper host.
+2. **The fetched address is rebuilt from the id**, never taken from the input.
+   The pasted URL — its host, path, query string — is gone after step 1; the
+   scraper fetches `SOURCES[site].url(id)` (or the site's metadata API) and
+   nothing else. A response that redirects to another host is not read
+   (`fetchHosts` per adapter), and a page without a title's markup is refused
+   as "not a title" rather than stored.
+3. **The write boundary re-derives the payload** (`lib/scrape-payload.ts`),
+   because a commit's payload comes back from the browser and a host's answer
+   comes from a machine the user controls. Unknown keys are dropped; the source
+   must be a known site and the id its canonical form; the cover must be https
+   on that site's own image hosts (the same list `next.config.ts` lets the image
+   optimizer fetch, kept in step by a test); every entity link must be https on
+   the site itself; every string fits its column; entity counts are bounded.
+   `/api/scrape` runs the same check on a host's answer before passing it on,
+   and refuses an answer about a different title than the one asked for.
+
+In the database, `titles_source_hashtag_check` keeps the key ranges apart
+(an nhentai row's hashtag is its id, below 1e9; nothing else may sit there) and
+`(user_id, source, source_id)` is unique. The list of sites is deliberately an
+application allow-list, not a database constraint.
 
 ## Per-user scraper hosts
 
@@ -154,7 +190,10 @@ with a constant-time compare (`timingSafeEqual`). The value each user types into
 single global secret.
 
 It is a **service** credential, not a user credential: the scraper never learns
-who asked, touches no database, and must stay that way.
+who asked, touches no database, and must stay that way. Holding it does not
+make the host a general-purpose fetcher either: the host accepts only title
+links from the supported sites and fetches the address it rebuilds from the id
+(see "What can be stored" above).
 
 The server **fails closed**: if `SCRAPER_SECRET` is unset while the process
 would be publicly reachable (on Render, or with the ngrok tunnel enabled), it

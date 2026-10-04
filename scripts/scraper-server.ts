@@ -64,12 +64,21 @@ const server = http.createServer(async (req, res) => {
     if (!res.writableEnded) res.destroy();
     return;
   }
-  let input: string;
+  let input: unknown;
   try {
     ({ input } = JSON.parse(Buffer.concat(chunks).toString()));
   } catch {
     res.writeHead(400, { "Content-Type": "application/json" })
        .end(JSON.stringify({ error: "Invalid JSON" }));
+    return;
+  }
+  // The input is a title link or id from a supported site; scrapeTitle reduces
+  // it to (site, id) through the allow-list in lib/sources.ts and fetches only
+  // the address rebuilt from that — so whoever holds the secret still cannot
+  // point this box at an arbitrary URL.
+  if (typeof input !== "string") {
+    res.writeHead(400, { "Content-Type": "application/json" })
+       .end(JSON.stringify({ error: "Missing 'input' string", code: "BAD_INPUT" }));
     return;
   }
 

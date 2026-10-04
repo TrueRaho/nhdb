@@ -25,83 +25,8 @@ export function daysAgoLabel(d: number | null, style: "long" | "short" = "long")
   return `${(d / 365).toFixed(1)} years ago`
 }
 
-// Parse "177013", "#177013" or an nhentai.net/g/<id> URL into a numeric hashtag.
-// Lives here (not in scraper.ts) so client components can use it without
-// pulling cheerio/playwright into the bundle.
-export function extractHashtag(input: string): number | null {
-  const t = input.trim()
-  if (/^\d+$/.test(t)) return parseInt(t, 10)
-  const urlMatch = t.match(/nhentai\.net\/g\/(\d+)/)
-  if (urlMatch) return parseInt(urlMatch[1], 10)
-  const hashMatch = t.match(/^#?(\d+)$/)
-  if (hashMatch) return parseInt(hashMatch[1], 10)
-  return null
-}
-
 // A hashtag as the database stores it: a positive integer that fits the INT4
 // column. For ids arriving from the client, where anything can show up.
 export function isHashtag(v: unknown): v is number {
   return typeof v === "number" && Number.isInteger(v) && v > 0 && v <= 2_147_483_647
-}
-
-// Pull every gallery id out of an arbitrary blob of text, in paste order,
-// deduped. This is the *batch* counterpart to extractHashtag: the add box is
-// filled by pasting far more often than by typing, and iOS Safari's "Copy
-// Links" (tab overview → long-press "N Tabs" → Copy Links) dumps every open
-// tab at once, interleaving page TITLES with the URLs. Splitting such a dump
-// into tokens and running extractHashtag over each one turned every word of
-// every title into its own bogus entry.
-//
-// A /g/<id> URL is unambiguous and always counts, whatever the id's length.
-// Bare numbers are trusted only as far as their company allows: when every
-// token is a number the box was typed by hand, so any digit run counts; as soon
-// as prose is mixed in it is a paste, where stray digits are page counts, years
-// and chapter numbers, so only id-shaped runs (5-7 digits) survive. Consequence:
-// a pre-10000 gallery inside a paste has to arrive as a URL, not a bare number.
-export function parseInputs(text: string): number[] {
-  const tokens = text.split(/[\s,]+/).filter(Boolean)
-  const typedByHand = tokens.every((t) => /^#?\d+$/.test(t))
-  const bare = typedByHand ? /^#?(\d+)$/ : /^#?(\d{5,7})$/
-  const ids: number[] = []
-  const seen = new Set<number>()
-
-  const push = (raw: string) => {
-    const n = parseInt(raw, 10)
-    if (!Number.isSafeInteger(n) || n <= 0 || seen.has(n)) return
-    seen.add(n)
-    ids.push(n)
-  }
-
-  // One left-to-right pass over the tokens keeps the output in paste order. A
-  // URL is matched anywhere inside its token, so surrounding punctuation
-  // (markdown link syntax, a trailing slash, quotes) is fine.
-  for (const token of tokens) {
-    // matchAll, not match: a share-sheet shortcut that appends links without a
-    // separator hands over one token holding several URLs back to back
-    // ("…/g/837933/https://nhentai.net/g/177013/"), and taking only the first
-    // match would silently drop every title but one.
-    const urls = [...token.matchAll(/nhentai\.net\/g\/(\d+)/g)]
-    if (urls.length > 0) {
-      for (const u of urls) push(u[1])
-      continue
-    }
-    const m = token.match(bare)
-    if (m) push(m[1])
-  }
-  return ids
-}
-
-// Query param that queues titles straight from a link: `/?add=177013,895243`.
-// Kept short because it is typed into an iOS Shortcut by hand.
-export const ADD_PARAM = "add"
-
-// Ids carried by an `?add=` deep link, given a location.search string.
-// URLSearchParams does the percent-decoding, so the param may hold bare ids, a
-// comma/space separated list, or whole encoded nhentai URLs — parseInputs
-// treats all three the same way it treats a paste. Repeats (`?add=1&add=2`) are
-// joined rather than dropped, since a share-sheet shortcut may append instead
-// of building one value.
-export function readAddParam(search: string): number[] {
-  const raw = new URLSearchParams(search).getAll(ADD_PARAM).join(" ")
-  return raw ? parseInputs(raw) : []
 }

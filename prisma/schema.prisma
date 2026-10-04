@@ -9,12 +9,20 @@ datasource db {
 
 model Title {
   userId      String    @map("user_id") @db.VarChar(64)
+  // Per-user key. For nhentai titles it IS the gallery id (< 1e9); titles from
+  // the other sites get a surrogate >= 1e9 from titles_foreign_hashtag_seq.
+  // A CHECK ties this to (source, source_id) — see migration 9_title_sources.
   hashtag     Int
+  // Which site the title comes from (lib/sources.ts SOURCE_IDS) and its
+  // canonical id there. Unique per user; written only by upsertScrapedTitle.
+  source      String    @db.VarChar(16)
+  sourceId    String    @map("source_id") @db.VarChar(128)
   titleName   String    @map("title_name") @db.VarChar(255)
   alterName   String?   @map("alter_name") @db.VarChar(255)
   imageLink   String    @map("image_link") @db.VarChar(255)
   pages       Int
-  uploadedAt  DateTime  @map("uploaded_at") @db.Date
+  // Null when the site does not say — never fabricated.
+  uploadedAt  DateTime? @map("uploaded_at") @db.Date
   createdAt   DateTime  @default(now()) @map("created_at")
   readCount   Int       @default(0) @map("read_count")
   lastReadAt  DateTime? @map("last_read_at")
@@ -31,6 +39,7 @@ model Title {
   readLogs   ReadLog[]
 
   @@id([userId, hashtag])
+  @@unique([userId, source, sourceId])
   @@index([userId, createdAt(sort: Desc)])
   @@index([userId, lastReadAt(sort: Desc)])
   @@index([userId, readCount(sort: Desc)])

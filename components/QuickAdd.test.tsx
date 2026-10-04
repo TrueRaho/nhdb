@@ -7,8 +7,11 @@ import { QuickAdd } from "./QuickAdd";
 // too — a partial object would let a render bug hide behind a lenient mock.
 vi.mock("../app/actions", () => ({
   findExistingTitlesAction: vi.fn(async () => []),
-  commitScrapedAction: vi.fn(async (raw: { hashtag: number }, alterName?: string) => ({
-    hashtag: raw.hashtag,
+  commitScrapedAction: vi.fn(async (raw: { source: string; source_id: string }, alterName?: string) => ({
+    // The key the database hands out: nhentai's id, else a fresh one.
+    hashtag: raw.source === "nhentai" ? Number(raw.source_id) : 1_000_000_001,
+    source: raw.source,
+    sourceId: raw.source_id,
     titleName: "PenXjbs",
     alterName: alterName?.trim() ?? "",
     imageLink: "",
@@ -27,14 +30,15 @@ vi.mock("../app/actions", () => ({
 }));
 import { commitScrapedAction, findExistingTitlesAction, updateAlterNameAction } from "../app/actions";
 
-const scraped = (hashtag: number) => ({
-  hashtag,
+const scraped = (hashtag: number, source = "nhentai") => ({
+  source,
+  source_id: String(hashtag),
   title_name: "PenXjbs",
   image_link: "",
   pages: 225,
   uploaded_at: "2016-10-18",
-  tags: [{ name: "ahegao", link: "", total_works: 1 }],
-  artists: [{ name: "penqech", link: "", total_works: 1 }],
+  tags: [{ name: "ahegao", link: "https://nhentai.net/tag/ahegao/", total_works: 1 }],
+  artists: [{ name: "penqech", link: "https://nhentai.net/artist/penqech/", total_works: 1 }],
   groups: [],
   characters: [],
   parodies: [],
@@ -42,6 +46,8 @@ const scraped = (hashtag: number) => ({
 
 const existingItem = (hashtag: number, alterName = "") => ({
   hashtag,
+  source: "nhentai",
+  sourceId: String(hashtag),
   titleName: "PenXjbs",
   alterName,
   imageLink: "",
@@ -76,6 +82,8 @@ function stubScrape(...responses: ({ ok: true } | { ok: false; status: number; e
   return fn;
 }
 
+const nh = (id: number) => ({ source: "nhentai" as const, id: String(id) });
+
 const nameField = () => screen.getByLabelText(/alternative name/i) as HTMLInputElement;
 const button = () => screen.getAllByRole("button").at(-1) as HTMLButtonElement;
 
@@ -90,7 +98,7 @@ describe("QuickAdd — title already in the collection", () => {
   it("skips the scraper entirely and leaves the name field empty", async () => {
     vi.mocked(findExistingTitlesAction).mockResolvedValueOnce([existingItem(661586, "Hard training") as never]);
     const fetchFn = stubScrape({ ok: true });
-    render(<QuickAdd hashtag={661586} />);
+    render(<QuickAdd titleRef={nh(661586)} />);
 
     await waitFor(() => expect(screen.getByText(/already in collection/i)).toBeTruthy());
     // The whole point of the uncached collection check: no scrape for a known id.
@@ -104,7 +112,7 @@ describe("QuickAdd — title already in the collection", () => {
   it("cannot submit an untouched field, so a stored name is never wiped", async () => {
     vi.mocked(findExistingTitlesAction).mockResolvedValueOnce([existingItem(661586, "Hard training") as never]);
     stubScrape({ ok: true });
-    render(<QuickAdd hashtag={661586} />);
+    render(<QuickAdd titleRef={nh(661586)} />);
     await waitFor(() => expect(screen.getByText(/already in collection/i)).toBeTruthy());
 
     expect(button().disabled).toBe(true);
@@ -115,7 +123,7 @@ describe("QuickAdd — title already in the collection", () => {
   it("saves an edited name through updateAlterName, not a re-commit", async () => {
     vi.mocked(findExistingTitlesAction).mockResolvedValueOnce([existingItem(661586, "old") as never]);
     stubScrape({ ok: true });
-    render(<QuickAdd hashtag={661586} />);
+    render(<QuickAdd titleRef={nh(661586)} />);
     await waitFor(() => expect(screen.getByText(/already in collection/i)).toBeTruthy());
     expect(nameField().value).toBe("");
 
@@ -136,7 +144,7 @@ describe("QuickAdd — title already in the collection", () => {
 describe("QuickAdd — new title", () => {
   it("scrapes, previews, and commits the name in the same call", async () => {
     stubScrape({ ok: true });
-    render(<QuickAdd hashtag={177013} />);
+    render(<QuickAdd titleRef={nh(177013)} />);
 
     await waitFor(() => expect(screen.getAllByText("PenXjbs").length).toBeGreaterThan(0));
     expect(button().textContent).toMatch(/add to collection/i);
@@ -150,16 +158,16 @@ describe("QuickAdd — new title", () => {
     await act(async () => button().click());
 
     // One round trip creates the row AND names it.
-    expect(commitScrapedAction).toHaveBeenCalledWith(expect.objectContaining({ hashtag: 177013 }), "PenEbir");
+    expect(commitScrapedAction).toHaveBeenCalledWith(expect.objectContaining({ source: "nhentai", source_id: "177013" }), "PenEbir");
     await waitFor(() => expect(screen.getByText(/saved as "PenEbir"/i)).toBeTruthy());
   });
 
   it("commits with no name when the field is left empty", async () => {
     stubScrape({ ok: true });
-    render(<QuickAdd hashtag={177013} />);
+    render(<QuickAdd titleRef={nh(177013)} />);
     await waitFor(() => expect(screen.getAllByText("PenXjbs").length).toBeGreaterThan(0));
     await act(async () => button().click());
-    expect(commitScrapedAction).toHaveBeenCalledWith(expect.objectContaining({ hashtag: 177013 }), "");
+    expect(commitScrapedAction).toHaveBeenCalledWith(expect.objectContaining({ source: "nhentai", source_id: "177013" }), "");
     await waitFor(() => expect(screen.getByText(/saved to collection/i)).toBeTruthy());
   });
 
@@ -172,7 +180,7 @@ describe("QuickAdd — new title", () => {
       await gate;
       return { ok: true, status: 200, json: async () => ({ scraped: scraped(177013), via: "impit" }) } as unknown as Response;
     }));
-    render(<QuickAdd hashtag={177013} />);
+    render(<QuickAdd titleRef={nh(177013)} />);
 
     await act(async () => {
       const input = nameField();
@@ -189,7 +197,7 @@ describe("QuickAdd — new title", () => {
 describe("QuickAdd — failures", () => {
   it("treats a 4xx as final and does not retry", async () => {
     const fetchFn = stubScrape({ ok: false, status: 404, error: "Title #177013 not found on nhentai (404)" });
-    render(<QuickAdd hashtag={177013} />);
+    render(<QuickAdd titleRef={nh(177013)} />);
     await waitFor(() => expect(screen.getByText(/not found on nhentai/i)).toBeTruthy());
     expect(fetchFn).toHaveBeenCalledTimes(1);
     expect(button().disabled).toBe(true); // nothing to save
@@ -198,7 +206,7 @@ describe("QuickAdd — failures", () => {
   it("retries a transient 5xx and succeeds on a later attempt", async () => {
     vi.useFakeTimers();
     const fetchFn = stubScrape({ ok: false, status: 503 }, { ok: true });
-    render(<QuickAdd hashtag={177013} />);
+    render(<QuickAdd titleRef={nh(177013)} />);
 
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     await act(async () => { await vi.advanceTimersByTimeAsync(4_000); });
@@ -212,8 +220,47 @@ describe("QuickAdd — failures", () => {
   it("still tries to scrape when the collection check itself fails", async () => {
     vi.mocked(findExistingTitlesAction).mockRejectedValueOnce(new Error("db down"));
     const fetchFn = stubScrape({ ok: true });
-    render(<QuickAdd hashtag={177013} />);
+    render(<QuickAdd titleRef={nh(177013)} />);
     await waitFor(() => expect(screen.getAllByText("PenXjbs").length).toBeGreaterThan(0));
     expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("QuickAdd — other sites", () => {
+  it("checks the collection and scrapes by the title's ref, and shows its site", async () => {
+    const fetchFn = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ scraped: { ...scraped(1234567, "hitomi"), tags: [], artists: [] }, via: "impit" }),
+    }) as unknown as Response);
+    vi.stubGlobal("fetch", fetchFn);
+    render(<QuickAdd titleRef={{ source: "hitomi", id: "1234567" }} />);
+
+    expect(screen.getByText("hitomi 1234567")).toBeTruthy();
+    await waitFor(() => expect(screen.getAllByText("PenXjbs").length).toBeGreaterThan(0));
+    expect(findExistingTitlesAction).toHaveBeenCalledWith(["hitomi:1234567"]);
+    const [, init] = fetchFn.mock.calls[0] as unknown as [string, { body: string }];
+    expect(JSON.parse(init.body)).toEqual({ input: "hitomi:1234567", persist: false });
+
+    await act(async () => button().click());
+    expect(commitScrapedAction).toHaveBeenCalledWith(expect.objectContaining({ source: "hitomi", source_id: "1234567" }), "");
+    await waitFor(() => expect(screen.getByText(/saved to collection/i)).toBeTruthy());
+  });
+
+  it("renames a known title from another site by the key it is stored under", async () => {
+    vi.mocked(findExistingTitlesAction).mockResolvedValueOnce([
+      { ...existingItem(1_000_000_002, "old"), source: "hitomi", sourceId: "1234567" } as never,
+    ]);
+    stubScrape({ ok: true });
+    render(<QuickAdd titleRef={{ source: "hitomi", id: "1234567" }} />);
+    await waitFor(() => expect(screen.getByText(/already in collection/i)).toBeTruthy());
+    await act(async () => {
+      const input = nameField();
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      setter.call(input, "new name");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => button().click());
+    expect(updateAlterNameAction).toHaveBeenCalledWith(1_000_000_002, "new name");
   });
 });

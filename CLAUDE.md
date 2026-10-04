@@ -6,9 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-nhdb is a personal multi-user web app that catalogs an nhentai collection. It
-scrapes title metadata from nhentai, stores it in Neon Postgres via Prisma, and
-serves a filterable/sortable gallery plus reading stats. Next.js 16 App Router,
+nhdb is a personal multi-user web app that catalogs a doujin collection. It
+scrapes title metadata from nhentai, E-Hentai, Hitomi, HentaiFox, IMHentai,
+Pururin and Hentai2Read, stores it in Neon Postgres via Prisma, and serves a
+filterable/sortable gallery plus reading stats. Next.js 16 App Router,
 React 19, Tailwind v4, pnpm.
 
 ## Commands
@@ -71,7 +72,8 @@ it from the session outside `"use cache"`, never from client input. Titles use
 `(user_id, hashtag)` keys; entities and joins belong to the same user, enforced by
 composite foreign keys. Statistics, affinity and ghost tags are per collection.
 Cache tags come from `lib/cache-tags.ts` and include the owner. Browser scrape
-queues use `nhdb.scrapeJobs.v2:<userId>` and reset when accounts change.
+queues use `nhdb.scrapeJobs.v3:<userId>` (keyed by `source:id`) and reset when
+accounts change.
 
 Migration 6 parks legacy rows under `nhdb:unclaimed`; `pnpm claim <auth-user-id>`
 transfers them atomically into an empty account. Restart the app after claiming
@@ -110,6 +112,56 @@ Three things here are load-bearing and easy to undo:
   kept secret is carried over by URL so a reorder preserves it while repointing a
   row at another machine does not.
 
+### Title sources (migration `9_title_sources`)
+
+A title comes from one of seven sites. `lib/sources.ts` is the registry and the
+**allow-list**: per site, the gallery-page URL patterns, the canonical id
+(`normalizeId` — nhentai/Hitomi/HentaiFox/IMHentai/Pururin a number, E-Hentai
+`gid/token`, Hentai2Read a slug), the reader URL rebuilt from the id, and the
+image/link hosts a stored title may point at. It is client-safe; the paste box,
+`?add=`, `/add/<link>`, `/api/scrape` and the scraper host all parse through it.
+The string form of a title is its ref, `source:id` (`refKey`).
+
+**`hashtag` is still the key everywhere** (joins, read log, cache tags, swipe,
+URLs) — only its meaning split: an nhentai title's hashtag IS its gallery id
+(< 1e9, so every pre-existing row, link and bookmark is unchanged); any other
+site's title gets a surrogate ≥ 1e9 from `titles_foreign_hashtag_seq` on its
+first save. `(user_id, source, source_id)` is unique and is what the add flow
+dedupes on (`getTitlesByRefs`, uncached like `getTitlesByHashtags`). A CHECK
+ties the halves together. Consequences worth knowing:
+
+- A scraped-but-unsaved title from another site has **no hashtag** (`Item.hashtag`
+  is 0 in `scrapedToItem`). Client code that needs identity before a save uses
+  `itemKey`/refs, never the hashtag; the key a title is filed under is the one
+  `upsertScrapedTitle` returns, never anything in the payload.
+- Show a title with `itemLabel` ("#177013" stays as it was; "hitomi 1234567"),
+  link it with `itemUrl`, seed procedural art with `coverSeed` (nhentai keeps its
+  hashtag seed; others seed from the ref so preview and saved match).
+- The site list is **not** a DB constraint — adding a site is an entry in
+  `SOURCES`, an adapter in `lib/scrapers/`, its cover host in `next.config.ts`
+  (a test keeps that list equal to `SOURCES[*].imageHosts`), no migration.
+
+**Only titles get stored** — three independent gates, see SECURITY.md: the
+input allow-list; the scraper fetching only the address rebuilt from the id
+(and refusing off-host redirects and pages without title markup); and the write
+boundary `lib/scrape-payload.ts` (`parseScrapePayload`), which re-derives every
+payload — known source, canonical id, cover on the site's image hosts, entity
+links on the site, bounded strings/counts. `/api/scrape` runs it on a host's
+answer too and refuses an answer about a different title. It also reads the
+legacy nhentai-only shape (`hashtag`, no `source`) older hosts send.
+
+Entities are **shared across sites by name**: the boundary folds names to
+lowercase NFKC (nhentai's vocabulary already was), so "Big Breasts" from Pururin
+and "female:big breasts" from E-Hentai are nhentai's "big breasts". Two
+consequences in `batchUpsertEntities`: a stored link is whichever site wrote it
+last (links are write-only), and `total_works` is upserted as
+`COALESCE(NULLIF(new, 0), current)` because only some sites print counts — a 0
+means "this site did not say" and must not clobber nhentai's real count.
+
+`uploaded_at` is **nullable**: several sites print no upload date, and dates are
+never fabricated. `Item.uploadedAt` is `number | null`; the upload-date sort puts
+nulls last.
+
 ### Caching contract (the part that's easy to break)
 
 Read functions in `lib/titles.ts` are cached with `"use cache"` +
@@ -134,8 +186,9 @@ the DB session's `TimeZone`, and `read_at` is formatted to an ISO string *in
 SQL* (the driver would otherwise parse a naive timestamp in the server
 process's zone).
 
-Deliberately **uncached**: `getTitlesByHashtags` — the add flow uses it to
-decide whether to skip a re-scrape, so it must see live DB state.
+Deliberately **uncached**: `getTitlesByHashtags` and `getTitlesByRefs` — the add
+flow uses them to decide whether to skip a re-scrape, so they must see live DB
+state.
 
 `getTagAffinity` deliberately reuses the **`dataset`** tag instead of getting
 its own. Every write that can move a tag co-occurrence count (commit, delete)
@@ -259,8 +312,9 @@ categories are split the same way** (`splitAliases` in `lib/scraper.ts`), so a
 title lists each name separately and a half that also exists on its own stops
 being a duplicate row.
 
-Know what that costs before "fixing" it: the separator does **not** mean the
-same thing everywhere. For artists and groups the halves really are separate
+This is the nhentai adapter's rule (`lib/scrapers/nhentai.ts`); the other sites
+list aliases as separate entities already. Know what it costs before "fixing"
+it: the separator does **not** mean the same thing everywhere. For artists and groups the halves really are separate
 credits. For parodies it carries one work's Japanese and English titles, so
 `penvxcz | quill cuoi` deliberately becomes two parody rows for one
 franchise. Uniform tables were chosen over nhentai's semantics on purpose — do
@@ -276,13 +330,21 @@ next re-scrape's upsert.
 
 ### Two-layer scraper, hosted off Vercel
 
-`lib/scraper.ts` scrapes in two layers:
+`lib/scraper.ts` is the orchestrator; what to fetch and how to read it is one
+adapter per site in `lib/scrapers/` (`ADAPTERS`). It scrapes in two layers:
 
-1. **impit** — TLS/HTTP2-impersonating HTTP client that passes nhentai's
-   Cloudflare fingerprint gate without a browser (~200 ms). Fast path.
+1. **impit** — TLS/HTTP2-impersonating HTTP client that passes Cloudflare's
+   fingerprint gate without a browser (~200 ms). Fast path, and the only path
+   for the JSON sources (E-Hentai's `gdata` API, Hitomi's gallery script).
 2. **Playwright** (playwright-extra + stealth) — a warm singleton browser used
-   *only* when impit is challenged. The response reports `via: "impit" |
-   "fallback"`.
+   *only* when impit is challenged on an HTML title page (`browserReady`). The
+   response reports `via: "impit" | "fallback"`.
+
+Every parse is passed through `parseScrapePayload` before it leaves the scraper
+(`checked`), so markup drift fails at the scraper with its reason. Only
+nhentai's adapter is battle-tested against the live site; the others are built
+from reference implementations and pinned by fixtures (`lib/scrapers/sites.test.ts`)
+— see SCRAPER.md "Verification status".
 
 Both are lazily imported so proxy-mode Vercel never loads their native binaries;
 they're also listed in `serverExternalPackages` in `next.config.ts`.
@@ -340,11 +402,11 @@ migrations against `DATABASE_URL_UNPOOLED` — advisory locks don't work through
 Neon's PgBouncer pooler, so migrations need the direct connection.
 
 **Naming trap**: prisma replays migrations in *lexicographic* directory order,
-and the existing dirs are integer-prefixed (`0_`–`4_`). `10_` sorts before
+and the existing dirs are integer-prefixed (`0_`–`9_`). `10_` sorts before
 `2_`, and a timestamp prefix (`2026…`) sorts before `3_` — either would replay
-out of order on a fresh database. Name new migrations `5_`–`9_`; before a tenth
-exists, rename+re-baseline (renames desync `_prisma_migrations`, so that is a
-deliberate maintenance task, not a drive-by fix).
+out of order on a fresh database. `9_` was the last single-digit slot: before
+the next migration, rename+re-baseline (renames desync `_prisma_migrations`, so
+that is a deliberate maintenance task, not a drive-by fix).
 
 **Concurrency contract**: the stat triggers (migration 3) recompute
 `tags.title_count` with `COUNT(*)` under READ COMMITTED — concurrent writing
@@ -377,18 +439,22 @@ first making the triggers delta-based.
   phone tab dump queues dozens at once, and firing them together floods the single
   ngrok tunnel or spawns dozens of parallel Playwright launches on the free Render box.
 - Two ways titles arrive from a phone, deliberately separate:
-  - **`/add/<id>`** (`app/add/[input]/page.tsx` → `components/QuickAdd.tsx`) is
-    the share-sheet target: **one** title, with its alt-name field, and nothing
-    else. It is its own route segment so Next's code splitting keeps the
-    gallery, dataset and job pool off it — verified by the client-reference
-    manifest, which lists only `QuickAdd.tsx`. Nothing links here; the URL is
+  - **`/add/<link>`** (`app/add/[...input]/page.tsx` → `components/QuickAdd.tsx`)
+    is the share-sheet target: **one** title from any supported site (or a bare
+    nhentai id), with its alt-name field, and nothing else. It is its own
+    route segment so Next's code splitting keeps the gallery, dataset and job
+    pool off it — verified by the client-reference manifest, whose chunks for
+    this page are `QuickAdd.tsx`'s alone (it may import the small client-safe
+    `lib/sources`, `lib/mappers`, `lib/data`). Nothing links here; the URL is
     the only way in. Keep it that way: importing anything from `NhdbApp`'s tree
     (or adding a prefetching `<Link>`) silently undoes the whole point.
   - **`/?add=177013,895243`** (`DeepLinkAdd` in `NhdbApp`) is the batch path for
-    the bookmarklet and pasted tab dumps: opens the add modal, queues the ids,
-    strips the param so a reload can't re-queue them.
-  `parseInputs` (`lib/utils.ts`) backs the batch path and the paste box — it
-  takes whole "Copy Links" tab dumps, ids and prose mixed.
+    the bookmarklet and pasted tab dumps: opens the add modal, queues the titles
+    (ids or encoded links from any supported site), strips the param so a
+    reload can't re-queue them.
+  `parseInputs` (`lib/sources.ts`) backs the batch path and the paste box — it
+  takes whole "Copy Links" tab dumps, links from every supported site, ids and
+  prose mixed, and keeps only title links.
 - **`/swipe`** (`app/swipe/page.tsx` → `components/Swipe.tsx`, rules in
   `lib/swipe.ts`) goes through the titles that have **no alter name**, one
   full-screen cover at a time, reshuffled on every visit (the deck is fetched as
@@ -396,8 +462,8 @@ first making the triggers delta-based.
   a title — only with a name typed in, saved through `updateAlterNameAction`,
   which is also what keeps it out of later decks. Left puts it on a deletion
   list; down brings it back `POSTPONE_GAP` cards later; up is not assigned yet.
-  A tap opens nhentai **without** `markRead`: a pass over a few hundred unnamed
-  titles would otherwise flood the reading stats. The deletion list is a list
+  A tap opens the title on its own site **without** `markRead`: a pass over a
+  few hundred unnamed titles would otherwise flood the reading stats. The deletion list is a list
   of intentions, so it lives in localStorage per account
   (`nhdb.swipe.trash.v1:<userId>`), not in the database; `deleteTitlesAction`
   empties it with ONE `DELETE` (the serialized-write contract). Like `/add/<id>`

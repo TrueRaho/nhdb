@@ -1,11 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { dbTitleToItem, type DbTitle } from "./mappers";
+import { dbTitleToItem, scrapedToItem, type DbTitle } from "./mappers";
+import { coverSeed, itemLabel, itemUrl } from "./data";
 
 // DbTitle is the full Prisma payload type; tests only exercise the fields the
 // mapper reads, so the fixture is built loose and cast once here.
 function row(overrides: Record<string, unknown> = {}): DbTitle {
   return {
     hashtag: 177013,
+    source: "nhentai",
+    sourceId: "177013",
     titleName: "PenXjbs",
     alterName: null,
     imageLink: "https://t.nhentai.net/x/cover.jpg",
@@ -62,5 +65,44 @@ describe("dbTitleToItem", () => {
     // 23h59m ago is still day 0 — the UI renders 0 as "today".
     const item = dbTitleToItem(row({ createdAt: new Date("2026-08-15T12:01:00Z") }));
     expect(item.addedAt).toBe(0);
+  });
+
+  it("keeps an unknown upload date unknown", () => {
+    expect(dbTitleToItem(row({ uploadedAt: null })).uploadedAt).toBeNull();
+  });
+
+  it("carries where the title comes from", () => {
+    const item = dbTitleToItem(row({ hashtag: 1_000_000_007, source: "hitomi", sourceId: "1234567" }));
+    expect(item).toMatchObject({ hashtag: 1_000_000_007, source: "hitomi", sourceId: "1234567" });
+    expect(itemLabel(item)).toBe("hitomi 1234567");
+    expect(itemUrl(item)).toBe("https://hitomi.la/galleries/1234567.html");
+  });
+});
+
+describe("scrapedToItem", () => {
+  const scraped = {
+    source: "hentaifox" as const,
+    source_id: "98765",
+    title_name: "T",
+    image_link: "",
+    pages: 3,
+    uploaded_at: null,
+    tags: [{ name: "a", link: "https://hentaifox.com/tag/a/", total_works: 0 }],
+    artists: [], groups: [], characters: [], parodies: [],
+  };
+
+  it("has no key yet for another site's title, and keeps nhentai's", () => {
+    expect(scrapedToItem(scraped).hashtag).toBe(0);
+    expect(scrapedToItem({ ...scraped, source: "nhentai", source_id: "177013" }).hashtag).toBe(177013);
+    expect(scrapedToItem(scraped).uploadedAt).toBeNull();
+    expect(scrapedToItem(scraped).tags).toEqual(["a"]);
+  });
+
+  it("paints the same cover art before and after the first save", () => {
+    const preview = scrapedToItem(scraped);
+    const saved = { ...preview, hashtag: 1_000_000_009 };
+    expect(coverSeed(preview)).toBe(coverSeed(saved));
+    // nhentai keeps the seed every existing cover was drawn from.
+    expect(coverSeed({ hashtag: 177013, source: "nhentai", sourceId: "177013" })).toBe(177013);
   });
 });

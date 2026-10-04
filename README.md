@@ -20,6 +20,17 @@ Each account has its own titles, tags, reading history, cache and browser scrape
 queue. Server actions and API handlers derive the owner from the authenticated
 session; the browser cannot select another collection.
 
+## Sources
+
+Titles can come from **nhentai, E-Hentai, Hitomi, HentaiFox, IMHentai, Pururin
+and Hentai2Read**. Paste gallery links from any of them into the add box (a
+whole tab dump is fine), share one to `/add/<link>`, or queue several with
+`/?add=<links>`; a bare number still means an nhentai id. Only title pages are
+accepted — search, tag and listing pages, and links to anywhere else, are
+ignored. Tags, artists, groups, parodies and characters from every site are
+folded into one lowercase vocabulary, so filters, stats, related tags and ghost
+tags work across sites. See `SCRAPER.md` for how each site is read.
+
 ## Scraper
 
 The database is shared; the scraper is not. Every account runs its own and
@@ -69,7 +80,10 @@ pnpm exec next build  # compile without applying database migrations
 Building needs `DATABASE_URL`, `NEON_AUTH_BASE_URL` and a cookie secret of at least
 32 characters. `pnpm build` **also deploys database migrations** before compiling;
 use the intended deployment branch. Migration 6 and the updated application must
-be deployed together because the old client uses single-user keys.
+be deployed together because the old client uses single-user keys; the same goes
+for migration 9 (title sources), since the new code writes `source`/`source_id`.
+Scraper hosts should be updated too — an older host still serves nhentai, but
+answers other sites' links with an error the app reports as "older version".
 
 ## Scraper
 

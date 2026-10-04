@@ -8,7 +8,8 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { NhCover } from "./Primitives";
 import { daysAgoLabel } from "../lib/utils";
-import type { Item } from "../lib/data";
+import { itemLabel, itemUrl, type Item } from "../lib/data";
+import { SOURCES } from "../lib/sources";
 import type { SimilarItem } from "../lib/titles";
 import { getSimilarAction, getTitleAction } from "../app/actions";
 import { GhostTagChips } from "./GhostTags";
@@ -144,7 +145,7 @@ function DetailModalInner({ item, onClose, onTagClick, onDelete, onRead, onOpen,
             <NhCover item={item} size="large" />
           </div>
           <div className="flex-1 flex flex-col gap-1 min-w-0">
-            <div className="font-mono text-[10px] tracking-wider text-nh-accent">#{item.hashtag}</div>
+            <div className="font-mono text-[10px] tracking-wider text-nh-accent">{itemLabel(item)}</div>
             <div
               className="font-display font-bold text-nh-text-1"
               style={{ fontSize: 19, lineHeight: 1.15, letterSpacing: "-0.02em", textWrap: "balance" as never }}
@@ -254,21 +255,21 @@ function DetailModalInner({ item, onClose, onTagClick, onDelete, onRead, onOpen,
           disabled={refreshing}
           variant="outline"
           size="icon"
-          title="re-scrape metadata from nhentai"
+          title={`re-scrape metadata from ${SOURCES[item.source].name}`}
           className="size-11 rounded-[10px] border bg-nh-input shrink-0"
           style={{ borderColor: "var(--nh-border-strong)" }}
         >
           <RefreshCw className={`size-4 text-nh-text-3 ${refreshing ? "animate-spin" : ""}`} />
         </Button>
         <a
-          href={`https://nhentai.net/g/${item.hashtag}/`}
+          href={itemUrl(item)}
           target="_blank"
           rel="noopener noreferrer"
           onClick={onRead}
           className="flex-1 h-11 rounded-[10px] bg-nh-accent text-[#0a0a0a] flex items-center justify-center gap-2 font-display font-extrabold text-sm no-underline"
           style={{ letterSpacing: "-0.01em" }}
         >
-          <span>read on nhentai</span>
+          <span>read on {SOURCES[item.source].name}</span>
           <ExternalLink className="size-3.5" strokeWidth={2.2} />
         </a>
       </div>

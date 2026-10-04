@@ -18,11 +18,12 @@ const StatsView = dynamic(() => import("./Stats").then((m) => ({ default: m.Stat
 const NhdbDesktop = dynamic(() => import("./Desktop").then((m) => ({ default: m.NhdbDesktop })), { ssr: false });
 
 import { ScrapeJobsProvider, useScrapeJobs } from "./ScrapeJobsProvider";
-import { ADD_PARAM, readAddParam } from "../lib/utils";
+import { ADD_PARAM, readAddParam, refKey } from "../lib/sources";
+import { itemKey } from "../lib/data";
 
-// Handles `/?add=177013,895243` — the entry point for the iOS share-sheet
-// shortcut and the nhentai bookmarklet, which is how titles arrive from a phone
-// without retyping codes. Renders nothing; it only exists to sit *inside*
+// Handles `/?add=177013,895243` (or encoded gallery links from any supported
+// site) — the entry point for the iOS share-sheet shortcut and the
+// bookmarklet, which is how titles arrive from a phone without retyping codes. Renders nothing; it only exists to sit *inside*
 // ScrapeJobsProvider, since NhdbApp itself is the component that mounts it.
 function DeepLinkAdd({ onOpen }: { onOpen: () => void }) {
   const { startScrape } = useScrapeJobs();
@@ -33,8 +34,8 @@ function DeepLinkAdd({ onOpen }: { onOpen: () => void }) {
     if (handled.current) return;
     handled.current = true;
 
-    const ids = readAddParam(window.location.search);
-    if (ids.length === 0) return;
+    const refs = readAddParam(window.location.search);
+    if (refs.length === 0) return;
 
     // Drop the param before scraping: leaving it in the address bar means a
     // pull-to-refresh (or a restored tab) re-queues the same batch later.
@@ -43,7 +44,7 @@ function DeepLinkAdd({ onOpen }: { onOpen: () => void }) {
     window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
 
     onOpen();
-    void startScrape(ids.join(","));
+    void startScrape(refs.map(refKey).join(","));
   }, [onOpen, startScrape]);
   return null;
 }
@@ -277,14 +278,14 @@ export default function NhdbApp({
     });
   };
 
-  // Re-scrape the open title from nhentai and refresh it in place.
+  // Re-scrape the open title from its own site and refresh it in place.
   const onRefresh = async () => {
     if (!detailItem) return;
     const hashtag = detailItem.hashtag;
     const res = await fetch("/api/scrape", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ input: String(hashtag), persist: false }),
+      body: JSON.stringify({ input: itemKey(detailItem), persist: false }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: res.statusText }));

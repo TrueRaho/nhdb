@@ -1,16 +1,19 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import type { Item } from "../lib/data";
-import type { ScrapeResult, ScrapeVia } from "../lib/scraper";
-import { parseInputs } from "../lib/utils";
+import { itemKey, itemLabel, type Item } from "../lib/data";
+import type { ScrapeVia } from "../lib/scraper";
+import { scrapedRef, type ScrapeResult } from "../lib/scrape-payload";
+import { parseInputs, refKey } from "../lib/sources";
+import { scrapedToItem } from "../lib/mappers";
 import { commitScrapedAction, findExistingTitlesAction } from "../app/actions";
 
 export type ScrapeJobStatus = "scraping" | "ready" | "duplicate" | "error";
 
 export interface ScrapeJob {
-  // Stable id: `#<hashtag>` once known, else `raw:<input>` until the scrape
-  // resolves the hashtag. Used for dedup and React keys.
+  // Stable id: the title's `source:id` ref (lib/sources.ts refKey), known
+  // before the scrape — a title from another site has no hashtag until it is
+  // saved. Used for dedup and React keys.
   key: string;
   input: string;
   status: ScrapeJobStatus;
@@ -35,7 +38,9 @@ interface ScrapeJobsValue {
 }
 
 const ScrapeJobsContext = createContext<ScrapeJobsValue | null>(null);
-const storageKeyFor = (userId: string) => `nhdb.scrapeJobs.v2:${userId}`;
+// v3: jobs are keyed by `source:id` and carry the multi-site payload. A v2
+// list (nhentai-only shape) is left behind rather than half-migrated.
+const storageKeyFor = (userId: string) => `nhdb.scrapeJobs.v3:${userId}`;
 
 // Render's free tier cold-starts (~90s), past Vercel's 60s function budget — so
 // the first proxied scrape after idle comes back as a transient 5xx. We can't
@@ -80,26 +85,6 @@ function parseStoredJobs(stored: string): ScrapeJob[] {
     typeof (j as ScrapeJob).input === "string" &&
     JOB_STATUSES.includes((j as ScrapeJob).status),
   );
-}
-
-function itemFromScraped(scraped: ScrapeResult): Item {
-  const uploadedAt = Math.floor((Date.now() - new Date(scraped.uploaded_at).getTime()) / 86400000);
-  return {
-    hashtag: scraped.hashtag,
-    titleName: scraped.title_name,
-    alterName: "",
-    imageLink: scraped.image_link,
-    pages: scraped.pages,
-    tags: scraped.tags.map((t) => t.name),
-    artists: scraped.artists.map((a) => a.name),
-    groups: scraped.groups.map((g) => g.name),
-    characters: scraped.characters.map((c) => c.name),
-    parodies: scraped.parodies.map((p) => p.name),
-    uploadedAt,
-    addedAt: 0,
-    readCount: 0,
-    lastReadAt: null,
-  };
 }
 
 // Remount the entire queue when accounts change, including in-flight requests.
@@ -255,8 +240,8 @@ function UserScrapeJobsProvider({ userId, children }: { userId: string; children
         // response was in flight must win over the stale result.
         if (inFlight.current.get(placeholderKey) !== token) return;
         const { scraped, via } = (await res.json()) as { scraped: ScrapeResult; via?: ScrapeVia };
-        const realKey = `#${scraped.hashtag}`;
-        const item = itemFromScraped(scraped);
+        const realKey = refKey(scrapedRef(scraped));
+        const item = scrapedToItem(scraped);
         setJobs((prev) => {
           // If the placeholder was dismissed mid-flight, drop the result.
           if (!prev.some((j) => j.key === placeholderKey)) return prev;
@@ -366,14 +351,15 @@ function UserScrapeJobsProvider({ userId, children }: { userId: string; children
   const startScrape = useCallback(
     async (rawInput: string) => {
       // parseInputs handles the messy end of the input space (a pasted dump of
-      // every open tab, titles and all) and returns deduped ids in paste order.
-      const ids = parseInputs(rawInput);
-      if (ids.length === 0) return;
+      // every open tab, titles and all) and returns deduped title refs, from
+      // any supported site, in paste order. Everything else is dropped here.
+      const refs = parseInputs(rawInput);
+      if (refs.length === 0) return;
 
-      let existingByTag = new Map<number, Item>();
+      let existingByKey = new Map<string, Item>();
       try {
-        const existing = await findExistingTitlesAction(ids);
-        existingByTag = new Map(existing.map((i) => [i.hashtag, i]));
+        const existing = await findExistingTitlesAction(refs.map(refKey));
+        existingByKey = new Map(existing.map((i) => [itemKey(i), i]));
       } catch {}
 
       // Decide what each input becomes BEFORE touching state, against the
@@ -382,11 +368,13 @@ function UserScrapeJobsProvider({ userId, children }: { userId: string; children
       const currentByKey = new Map(jobsRef.current.map((j) => [j.key, j]));
       const upserts: ScrapeJob[] = [];
       const toScrape: { raw: string; key: string }[] = [];
-      for (const id of ids) {
-        const key = `#${id}`;
-        const input = String(id);
+      for (const ref of refs) {
+        // The ref is also what /api/scrape is sent: canonical, and parsed
+        // again (strictly) on the server.
+        const key = refKey(ref);
+        const input = key;
 
-        const known = existingByTag.get(id);
+        const known = existingByKey.get(key);
         if (known) {
           upserts.push({ key, input, status: "duplicate", item: known });
           continue;
@@ -452,17 +440,19 @@ function UserScrapeJobsProvider({ userId, children }: { userId: string; children
       try {
         saved.push(await commitScrapedAction(j.raw!));
       } catch (e) {
-        failed.push(new Error(`#${j.item?.hashtag ?? j.input}: ${e instanceof Error ? e.message : "save failed"}`));
+        failed.push(new Error(`${j.item ? itemLabel(j.item) : j.input}: ${e instanceof Error ? e.message : "save failed"}`));
       }
     }
-    const savedTags = new Set(saved.map((s) => s.hashtag));
+    // By ref, not hashtag: a preview of another site's title has no hashtag
+    // (0) until the save hands one out.
+    const savedKeys = new Set(saved.map(itemKey));
 
     // Saving clears the whole review list (duplicates and errors included), not
     // just the rows that were added. Two things stay: scrapes still in flight,
     // and "ready" rows whose commit failed (so their data isn't lost on a retry).
     setJobs((prev) =>
       prev.filter(
-        (j) => j.status === "scraping" || (j.status === "ready" && j.item != null && !savedTags.has(j.item.hashtag)),
+        (j) => j.status === "scraping" || (j.status === "ready" && j.item != null && !savedKeys.has(itemKey(j.item))),
       ),
     );
 

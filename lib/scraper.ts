@@ -1,44 +1,24 @@
-// nhentai scraper — two layers:
+// Title scraper — two layers, any supported site:
 //   1. impit  — a TLS/HTTP2-impersonating HTTP client that passes Cloudflare's
 //      fingerprint gate without a browser (fast, ~200ms, no process launch).
 //   2. Playwright — a real (stealth) browser kept as a WARM session and only
-//      used as a fallback when impit gets challenged/blocked.
+//      used as a fallback when impit gets challenged/blocked, for the sites
+//      whose title page is HTML behind Cloudflare.
+//
+// What to fetch and how to read it is per site (lib/scrapers/*): the input is
+// first reduced to a (site, id) pair by lib/sources.ts, and the request is
+// rebuilt from that pair — the address the user pasted is never fetched.
 //
 // Both impit and playwright-extra are imported lazily so Vercel (proxy mode)
 // never loads their native binaries when scrapeTitle is not actually called.
 
-import * as cheerio from "cheerio";
-import { extractHashtag } from "./utils";
+import { parseScrapePayload, scrapedRef, type ScrapeResult } from "./scrape-payload";
+import { parseTitleRef, refKey, refLabel, SOURCES, toTitleRef, type TitleRef } from "./sources";
+import { looksLikeChallenge, ScrapeError, type SiteAdapter, type SiteRequest } from "./scrapers/common";
+import { ADAPTERS } from "./scrapers";
 
-export { extractHashtag };
-
-export interface ScrapeEntity {
-  name: string;
-  link: string;
-  total_works: number;
-}
-
-// alter_name is intentionally absent: it is a user-managed custom name,
-// never collected by the scraper.
-export interface ScrapeResult {
-  hashtag: number;
-  title_name: string;
-  image_link: string;
-  pages: number;
-  uploaded_at: string;
-  tags: ScrapeEntity[];
-  artists: ScrapeEntity[];
-  groups: ScrapeEntity[];
-  characters: ScrapeEntity[];
-  parodies: ScrapeEntity[];
-}
-
-export class ScrapeError extends Error {
-  constructor(message: string, public code: "BAD_INPUT" | "CLOUDFLARE" | "NOT_FOUND" | "TIMEOUT") {
-    super(message);
-    this.name = "ScrapeError";
-  }
-}
+export { ScrapeError, looksLikeChallenge };
+export type { ScrapeEntity, ScrapeResult } from "./scrape-payload";
 
 // Which layer produced the result. "fallback" means impit was blocked and a
 // real browser had to take over — surfaced to the UI so the user knows.
@@ -53,145 +33,31 @@ const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
   "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
-// ---------------------------------------------------------------------------
-// Parsing (shared by both layers)
-// ---------------------------------------------------------------------------
-
-function parseCount(raw: string): number {
-  return parseInt(raw.replace(/,/g, ""), 10) || 0;
-}
-
-const NH_ORIGIN = "https://nhentai.net";
-
-// Entity links are stored in one absolute form. The markup carries relative
-// hrefs ("/artist/x/"), and a stored link you cannot open without separately
-// knowing the base is only half a link. Migration 5 backfilled the same shape.
-function absoluteLink(href: string): string {
-  if (!href) return "";
+// Where a response finally came from, once redirects were followed. A title
+// page that bounces to another host is not read — whatever is there, it is
+// not the title that was asked for.
+function onFetchHosts(finalUrl: string, site: SiteAdapter): boolean {
   try {
-    return new URL(href, NH_ORIGIN).toString();
+    return site.fetchHosts.includes(new URL(finalUrl).hostname.toLowerCase());
   } catch {
-    return href;
+    return false;
   }
 }
 
-// nhentai slugs a tag page by lowercasing and collapsing every run of
-// non-alphanumerics into a single dash ("quill ruva" → "quill-ruva").
-function slugify(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+function describe(ref: TitleRef): string {
+  return `${refLabel(ref)} on ${SOURCES[ref.source].name}`;
 }
 
-// nhentai keeps every alias of one entity on a single tag page with " | "
-// between the names, and every category is split the same way so the tables
-// stay uniform. What that means differs by category and is worth knowing before
-// changing it: for artists and groups the halves are genuinely separate credits
-// ("pensgfi | pencbfj"), while for parodies the separator carries one work's
-// Japanese and English titles, so "pokemon | pocket monsters" becomes two
-// parody rows for one franchise. Uniformity was chosen over nhentai's
-// semantics on purpose — see migration 5.
-type EntityKind = "artist" | "group" | "character" | "parody" | "tag";
-
-function splitAliases(entities: ScrapeEntity[], kind: EntityKind): ScrapeEntity[] {
-  const out: ScrapeEntity[] = [];
-  const seen = new Set<string>();
-  const push = (e: ScrapeEntity) => {
-    if (seen.has(e.name)) return;
-    seen.add(e.name);
-    out.push(e);
-  };
-
-  for (const e of entities) {
-    if (!e.name.includes("|")) {
-      push(e);
-      continue;
-    }
-    for (const raw of e.name.split("|")) {
-      const name = raw.trim();
-      if (!name) continue;
-      // The combined page's own href says nothing about a half, so derive it.
-      // total_works is carried over rather than zeroed: it is write-only data,
-      // and a zero would clobber a real count on an existing row's upsert.
-      push({ name, link: `${NH_ORIGIN}/${kind}/${slugify(name)}/`, total_works: e.total_works });
-    }
+// A gallery the site replaced answers with a permanent redirect to its
+// successor (IMHentai: /gallery/1200000/ → 301 → /gallery/1146802/). The parse
+// would file the successor's metadata under the id that was asked for, and a
+// later add of the successor would then be a second row for one title — so
+// the user is pointed at it instead.
+function assertSameTitle(finalUrl: string, ref: TitleRef): void {
+  const landed = parseTitleRef(finalUrl);
+  if (landed && landed.source === ref.source && landed.id !== ref.id) {
+    throw new ScrapeError(`${describe(ref)} now redirects to ${refLabel(landed)} — add that one instead`, "NOT_FOUND");
   }
-  return out;
-}
-
-// Exported for tests (lib/scraper.test.ts pins the parse against fixture HTML
-// so nhentai markup drift or a selector edit fails loudly); not part of the
-// module's public surface otherwise.
-export function parseInfoDiv(html: string, hashtag: number): ScrapeResult {
-  const $ = cheerio.load(html);
-  const info = $("#info");
-
-  const title_name = info.find("h1 .pretty").text().trim();
-  // An empty title means the selector no longer matches (markup drift) or the
-  // page served an empty #info — fail loudly rather than upsert a blank record
-  // that a later `rescrape --all` would overwrite good data with.
-  if (title_name === "") {
-    throw new ScrapeError(`parsed empty title for #${hashtag} — markup drift?`, "TIMEOUT");
-  }
-
-  const image_link =
-    $("div#cover img").attr("data-src") ||
-    $("div#cover img").attr("src") ||
-    "";
-
-  const pagesText = info
-    .find(".tag-container")
-    .filter((_, el) => $(el).text().trimStart().startsWith("Pages:"))
-    .find(".name")
-    .first()
-    .text();
-  const pages = parseCount(pagesText);
-
-  // Never fabricate an upload date: a missing/malformed datetime attr would
-  // otherwise get stamped as "today" and re-stamped on every re-scrape.
-  const datetimeAttr = (info.find("time").attr("datetime") ?? "").trim();
-  if (datetimeAttr === "" || Number.isNaN(Date.parse(datetimeAttr))) {
-    throw new ScrapeError(`missing or malformed upload date for #${hashtag}`, "TIMEOUT");
-  }
-  const uploaded_at = datetimeAttr.split("T")[0];
-
-  const extractEntities = (label: string): ScrapeEntity[] => {
-    const container = info
-      .find(".tag-container")
-      .filter((_, el) => $(el).text().trimStart().startsWith(label));
-
-    const entities: ScrapeEntity[] = [];
-    container.find("a.tag, a.tagchip").each((_, el) => {
-      const name = $(el).find(".name").text().trim();
-      const total_works = parseCount($(el).find(".count").text());
-      const href = $(el).attr("href") || "";
-      entities.push({ name, link: absoluteLink(href), total_works });
-    });
-    return entities;
-  };
-
-  return {
-    hashtag,
-    title_name,
-    image_link,
-    pages,
-    uploaded_at,
-    tags: splitAliases(extractEntities("Tags:"), "tag"),
-    artists: splitAliases(extractEntities("Artists:"), "artist"),
-    groups: splitAliases(extractEntities("Groups:"), "group"),
-    characters: splitAliases(extractEntities("Characters:"), "character"),
-    parodies: splitAliases(extractEntities("Parodies:"), "parody"),
-  };
-}
-
-// Cloudflare interstitials served instead of the real page.
-// Exported for tests only.
-export function looksLikeChallenge(html: string): boolean {
-  const head = html.slice(0, 4000).toLowerCase();
-  return (
-    head.includes("just a moment") ||
-    head.includes("attention required") ||
-    head.includes("cf-browser-verification") ||
-    head.includes("challenge-platform")
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -219,28 +85,32 @@ async function getImpit(): Promise<ImpitInstance> {
   return _impit;
 }
 
-// Returns a ScrapeResult on success, or null to signal "fall back to browser".
-// Throws ScrapeError only for a genuine 404 (which the browser would also hit).
-async function scrapeViaImpit(url: string, hashtag: number): Promise<ScrapeResult | null> {
+// Returns the site's answer, or null to signal "fall back to browser".
+// Throws ScrapeError only for a genuine 404 (which the browser would also hit)
+// or a redirect off the site.
+async function fetchViaImpit(site: SiteAdapter, req: SiteRequest, ref: TitleRef): Promise<string | null> {
   let res: Awaited<ReturnType<ImpitInstance["fetch"]>>;
   try {
     const impit = await getImpit();
-    res = await impit.fetch(url);
+    res = await impit.fetch(req.url, { method: req.method ?? "GET", headers: req.headers, body: req.body });
   } catch (e) {
-    console.warn(`[scraper] impit request failed for #${hashtag}, falling back:`, e instanceof Error ? e.message : e);
+    console.warn(`[scraper] impit request failed for ${describe(ref)}, falling back:`, e instanceof Error ? e.message : e);
     return null;
   }
 
-  if (res.status === 404) {
-    throw new ScrapeError(`Title #${hashtag} not found on nhentai (404)`, "NOT_FOUND");
+  if (res.status === 404 || res.status === 410) {
+    throw new ScrapeError(`Title ${describe(ref)} not found (${res.status})`, "NOT_FOUND");
   }
+  if (!onFetchHosts(res.url || req.url, site)) {
+    throw new ScrapeError(`${describe(ref)} redirected off the site — not a title page`, "NOT_FOUND");
+  }
+  assertSameTitle(res.url || req.url, ref);
 
-  const html = await res.text().catch(() => "");
-  if (res.status !== 200 || looksLikeChallenge(html) || !html.includes('id="info"')) {
+  const body = await res.text().catch(() => "");
+  if (res.status !== 200 || looksLikeChallenge(body) || !site.isComplete(body)) {
     return null;
   }
-
-  return parseInfoDiv(html, hashtag);
+  return body;
 }
 
 // ---------------------------------------------------------------------------
@@ -371,7 +241,7 @@ export async function closeScraper(): Promise<void> {
   }
 }
 
-async function scrapeViaBrowser(url: string, hashtag: number): Promise<ScrapeResult> {
+async function fetchViaBrowser(site: SiteAdapter, url: string, ref: TitleRef): Promise<string> {
   // Disarm any pending idle-close FIRST: a scrape starting just before the
   // timer fires must not have closeScraper() pull the browser out from under
   // its page.goto. The counter keeps a concurrent scrape's `finally` from
@@ -407,7 +277,14 @@ async function scrapeViaBrowser(url: string, hashtag: number): Promise<ScrapeRes
   }
 
   try {
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 });
+    const response = await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 });
+    if (response && (response.status() === 404 || response.status() === 410)) {
+      throw new ScrapeError(`Title ${describe(ref)} not found (${response.status()})`, "NOT_FOUND");
+    }
+    if (!onFetchHosts(page.url(), site)) {
+      throw new ScrapeError(`${describe(ref)} redirected off the site — not a title page`, "NOT_FOUND");
+    }
+    assertSameTitle(page.url(), ref);
 
     const title = await page.title();
     if (title.includes("Just a moment") || title.includes("Attention Required")) {
@@ -415,17 +292,16 @@ async function scrapeViaBrowser(url: string, hashtag: number): Promise<ScrapeRes
     }
 
     try {
-      await page.waitForSelector("#info", { timeout: 10_000 });
+      await page.waitForSelector(site.browserReady!, { timeout: 10_000 });
     } catch {
       const bodyText = await page.locator("body").innerText().catch(() => "");
       if (title.includes("404") || bodyText.includes("Page not found") || bodyText.includes("404")) {
-        throw new ScrapeError(`Title #${hashtag} not found on nhentai (404)`, "NOT_FOUND");
+        throw new ScrapeError(`Title ${describe(ref)} not found (404)`, "NOT_FOUND");
       }
-      throw new ScrapeError("#info element not found — page did not load", "TIMEOUT");
+      throw new ScrapeError(`${site.browserReady} not found — page did not load`, "TIMEOUT");
     }
 
-    const html = await page.content();
-    return parseInfoDiv(html, hashtag);
+    return await page.content();
   } catch (e) {
     if (e instanceof ScrapeError) throw e;
     // A raw Playwright failure usually means the browser died mid-scrape —
@@ -447,22 +323,49 @@ async function scrapeViaBrowser(url: string, hashtag: number): Promise<ScrapeRes
 // Orchestrator
 // ---------------------------------------------------------------------------
 
-export async function scrapeTitle(input: string | number): Promise<ScrapeOutcome> {
-  const hashtag = typeof input === "number" ? input : extractHashtag(input);
-  if (!hashtag) throw new ScrapeError(`Could not parse hashtag from: "${input}"`, "BAD_INPUT");
+// The parser's output goes through the same gate the app's write boundary
+// uses, so a site whose markup drifted fails here — at the scraper, with the
+// reason — rather than as a confusing 400 when the user hits save.
+function checked(scraped: ScrapeResult, ref: TitleRef): ScrapeResult {
+  let clean: ScrapeResult;
+  try {
+    clean = parseScrapePayload(scraped);
+  } catch (e) {
+    throw new ScrapeError(
+      `parsed an unusable title for ${describe(ref)} — markup drift? ${e instanceof Error ? e.message : e}`,
+      "TIMEOUT",
+    );
+  }
+  if (refKey(scrapedRef(clean)) !== refKey(ref)) {
+    throw new ScrapeError(`${describe(ref)} answered with a different title`, "TIMEOUT");
+  }
+  return clean;
+}
 
-  const url = `https://nhentai.net/g/${hashtag}/`;
+export async function scrapeTitle(input: string | TitleRef): Promise<ScrapeOutcome> {
+  const ref = typeof input === "string" ? parseTitleRef(input) : toTitleRef(input.source, input.id);
+  if (!ref) {
+    const shown = typeof input === "string" ? input : refKey(input);
+    throw new ScrapeError(`Not a title link from a supported site: "${shown.slice(0, 200)}"`, "BAD_INPUT");
+  }
+  const site = ADAPTERS[ref.source];
+  const req = site.request(ref.id);
 
   // Layer 1: cheap impersonated fetch. Returns null when challenged/blocked
   // (a genuine 404 is thrown here and must NOT trigger the browser fallback).
-  const viaImpit = await scrapeViaImpit(url, hashtag);
-  if (viaImpit) return { scraped: viaImpit, via: "impit" };
+  const viaImpit = await fetchViaImpit(site, req, ref);
+  if (viaImpit !== null) return { scraped: checked(site.parse(viaImpit, ref.id), ref), via: "impit" };
+
+  // JSON endpoints have no page for a browser to render — impit was the only way.
+  if (!site.browserReady) {
+    throw new ScrapeError(`${SOURCES[ref.source].name} did not answer for ${refLabel(ref)}`, "TIMEOUT");
+  }
 
   // Layer 2: a real browser solves whatever impit couldn't get past.
-  console.warn(`[scraper] impit layer did not pass for #${hashtag}, using Playwright fallback`);
+  console.warn(`[scraper] impit layer did not pass for ${describe(ref)}, using Playwright fallback`);
   try {
-    const scraped = await scrapeViaBrowser(url, hashtag);
-    return { scraped, via: "fallback" };
+    const html = await fetchViaBrowser(site, req.url, ref);
+    return { scraped: checked(site.parse(html, ref.id), ref), via: "fallback" };
   } catch (e) {
     // Both layers failed — make the message say so for the user.
     if (e instanceof ScrapeError && e.code !== "NOT_FOUND") {

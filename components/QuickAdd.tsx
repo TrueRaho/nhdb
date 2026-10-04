@@ -8,13 +8,17 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { NhCover } from "./Primitives";
 import type { Item } from "../lib/data";
-import type { ScrapeResult, ScrapeVia } from "../lib/scraper";
+import type { ScrapeVia } from "../lib/scraper";
+import type { ScrapeResult } from "../lib/scrape-payload";
+import { scrapedToItem } from "../lib/mappers";
+import { refKey, refLabel, SOURCES, type TitleRef } from "../lib/sources";
 import { commitScrapedAction, findExistingTitlesAction, updateAlterNameAction } from "../app/actions";
 
 // Deliberately standalone: this route exists to open in under a second from a
 // share-sheet shortcut, so it pulls in NOTHING from the main app — no
 // ScrapeJobsProvider, no gallery, no dataset, no filter state. Only the cover
-// primitive and the three server actions it actually calls.
+// primitive, the three server actions it actually calls, and the small lib
+// modules (sources, mappers) that turn a scrape into a card.
 
 // Same retry budget as the batch pool, and for the same reason: the Render
 // fallback cold-starts past Vercel's function timeout, so the first scrape
@@ -33,26 +37,9 @@ type Phase =
   | { k: "saved"; item: Item }
   | { k: "error"; message: string };
 
-function itemFromScraped(s: ScrapeResult): Item {
-  return {
-    hashtag: s.hashtag,
-    titleName: s.title_name,
-    alterName: "",
-    imageLink: s.image_link,
-    pages: s.pages,
-    tags: s.tags.map((t) => t.name),
-    artists: s.artists.map((a) => a.name),
-    groups: s.groups.map((g) => g.name),
-    characters: s.characters.map((c) => c.name),
-    parodies: s.parodies.map((p) => p.name),
-    uploadedAt: Math.floor((Date.now() - new Date(s.uploaded_at).getTime()) / 86400000),
-    addedAt: 0,
-    readCount: 0,
-    lastReadAt: null,
-  };
-}
-
-export function QuickAdd({ hashtag }: { hashtag: number }) {
+export function QuickAdd({ titleRef }: { titleRef: TitleRef }) {
+  // A primitive for the effect's deps: the page hands over a fresh object.
+  const ref = refKey(titleRef);
   const [phase, setPhase] = useState<Phase>({ k: "loading", note: "checking collection…" });
   // Always starts empty and is only ever written by the user — nothing here
   // prefills it, not even the name a known title already carries. An empty
@@ -69,7 +56,7 @@ export function QuickAdd({ hashtag }: { hashtag: number }) {
       // the scraper at all (this is what getTitlesByHashtags stays uncached
       // for), and the ~100ms costs nothing against a scrape.
       try {
-        const [known] = await findExistingTitlesAction([hashtag]);
+        const [known] = await findExistingTitlesAction([ref]);
         if (ac.signal.aborted) return;
         if (known) {
           setPhase({ k: "existing", item: known });
@@ -88,7 +75,7 @@ export function QuickAdd({ hashtag }: { hashtag: number }) {
           res = await fetch("/api/scrape", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ input: String(hashtag), persist: false }),
+            body: JSON.stringify({ input: ref, persist: false }),
             signal: ac.signal,
           });
         } catch {
@@ -98,11 +85,11 @@ export function QuickAdd({ hashtag }: { hashtag: number }) {
         if (res?.ok) {
           const { scraped, via } = (await res.json()) as { scraped: ScrapeResult; via?: ScrapeVia };
           if (ac.signal.aborted) return;
-          setPhase({ k: "scraped", item: itemFromScraped(scraped), raw: scraped, via });
+          setPhase({ k: "scraped", item: scrapedToItem(scraped), raw: scraped, via });
           return;
         }
 
-        // 4xx is a verdict about this id (not found / bad input) — never retried.
+        // 4xx is a verdict about this title (not found / bad input) — never retried.
         let message = "scraper unreachable";
         let definitive = false;
         if (res) {
@@ -119,7 +106,7 @@ export function QuickAdd({ hashtag }: { hashtag: number }) {
     })();
 
     return () => ac.abort();
-  }, [hashtag, attempt]);
+  }, [ref, attempt]);
 
   const typedName = alterName.trim();
 
@@ -135,7 +122,7 @@ export function QuickAdd({ hashtag }: { hashtag: number }) {
         // field would wipe the name the title already has — the one thing this
         // screen must never do behind the user's back.
         if (!typedName) return;
-        await updateAlterNameAction(hashtag, typedName);
+        await updateAlterNameAction(phase.item.hashtag, typedName);
         setPhase({ k: "saved", item: { ...phase.item, alterName: typedName } });
       }
     } catch (e) {
@@ -154,7 +141,9 @@ export function QuickAdd({ hashtag }: { hashtag: number }) {
     <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col gap-3 p-4">
       <header className="flex items-baseline gap-2">
         <span className="font-display text-[17px] font-bold tracking-tight text-nh-text-1">quick add</span>
-        <span className="font-mono text-[11px] text-nh-accent">#{hashtag}</span>
+        <span className="font-mono text-[11px] text-nh-accent" title={SOURCES[titleRef.source].name}>
+          {refLabel(titleRef)}
+        </span>
         <span className="flex-1" />
         {phase.k === "scraped" && phase.via === "fallback" && (
           <span

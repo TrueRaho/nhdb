@@ -4,7 +4,8 @@ import { prisma } from "./db";
 import { datasetTag, similarAnyTag, similarTag, statsTag, titleTag, titlesListTag } from "./cache-tags";
 import { MIN_SHARED_TITLES, rankAffinity, type AffinityRow, type TagAffinity } from "./affinity";
 import { inferGhostTags, type GhostSource, type GhostSourceKind, type GhostTag } from "./ghost";
-import type { ScrapeEntity, ScrapeResult } from "./scraper";
+import { parseScrapePayload, type ScrapeEntity } from "./scrape-payload";
+import { parseTitleRef, refLabel, toTitleRef, type TitleRef } from "./sources";
 import { isHashtag } from "./utils";
 import { DELETE_BATCH } from "./swipe";
 
@@ -29,6 +30,11 @@ function assertUserId(userId: string): void {
 // Note: tags.title_count is trigger-owned (maintained by triggers on
 // titlestotags), so it is deliberately absent from both the INSERT column
 // list (defaults to 0 on insert) and the DO UPDATE SET (stays untouched).
+//
+// Entities are shared across sites by name — one "big breasts" whether the
+// title came from nhentai or Hitomi — but only some sites print counts. A 0
+// therefore means "this site did not say", and must not overwrite a real
+// count another site's scrape stored (COALESCE(NULLIF(…, 0), current)).
 async function batchUpsertEntities(
   db: Prisma.TransactionClient,
   userId: string,
@@ -46,7 +52,8 @@ async function batchUpsertEntities(
     INSERT INTO ${Prisma.raw(`"${table}" (user_id, "${nameCol}", "${linkCol}", total_works)`)}
     VALUES ${Prisma.join(deduped.map((e) => Prisma.sql`(${userId}, ${e.name}, ${e.link}, ${e.total_works})`))}
     ON CONFLICT (user_id, ${Prisma.raw(`"${nameCol}"`)}) DO UPDATE
-      SET ${Prisma.raw(`"${linkCol}" = EXCLUDED."${linkCol}"`)}, total_works = EXCLUDED.total_works
+      SET ${Prisma.raw(`"${linkCol}" = EXCLUDED."${linkCol}"`)},
+          total_works = COALESCE(NULLIF(EXCLUDED.total_works, 0), ${Prisma.raw(`"${table}"`)}.total_works)
     RETURNING ${Prisma.raw(`"${idCol}" AS id, "${nameCol}" AS name`)}
   `);
   // RETURNING with DO UPDATE emits every affected row (inserted or updated),
@@ -70,47 +77,14 @@ const batchUpsertParodies = (db: Prisma.TransactionClient, userId: string, items
 const batchUpsertTags = (db: Prisma.TransactionClient, userId: string, items: ScrapeEntity[]) =>
   batchUpsertEntities(db, userId, items, "tags", "id_tag", "tag_name", "tag_link");
 
-// Thrown for a malformed client-supplied scrape payload. `name` is set to
-// "ValidationError" so the /api/scrape route's isValidationError() maps it to
-// HTTP 400 (not 500) — matching on the message would misfire on Prisma errors,
-// whose messages often contain "Invalid".
-class ScrapePayloadError extends Error {
-  name = "ValidationError";
-}
-
-// Both the Server Action and the /api/scrape route pass client-supplied data
-// here, so validate the payload shape before touching the database.
-function assertValidScrapePayload(s: ScrapeResult): void {
-  if (!s || typeof s !== "object")
-    throw new ScrapePayloadError("Invalid scrape payload: expected an object");
-  const isDbInteger = (value: unknown): value is number =>
-    typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 2_147_483_647;
-  const isDbString = (value: unknown): value is string =>
-    typeof value === "string" && value.length <= 255;
-  if (!isDbInteger(s.hashtag) || s.hashtag === 0)
-    throw new ScrapePayloadError(`Invalid scrape payload: hashtag must be a positive integer, got ${s.hashtag}`);
-  if (!isDbString(s.title_name))
-    throw new ScrapePayloadError("Invalid scrape payload: title_name must be a string of at most 255 characters");
-  if (!isDbString(s.image_link))
-    throw new ScrapePayloadError("Invalid scrape payload: image_link must be a string of at most 255 characters");
-  if (!isDbInteger(s.pages))
-    throw new ScrapePayloadError(`Invalid scrape payload: pages must be a non-negative integer, got ${s.pages}`);
-  for (const key of ["tags", "artists", "groups", "characters", "parodies"] as const) {
-    if (!Array.isArray(s[key]))
-      throw new ScrapePayloadError(`Invalid scrape payload: ${key} must be an array`);
-    for (const entity of s[key]) {
-      if (!entity || typeof entity !== "object" || !isDbString(entity.name) ||
-          !isDbString(entity.link) || !isDbInteger(entity.total_works))
-        throw new ScrapePayloadError(`Invalid scrape payload: ${key} contains an invalid entity`);
-    }
-  }
-  if (typeof s.uploaded_at !== "string" || isNaN(new Date(s.uploaded_at).getTime()))
-    throw new ScrapePayloadError(`Invalid scrape payload: uploaded_at is not a valid date, got ${s.uploaded_at}`);
-}
-
-export async function upsertScrapedTitle(userId: string, s: ScrapeResult) {
+// Both the Server Action and the /api/scrape route pass data that came from
+// outside the server (a browser, a user's scraper host), so the payload is
+// re-derived by the write boundary before it touches the database —
+// lib/scrape-payload.ts throws a "ValidationError" (→ HTTP 400) for anything
+// that is not a title from a supported site.
+export async function upsertScrapedTitle(userId: string, payload: unknown) {
   assertUserId(userId);
-  assertValidScrapePayload(s);
+  const s = parseScrapePayload(payload);
 
   return prisma.$transaction(async (tx) => {
     // Entity upserts live INSIDE the transaction on purpose: creating an
@@ -129,55 +103,66 @@ export async function upsertScrapedTitle(userId: string, s: ScrapeResult) {
     const parodyIds = await batchUpsertParodies(tx, userId, s.parodies);
     const tagIds = await batchUpsertTags(tx, userId, s.tags);
 
+    // One statement, keyed by where the title comes from (migration 9). An
+    // nhentai title's hashtag is its gallery id; any other site's title keeps
+    // the key it was given on first save, or draws a new one from the
+    // sequence — COALESCE short-circuits, so a re-scrape burns no key. Being a
+    // single INSERT … ON CONFLICT, two saves of one new title cannot both
+    // allocate a row.
+    //
     // alterName is user-managed (set manually via updateAlterName) — the
     // scrape path never writes it, neither on create nor on re-scrape.
-    const titleData = {
-      titleName: s.title_name,
-      imageLink: s.image_link,
-      pages: s.pages,
-      uploadedAt: new Date(s.uploaded_at),
-    };
+    const key = s.source === "nhentai"
+      ? Prisma.sql`${Number(s.source_id)}`
+      : Prisma.sql`COALESCE(
+          (SELECT hashtag FROM titles WHERE user_id = ${userId} AND source = ${s.source} AND source_id = ${s.source_id}),
+          nextval('titles_foreign_hashtag_seq'))`;
+    const [{ hashtag }] = await tx.$queryRaw<{ hashtag: number }[]>(Prisma.sql`
+      INSERT INTO titles (user_id, hashtag, source, source_id, title_name, image_link, pages, uploaded_at)
+      VALUES (${userId}, ${key}, ${s.source}, ${s.source_id}, ${s.title_name}, ${s.image_link}, ${s.pages},
+              ${s.uploaded_at}::date)
+      ON CONFLICT (user_id, source, source_id) DO UPDATE SET
+        title_name = EXCLUDED.title_name,
+        image_link = EXCLUDED.image_link,
+        pages = EXCLUDED.pages,
+        uploaded_at = EXCLUDED.uploaded_at
+      RETURNING hashtag
+    `);
 
-    await tx.title.upsert({
-      where: { userId_hashtag: { userId, hashtag: s.hashtag } },
-      create: { userId, hashtag: s.hashtag, ...titleData },
-      update: titleData,
-    });
-
-    await tx.titleArtist.deleteMany({ where: { userId, hashtag: s.hashtag } });
-    await tx.titleGroup.deleteMany({ where: { userId, hashtag: s.hashtag } });
-    await tx.titleCharacter.deleteMany({ where: { userId, hashtag: s.hashtag } });
-    await tx.titleParody.deleteMany({ where: { userId, hashtag: s.hashtag } });
-    await tx.titleTag.deleteMany({ where: { userId, hashtag: s.hashtag } });
+    await tx.titleArtist.deleteMany({ where: { userId, hashtag } });
+    await tx.titleGroup.deleteMany({ where: { userId, hashtag } });
+    await tx.titleCharacter.deleteMany({ where: { userId, hashtag } });
+    await tx.titleParody.deleteMany({ where: { userId, hashtag } });
+    await tx.titleTag.deleteMany({ where: { userId, hashtag } });
 
     if (artistIds.length)
       await tx.titleArtist.createMany({
-        data: artistIds.map((idArtist) => ({ userId, hashtag: s.hashtag, idArtist })),
+        data: artistIds.map((idArtist) => ({ userId, hashtag, idArtist })),
         skipDuplicates: true,
       });
     if (groupIds.length)
       await tx.titleGroup.createMany({
-        data: groupIds.map((idGroup) => ({ userId, hashtag: s.hashtag, idGroup })),
+        data: groupIds.map((idGroup) => ({ userId, hashtag, idGroup })),
         skipDuplicates: true,
       });
     if (characterIds.length)
       await tx.titleCharacter.createMany({
-        data: characterIds.map((idCharacter) => ({ userId, hashtag: s.hashtag, idCharacter })),
+        data: characterIds.map((idCharacter) => ({ userId, hashtag, idCharacter })),
         skipDuplicates: true,
       });
     if (parodyIds.length)
       await tx.titleParody.createMany({
-        data: parodyIds.map((idParodie) => ({ userId, hashtag: s.hashtag, idParodie })),
+        data: parodyIds.map((idParodie) => ({ userId, hashtag, idParodie })),
         skipDuplicates: true,
       });
     if (tagIds.length)
       await tx.titleTag.createMany({
-        data: tagIds.map((idTag) => ({ userId, hashtag: s.hashtag, idTag })),
+        data: tagIds.map((idTag) => ({ userId, hashtag, idTag })),
         skipDuplicates: true,
       });
 
     return tx.title.findUniqueOrThrow({
-      where: { userId_hashtag: { userId, hashtag: s.hashtag } },
+      where: { userId_hashtag: { userId, hashtag } },
       include: titleInclude,
     });
   });
@@ -329,7 +314,16 @@ function buildWhere(userId: string, p: QueryParams, ghostByTag?: Record<string, 
     ];
     // Only match hashtag when the digit string fits INT4 — a longer number
     // would overflow the column type and make Prisma reject the whole query.
-    if (/^\d+$/.test(q) && q.length <= 9) orClauses.push({ hashtag: parseInt(q, 10) });
+    // A number is also another site's id ("1234567" on Hitomi; an E-Hentai gid
+    // is the part before the token).
+    if (/^\d+$/.test(q)) {
+      if (q.length <= 9) orClauses.push({ hashtag: parseInt(q, 10) });
+      orClauses.push({ sourceId: q }, { sourceId: { startsWith: `${q}/` } });
+    } else {
+      // A pasted gallery link or `source:id` finds its title.
+      const ref = parseTitleRef(q);
+      if (ref) orClauses.push({ source: ref.source, sourceId: ref.id });
+    }
     // Ghosts reach the search box too — typing a tag name is the first thing
     // anyone does when a title has gone missing, and that is exactly the case
     // ghost tags exist for. Scanning tag names per query is inexpensive.
@@ -355,7 +349,8 @@ function buildOrderBy(field: SortField, dir: "asc" | "desc"): Prisma.TitleOrderB
   switch (field) {
     case "added-at": return [{ createdAt: dir }, { hashtag: "desc" }];
     case "last-read-at": return [{ lastReadAt: { sort: dir, nulls: "last" } }, { hashtag: "desc" }];
-    case "uploaded-at": return [{ uploadedAt: dir }, { hashtag: "desc" }];
+    // Titles whose site prints no upload date sink to the bottom either way.
+    case "uploaded-at": return [{ uploadedAt: { sort: dir, nulls: "last" } }, { hashtag: "desc" }];
     case "read-count": return [{ readCount: dir }, { hashtag: "desc" }];
     case "pages": return [{ pages: dir }, { hashtag: "desc" }];
     case "hashtag": return [{ hashtag: dir }];
@@ -452,6 +447,18 @@ export async function getTitlesByHashtags(userId: string, hashtags: number[]) {
   if (hashtags.length === 0) return [];
   return prisma.title.findMany({
     where: { userId, hashtag: { in: hashtags } },
+    include: titleInclude,
+  });
+}
+
+// The add flow's question, "which of these are already in the collection?",
+// asked by where the titles come from — before a scrape, a title from another
+// site has no hashtag yet. Uncached for the same reason as above.
+export async function getTitlesByRefs(userId: string, refs: TitleRef[]) {
+  assertUserId(userId);
+  if (refs.length === 0) return [];
+  return prisma.title.findMany({
+    where: { userId, OR: refs.map((r) => ({ source: r.source, sourceId: r.id })) },
     include: titleInclude,
   });
 }
@@ -620,10 +627,17 @@ export type StatsPayload = {
   monthlyReads: { idx: number; count: number }[];
   hourlyReads: { h: number; count: number }[];
   dowReads: { d: number; count: number }[];
-  recentSessions: { hashtag: number; readAt: string; name: string }[];
+  /** `label` is the title's site label ("#177013", "hitomi 1234567"). */
+  recentSessions: { hashtag: number; label: string; readAt: string; name: string }[];
   additions: { label: string; count: number }[];
-  mostRead: { hashtag: number; titleName: string; alterName: string; pages: number; readCount: number; firstArtist: string; imageLink: string }[];
+  mostRead: { hashtag: number; label: string; titleName: string; alterName: string; pages: number; readCount: number; firstArtist: string; imageLink: string }[];
 };
+
+// "#177013" / "hitomi 1234567" for a stored row; the bare key if it is unreadable.
+function labelFor(hashtag: number, source: unknown, sourceId: unknown): string {
+  const ref = toTitleRef(source, sourceId);
+  return ref ? refLabel(ref) : `#${hashtag}`;
+}
 
 // An unknown zone makes Postgres throw, and the value arrives from the client,
 // so validate before it reaches SQL. Intl is the authority on IANA names.
@@ -730,10 +744,13 @@ export async function getStats(userId: string, timeZone?: string): Promise<Stats
     // parses a naive `timestamp` in the *server process's* zone, which would
     // shift every rendered session time off a non-UTC host. The column holds
     // UTC, so stamping a literal Z yields the correct instant everywhere.
-    prisma.$queryRaw<{ hashtag: number; read_at: string; title_name: string; alter_name: string | null }[]>(Prisma.sql`
+    prisma.$queryRaw<{
+      hashtag: number; read_at: string; title_name: string; alter_name: string | null;
+      source: string | null; source_id: string | null;
+    }[]>(Prisma.sql`
       SELECT r.hashtag,
              to_char(r.read_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS read_at,
-             t.title_name, t.alter_name
+             t.title_name, t.alter_name, t.source, t.source_id
       FROM read_logs r LEFT JOIN titles t USING (user_id, hashtag)
       WHERE r.user_id = ${userId}
       ORDER BY r.read_at DESC LIMIT 20
@@ -750,7 +767,7 @@ export async function getStats(userId: string, timeZone?: string): Promise<Stats
       orderBy: { readCount: "desc" },
       take: 5,
       select: {
-        hashtag: true, titleName: true, alterName: true, pages: true,
+        hashtag: true, source: true, sourceId: true, titleName: true, alterName: true, pages: true,
         readCount: true, imageLink: true,
         artists: { take: 1, include: { artist: { select: { artistName: true } } } },
       },
@@ -802,14 +819,14 @@ export async function getStats(userId: string, timeZone?: string): Promise<Stats
     monthlyReads,
     hourlyReads,
     dowReads,
-    recentSessions: recentRows.map((r) => ({
-      hashtag: r.hashtag,
-      readAt: r.read_at,
-      name: r.alter_name || r.title_name || `#${r.hashtag}`,
-    })),
+    recentSessions: recentRows.map((r) => {
+      const label = labelFor(r.hashtag, r.source, r.source_id);
+      return { hashtag: r.hashtag, label, readAt: r.read_at, name: r.alter_name || r.title_name || label };
+    }),
     additions,
     mostRead: mostReadRows.map((m) => ({
       hashtag: m.hashtag,
+      label: labelFor(m.hashtag, m.source, m.sourceId),
       titleName: m.titleName,
       alterName: m.alterName ?? "",
       pages: m.pages,

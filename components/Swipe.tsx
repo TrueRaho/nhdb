@@ -9,8 +9,9 @@ import Link from "next/link";
 import { ArrowLeft, Check, ChevronsDown, ExternalLink, Shuffle, Trash2, Undo2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
-import type { Item } from "../lib/data";
+import { coverSeed, itemLabel, itemUrl, type Item } from "../lib/data";
 import { paletteFor } from "../lib/cover-art";
+import { SOURCES } from "../lib/sources";
 import { deleteTitlesAction, getSwipeCardsAction, getSwipeDeckAction, updateAlterNameAction } from "../app/actions";
 import {
   CARD_BATCH, DELETE_BATCH, POSTPONE_GAP, PREFETCH_AHEAD, SWIPE_DISTANCE,
@@ -20,7 +21,6 @@ import {
 
 // The swipe deck: the rules live in lib/swipe.ts, this is the screen.
 
-const titleUrl = (hashtag: number) => `https://nhentai.net/g/${hashtag}/`;
 const FLING_MS = 220;
 
 function reducedMotion(): boolean {
@@ -29,9 +29,9 @@ function reducedMotion(): boolean {
 
 // Opening a title from here is a look, not a read: going through a few hundred
 // unnamed titles would otherwise flood the reading stats. The gallery's "read
-// on nhentai" is still what counts a read.
-function openTitle(hashtag: number) {
-  window.open(titleUrl(hashtag), "_blank", "noopener,noreferrer");
+// on <site>" is still what counts a read.
+function openTitle(item: Item) {
+  window.open(itemUrl(item), "_blank", "noopener,noreferrer");
 }
 
 // globals.css sets `button { font-family: inherit }` unlayered, which beats a
@@ -151,7 +151,7 @@ export function SwipeDeck({ userId }: { userId: string }) {
     setNotice(null);
     if (dir === "left") {
       setTrash(addToTrash(userId, {
-        hashtag: it.hashtag, titleName: it.titleName, imageLink: it.imageLink, pages: it.pages,
+        hashtag: it.hashtag, label: itemLabel(it), titleName: it.titleName, imageLink: it.imageLink, pages: it.pages,
       }));
       setQueue((q) => q.filter((h) => h !== it.hashtag));
       setTally((t) => ({ ...t, trashed: t.trashed + 1 }));
@@ -186,7 +186,7 @@ export function SwipeDeck({ userId }: { userId: string }) {
       if (e.key === "ArrowLeft") { e.preventDefault(); card.fling("left"); }
       else if (e.key === "ArrowDown") { e.preventDefault(); card.fling("down"); }
       else if (e.key === "ArrowRight") { e.preventDefault(); tryKeep(); }
-      else if (e.key === "o") { e.preventDefault(); openTitle(item.hashtag); }
+      else if (e.key === "o") { e.preventDefault(); openTitle(item); }
     };
   });
   useEffect(() => {
@@ -261,8 +261,8 @@ export function SwipeDeck({ userId }: { userId: string }) {
         {item && (
           <button
             type="button"
-            onClick={() => openTitle(item.hashtag)}
-            aria-label={`open #${item.hashtag} on nhentai`}
+            onClick={() => openTitle(item)}
+            aria-label={`open ${itemLabel(item)} on ${SOURCES[item.source].name}`}
             className="grid size-9 place-items-center rounded-lg bg-nh-pill text-nh-text-2 hover:text-nh-text-1"
           >
             <ExternalLink className="size-4" />
@@ -437,7 +437,7 @@ function RoundButton({ label, onClick, disabled, dim, tone, children }: {
 
 function Cover({ item, priority }: { item: Item; priority?: boolean }) {
   if (!item.imageLink) {
-    const [a, b] = paletteFor(item.hashtag);
+    const [a, b] = paletteFor(coverSeed(item));
     return <div className="absolute inset-0" style={{ background: `linear-gradient(160deg, ${a}, ${b})` }} />;
   }
   return (
@@ -519,7 +519,7 @@ function SwipeCard({ ref, item, canKeep, canPostpone, onSwipe, onBlocked, onRefu
     if (!d || d.id !== e.pointerId) return;
     drag.current = null;
     const gesture = classifyGesture(d.dx, d.dy, performance.now() - d.t, el.current?.offsetWidth ?? 0);
-    if (gesture === "tap") { place(0, 0, false); openTitle(item.hashtag); return; }
+    if (gesture === "tap") { place(0, 0, false); openTitle(item); return; }
     if (gesture === null) { place(0, 0, true); return; }
     fling(gesture);
   };
@@ -537,7 +537,7 @@ function SwipeCard({ ref, item, canKeep, canPostpone, onSwipe, onBlocked, onRefu
       ref={el}
       role="group"
       aria-roledescription="card"
-      aria-label={`${item.titleName} — tap to open on nhentai`}
+      aria-label={`${item.titleName} — tap to open on ${SOURCES[item.source].name}`}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
@@ -557,7 +557,7 @@ function SwipeCard({ ref, item, canKeep, canPostpone, onSwipe, onBlocked, onRefu
         style={{ background: "linear-gradient(to top, rgba(0,0,0,0.9), rgba(0,0,0,0.55) 55%, transparent)" }}
       >
         <div className="font-mono text-[10px] tracking-wider text-white/70">
-          #{item.hashtag} · {item.pages}p{item.readCount > 0 ? ` · read ${item.readCount}×` : ""}
+          {itemLabel(item)} · {item.pages}p{item.readCount > 0 ? ` · read ${item.readCount}×` : ""}
         </div>
         <div className="line-clamp-3 font-display text-[19px] font-bold leading-tight text-white" style={{ letterSpacing: "-0.01em" }}>
           {item.titleName}
@@ -625,7 +625,7 @@ function TrashSheet({ open, onOpenChange, entries, onRestore, onDeleteAll, delet
               </div>
               <div className="min-w-0 flex-1">
                 <div className="truncate font-display text-[13px] font-semibold text-nh-text-1">{e.titleName}</div>
-                <div className="font-mono text-[10px] text-nh-text-3">#{e.hashtag} · {e.pages}p</div>
+                <div className="font-mono text-[10px] text-nh-text-3">{e.label} · {e.pages}p</div>
               </div>
               <Button
                 variant="ghost"

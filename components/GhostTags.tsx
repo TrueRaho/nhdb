@@ -72,7 +72,7 @@ export function GhostTagChips({ hashtag, onTagClick }: {
   return (
     <div className="flex flex-col gap-1.5">
       <div className="font-mono text-[9.5px] uppercase tracking-widest text-nh-text-3">
-        likely tags · inferred, not from nhentai
+        likely tags · inferred, not from the source site
       </div>
       <div className="flex flex-wrap gap-1">
         {ghosts.map(g => (

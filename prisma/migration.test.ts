@@ -28,8 +28,8 @@ function claimSql(owner: string) {
 }
 
 function addOtherUser() {
-  query(`INSERT INTO titles (user_id, hashtag, title_name, image_link, pages, uploaded_at)
-    VALUES ('other', 101, 'other title', '/one', 1, '2026-01-01');
+  query(`INSERT INTO titles (user_id, hashtag, source, source_id, title_name, image_link, pages, uploaded_at)
+    VALUES ('other', 101, 'nhentai', '101', 'other title', '/one', 1, '2026-01-01');
     INSERT INTO tags (user_id, tag_name, tag_link) VALUES ('other', 'shared', '/tag/shared');
     INSERT INTO titlestotags (user_id, hashtag, id_tag)
     SELECT 'other', 101, id_tag FROM tags WHERE user_id = 'other';`);
@@ -43,10 +43,11 @@ describe.skipIf(!databaseUrl)("multi-user PostgreSQL migration", () => {
     }
     schema = `nhdb_test_${process.pid}_${crypto.randomUUID().replaceAll("-", "")}`;
     query(`CREATE SCHEMA "${schema}";`);
+    // Replay in deploy order, stopping at 6 to seed the single-user rows it
+    // has to adopt, then carry on through every later migration.
     const migrations = readdirSync("prisma/migrations").filter((name) => /^\d+_/.test(name)).sort();
-    for (const migration of migrations.filter((name) => name !== "6_multi_user")) {
-      query(readFileSync(join("prisma/migrations", migration, "migration.sql"), "utf8"));
-    }
+    const apply = (name: string) => query(readFileSync(join("prisma/migrations", name, "migration.sql"), "utf8"));
+    migrations.filter((name) => name < "6_multi_user").forEach(apply);
     query(`INSERT INTO titles (hashtag, title_name, image_link, pages, uploaded_at)
       VALUES (101, 'legacy one', '/one', 10, '2026-01-01'), (102, 'legacy two', '/two', 20, '2026-01-02');
       INSERT INTO tags (tag_name, tag_link) VALUES ('shared', '/tag/shared');
@@ -60,7 +61,7 @@ describe.skipIf(!databaseUrl)("multi-user PostgreSQL migration", () => {
       INSERT INTO parodies (parodie_name, parodie_link) VALUES ('parody', '/parody');
       INSERT INTO titlestoparodies SELECT 101, id_parodie FROM parodies;
       INSERT INTO read_logs (hashtag) VALUES (101);`);
-    query(readFileSync("prisma/migrations/6_multi_user/migration.sql", "utf8"));
+    migrations.filter((name) => name >= "6_multi_user").forEach(apply);
   });
 
   afterEach(() => {
@@ -72,9 +73,12 @@ describe.skipIf(!databaseUrl)("multi-user PostgreSQL migration", () => {
     for (const table of COLLECTION_TABLES) {
       expect(query(`SELECT bool_and(user_id = 'nhdb:unclaimed') FROM "${table}"`)).toBe("t");
     }
+    // Scoped to the collection: later migrations add user_id to tables of
+    // their own (scrape_budget, scraper_endpoints) that 6 never backfilled.
     expect(query(`SELECT count(*) FROM information_schema.columns
       WHERE table_schema = '${schema}' AND column_name = 'user_id'
-        AND is_nullable = 'NO' AND column_default IS NULL`)).toBe("12");
+        AND table_name IN (${COLLECTION_TABLES.map((t) => `'${t}'`).join(", ")})
+        AND is_nullable = 'NO' AND column_default IS NULL`)).toBe(String(COLLECTION_TABLES.length));
     expect(query("SELECT avg_tag_value FROM titles WHERE hashtag = 101")).toBe("2");
     expect(query("SELECT title_count FROM tags")).toBe("2");
   });
@@ -96,8 +100,9 @@ describe.skipIf(!databaseUrl)("multi-user PostgreSQL migration", () => {
     addOtherUser();
     expect(query("SELECT avg_tag_value FROM titles WHERE user_id = 'other' AND hashtag = 101")).toBe("1");
     expect(query("SELECT avg_tag_value FROM titles WHERE user_id = 'nhdb:unclaimed' AND hashtag = 101")).toBe("2");
-    query(`INSERT INTO titles (user_id, hashtag, title_name, image_link, pages, uploaded_at)
-      VALUES ('other', 103, 'three', '/three', 1, '2026-01-01'), ('other', 104, 'four', '/four', 1, '2026-01-01');
+    query(`INSERT INTO titles (user_id, hashtag, source, source_id, title_name, image_link, pages, uploaded_at)
+      VALUES ('other', 103, 'nhentai', '103', 'three', '/three', 1, '2026-01-01'),
+             ('other', 104, 'nhentai', '104', 'four', '/four', 1, '2026-01-01');
       INSERT INTO titlestotags (user_id, hashtag, id_tag)
       SELECT t.user_id, t.hashtag, e.id_tag FROM titles t JOIN tags e ON e.user_id = t.user_id
       WHERE t.user_id = 'other' AND t.hashtag <> 101;`);
@@ -134,5 +139,58 @@ describe.skipIf(!databaseUrl)("multi-user PostgreSQL migration", () => {
     expect(() => query(claimSql("other"))).toThrow("already has a collection");
     expect(query("SELECT count(*) FROM titles WHERE user_id = 'nhdb:unclaimed'")).toBe("2");
     expect(query("SELECT count(*) FROM titles WHERE user_id = 'other'")).toBe("1");
+  });
+
+  describe("9_title_sources", () => {
+    const insert = (values: string) =>
+      query(`INSERT INTO titles (user_id, hashtag, source, source_id, title_name, image_link, pages, uploaded_at)
+        VALUES ${values}`);
+
+    it("files every existing title as the nhentai gallery it always was", () => {
+      expect(query("SELECT string_agg(source || ':' || source_id, ',' ORDER BY hashtag) FROM titles"))
+        .toBe("nhentai:101,nhentai:102");
+    });
+
+    it("keeps the two hashtag ranges apart", () => {
+      // An nhentai row's hashtag is its id, below 1e9…
+      expect(() => insert("('u', 5, 'nhentai', '6', 't', '', 1, NULL)")).toThrow();
+      expect(() => insert("('u', 1000000000, 'nhentai', '1000000000', 't', '', 1, NULL)")).toThrow();
+      // …and nothing else may sit in that range.
+      expect(() => insert("('u', 5, 'hitomi', '5', 't', '', 1, NULL)")).toThrow();
+      expect(() => insert("('u', 1000000000, 'Hitomi!', '5', 't', '', 1, NULL)")).toThrow();
+      expect(() => insert("('u', 1000000000, 'hitomi', '', 't', '', 1, NULL)")).toThrow();
+      insert("('u', 5, 'nhentai', '5', 't', '', 1, NULL)");
+      insert("('u', 1000000000, 'hitomi', '5', 't', '', 1, NULL)");
+    });
+
+    it("refuses a second row for the same title of the same user, not of another user", () => {
+      insert("('u', 1000000001, 'hitomi', '5', 't', '', 1, NULL)");
+      expect(() => insert("('u', 1000000002, 'hitomi', '5', 't', '', 1, NULL)")).toThrow();
+      insert("('v', 1000000003, 'hitomi', '5', 't', '', 1, NULL)");
+    });
+
+    it("hands out foreign keys from 1e9 and stores an unknown upload date", () => {
+      expect(query("SELECT nextval('titles_foreign_hashtag_seq')")).toBe("1000000000");
+      insert("('u', nextval('titles_foreign_hashtag_seq'), 'hentai2read', 'a_b', 't', '', 0, NULL)");
+      expect(query("SELECT hashtag, uploaded_at IS NULL FROM titles WHERE source_id = 'a_b'")).toBe("1000000001|t");
+    });
+
+    it("upserts by (user, source, source_id) and burns no key on a re-scrape", () => {
+      // The statement upsertScrapedTitle runs, with literals for its parameters.
+      const upsert = (title: string) => query(`
+        INSERT INTO titles (user_id, hashtag, source, source_id, title_name, image_link, pages, uploaded_at)
+        VALUES ('u', COALESCE(
+            (SELECT hashtag FROM titles WHERE user_id = 'u' AND source = 'hitomi' AND source_id = '77'),
+            nextval('titles_foreign_hashtag_seq')),
+          'hitomi', '77', '${title}', '', 3, NULL::date)
+        ON CONFLICT (user_id, source, source_id) DO UPDATE SET
+          title_name = EXCLUDED.title_name, image_link = EXCLUDED.image_link,
+          pages = EXCLUDED.pages, uploaded_at = EXCLUDED.uploaded_at
+        RETURNING hashtag`);
+      const first = upsert("one");
+      expect(upsert("two")).toBe(first);
+      expect(query("SELECT title_name FROM titles WHERE source_id = '77'")).toBe("two");
+      expect(query("SELECT last_value FROM titles_foreign_hashtag_seq")).toBe(first);
+    });
   });
 });

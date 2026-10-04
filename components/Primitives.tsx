@@ -2,7 +2,7 @@
 
 import { useState, type ComponentType, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 import Image from "next/image";
-import type { Item } from "../lib/data";
+import { coverSeed, itemLabel, type Item } from "../lib/data";
 import { mulberry32, paletteFor } from "../lib/cover-art";
 import { cn } from "../lib/utils";
 
@@ -234,8 +234,9 @@ const SIZE_PX = { sm: 140, card: 280, large: 360 } as const;
 export function NhCover({ item, size = "card" }: { item: Item; size?: "card" | "large" | "sm" }) {
   const hasImage = !!item.imageLink;
   const [loaded, setLoaded] = useState(false);
-  const [a, b] = paletteFor(item.hashtag);
-  const rng = mulberry32(item.hashtag);
+  const seed = coverSeed(item);
+  const [a, b] = paletteFor(seed);
+  const rng = mulberry32(seed);
   rng(); rng();
   const angle = Math.floor(rng() * 360);
   const ringCount = 3 + Math.floor(rng() * 3);
@@ -290,7 +291,7 @@ export function NhCover({ item, size = "card" }: { item: Item; size?: "card" | "
         className="absolute top-1.5 left-1.5 px-1.5 py-1 rounded-sm font-mono text-[9px] leading-none tracking-wider text-white/85 backdrop-blur-[4px]"
         style={{ background: "rgba(0,0,0,0.45)" }}
       >
-        #{item.hashtag}
+        {itemLabel(item)}
       </div>
 
       {!hasImage && (
@@ -313,7 +314,7 @@ export function NhCover({ item, size = "card" }: { item: Item; size?: "card" | "
               className="font-mono uppercase opacity-90"
               style={{ fontSize: subPx, color: accent, letterSpacing: "0.06em" }}
             >
-              vol.{1 + (item.hashtag % 4)} · {item.pages}p
+              vol.{1 + (seed % 4)} · {item.pages}p
             </div>
           </div>
         </>

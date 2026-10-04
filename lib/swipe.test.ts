@@ -98,7 +98,7 @@ describe("classifyGesture", () => {
 });
 
 describe("the deletion list", () => {
-  const e = (hashtag: number): TrashEntry => ({ hashtag, titleName: `t${hashtag}`, imageLink: "", pages: 10 });
+  const e = (hashtag: number): TrashEntry => ({ hashtag, label: `#${hashtag}`, titleName: `t${hashtag}`, imageLink: "", pages: 10 });
 
   it("keeps well-formed entries and drops the rest", () => {
     const raw = JSON.stringify([
@@ -110,7 +110,13 @@ describe("the deletion list", () => {
       null,
       "x",
     ]);
-    expect(parseTrash(raw)).toEqual([e(1), { hashtag: 2, titleName: "#2", imageLink: "", pages: 0 }]);
+    // An entry saved before multi-site support has no label; it reads as "#<hashtag>".
+    expect(parseTrash(raw)).toEqual([e(1), { hashtag: 2, label: "#2", titleName: "#2", imageLink: "", pages: 0 }]);
+  });
+
+  it("keeps a stored site label", () => {
+    const raw = JSON.stringify([{ ...e(1_000_000_001), label: "hitomi 1234567" }]);
+    expect(parseTrash(raw)[0].label).toBe("hitomi 1234567");
   });
 
   it.each([null, "", "{", "{}", "42"])("reads %j as empty", (raw) => {

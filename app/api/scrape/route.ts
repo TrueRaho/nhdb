@@ -5,7 +5,9 @@ import { resolveScraperTargets, type ScraperTarget } from "@/lib/scraper-endpoin
 import { assertReachableHost, UnsafeUrlError } from "@/lib/net-guard";
 import { titlesListTag, datasetTag, statsTag, titleTag, similarTag, similarAnyTag } from "@/lib/cache-tags";
 import { revalidateTag } from "next/cache";
-import { scrapeTitle, ScrapeError, type ScrapeResult, type ScrapeVia } from "@/lib/scraper";
+import { scrapeTitle, ScrapeError, type ScrapeVia } from "@/lib/scraper";
+import { parseScrapePayload, scrapedRef, type ScrapeResult } from "@/lib/scrape-payload";
+import { parseTitleRef, refKey, SOURCES, sourceUrl, type TitleRef } from "@/lib/sources";
 import { upsertScrapedTitle } from "@/lib/titles";
 
 // The proxied browser fallback (esp. on Render) can take ~15-30s; let the
@@ -19,15 +21,23 @@ const SCRAPER_PRIMARY_TIMEOUT_MS = 12_000;
 const SCRAPER_FALLBACK_TIMEOUT_MS = 45_000;
 
 type ScraperCall =
-  | { kind: "ok"; scraped?: ScrapeResult; via?: ScrapeVia }
+  | { kind: "ok"; scraped: ScrapeResult; via: ScrapeVia }
   | { kind: "answered"; status: number; data: unknown }
   | { kind: "unreachable"; response: NextResponse };
+
+// What a host is asked for: the canonical form of the title, never the text the
+// user pasted. nhentai keeps the bare id every host version understands; the
+// other sites go as their rebuilt gallery URL, which reads unambiguously in a
+// host's logs.
+function hostInput(ref: TitleRef): string {
+  return ref.source === "nhentai" ? ref.id : sourceUrl(ref);
+}
 
 // Calls one scraper host. "answered" = reachable and gave a definitive verdict
 // about the input (404/400) — don't retry elsewhere. "unreachable" = network
 // error, timeout, HTML error page (tunnel down), or a non-input error — the
 // caller should fall through to the next host.
-async function callScraper(target: ScraperTarget, input: string, timeoutMs: number): Promise<ScraperCall> {
+async function callScraper(target: ScraperTarget, ref: TitleRef, timeoutMs: number): Promise<ScraperCall> {
   // Re-checked immediately before connecting, not just when the URL was saved:
   // a name that resolved to a public address at save time can resolve to
   // 127.0.0.1 now, and only the check next to the request sees that.
@@ -53,7 +63,7 @@ async function callScraper(target: ScraperTarget, input: string, timeoutMs: numb
         "Content-Type": "application/json",
         ...(target.secret ? { Authorization: `Bearer ${target.secret}` } : {}),
       },
-      body: JSON.stringify({ input }),
+      body: JSON.stringify({ input: hostInput(ref) }),
       signal: controller.signal,
       // The host is user-supplied, so a redirect is an SSRF bypass: the address
       // checks above apply to the URL we chose, and a 302 would send the next
@@ -88,7 +98,32 @@ async function callScraper(target: ScraperTarget, input: string, timeoutMs: numb
     clearTimeout(timer);
   }
 
-  if (upstream.ok) return { kind: "ok", scraped: data.scraped, via: data.via };
+  // A host is the user's own machine running whatever version (or edit) of the
+  // scraper they have, so its answer is checked like any other untrusted
+  // payload before it is shown, let alone stored — and it has to be the title
+  // that was asked for. A host that fails either check is treated as broken,
+  // and the next one gets its turn.
+  if (upstream.ok) {
+    let scraped: ScrapeResult;
+    try {
+      scraped = parseScrapePayload(data.scraped);
+    } catch (e) {
+      return {
+        kind: "unreachable",
+        response: NextResponse.json(
+          { error: `Scraper host returned an unusable title: ${e instanceof Error ? e.message : "invalid"}` },
+          { status: 502 },
+        ),
+      };
+    }
+    if (refKey(scrapedRef(scraped)) !== refKey(ref)) {
+      return {
+        kind: "unreachable",
+        response: NextResponse.json({ error: "Scraper host returned a different title" }, { status: 502 }),
+      };
+    }
+    return { kind: "ok", scraped, via: data.via === "fallback" ? "fallback" : "impit" };
+  }
   if (upstream.status === 400 || upstream.status === 404) {
     return { kind: "answered", status: upstream.status, data };
   }
@@ -146,7 +181,7 @@ export async function POST(req: Request) {
   if (body.scraped && body.persist !== false) {
     try {
       const saved = await upsertScrapedTitle(userId, body.scraped);
-      invalidateAfterUpsert(userId, body.scraped.hashtag);
+      invalidateAfterUpsert(userId, saved.hashtag);
       return NextResponse.json({ scraped: body.scraped, saved });
     } catch (e) {
       if (isValidationError(e)) {
@@ -160,6 +195,16 @@ export async function POST(req: Request) {
   const input = body.input?.trim();
   if (!input) {
     return NextResponse.json({ error: "Missing 'input' field" }, { status: 400 });
+  }
+  // Only a title from a supported site is ever scraped: a search page, a tag
+  // page or a link to anywhere else stops here — before the budget is charged
+  // and before any host is contacted (lib/sources.ts is the allow-list).
+  const ref = parseTitleRef(input);
+  if (!ref) {
+    return NextResponse.json(
+      { error: "Not a title link from a supported site", code: "BAD_INPUT" },
+      { status: 400 },
+    );
   }
 
   // The scraper is per user: everyone registers their own hosts on /account, in
@@ -211,9 +256,23 @@ export async function POST(req: Request) {
     );
     for (let i = 0; i < hosts.length; i++) {
       const timeout = i === hosts.length - 1 ? SCRAPER_FALLBACK_TIMEOUT_MS : SCRAPER_PRIMARY_TIMEOUT_MS;
-      const result = await callScraper(hosts[i], input, timeout);
+      const result = await callScraper(hosts[i], ref, timeout);
 
       if (result.kind === "answered") {
+        // A 400 about a well-formed link from another site means the host
+        // does not know that site — a scraper from before multi-site support.
+        // Say so, and let a newer host further down the list try.
+        if (result.status === 400 && ref.source !== "nhentai") {
+          lastError = NextResponse.json(
+            {
+              error: `Your scraper host (${hosts[i].label || "host"}) could not read this ${SOURCES[ref.source].name} ` +
+                "link — it is probably running an older version. Update it and try again.",
+              code: "BAD_INPUT",
+            },
+            { status: 400 },
+          );
+          continue;
+        }
         // Reachable host gave a verdict about the input itself — authoritative.
         return NextResponse.json(result.data, { status: result.status });
       }
@@ -222,14 +281,10 @@ export async function POST(req: Request) {
         continue;
       }
       const { scraped, via } = result;
-      if (!scraped) {
-        lastError = NextResponse.json({ error: "Scraper service returned no data" }, { status: 502 });
-        continue;
-      }
       if (body.persist === false) return NextResponse.json({ scraped, via });
       try {
         const saved = await upsertScrapedTitle(userId, scraped);
-        invalidateAfterUpsert(userId, scraped.hashtag);
+        invalidateAfterUpsert(userId, saved.hashtag);
         return NextResponse.json({ scraped, saved, via });
       } catch (e) {
         if (isValidationError(e)) {
@@ -243,12 +298,12 @@ export async function POST(req: Request) {
   }
 
   try {
-    const { scraped, via } = await scrapeTitle(input);
+    const { scraped, via } = await scrapeTitle(ref);
     if (body.persist === false) {
       return NextResponse.json({ scraped, via });
     }
     const saved = await upsertScrapedTitle(userId, scraped);
-    invalidateAfterUpsert(userId, scraped.hashtag);
+    invalidateAfterUpsert(userId, saved.hashtag);
     return NextResponse.json({ scraped, saved, via });
   } catch (e) {
     if (e instanceof ScrapeError) {
