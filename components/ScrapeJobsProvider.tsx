@@ -11,10 +11,12 @@ import { commitScrapedAction, findExistingTitlesAction } from "../app/actions";
 export type ScrapeJobStatus = "scraping" | "ready" | "duplicate" | "error";
 
 export interface ScrapeJob {
-  // Stable id: the title's `source:id` ref (lib/sources.ts refKey), known
-  // before the scrape — a title from another site has no hashtag until it is
-  // saved. Used for dedup and React keys.
+  // Stable id: the title's `source:id` (lib/sources.ts refKey), known before
+  // the scrape — a title from another site has no hashtag until it is saved.
+  // Used for dedup and React keys.
   key: string;
+  // What /api/scrape is sent: the title's page address (older stored jobs hold
+  // a legacy `source:id`, which the route still reads).
   input: string;
   status: ScrapeJobStatus;
   item?: Item;
@@ -369,10 +371,10 @@ function UserScrapeJobsProvider({ userId, children }: { userId: string; children
       const upserts: ScrapeJob[] = [];
       const toScrape: { raw: string; key: string }[] = [];
       for (const ref of refs) {
-        // The ref is also what /api/scrape is sent: canonical, and parsed
-        // again (strictly) on the server.
+        // The page address is what /api/scrape is sent; the server parses it
+        // again before anything is fetched.
         const key = refKey(ref);
-        const input = key;
+        const input = ref.url;
 
         const known = existingByKey.get(key);
         if (known) {

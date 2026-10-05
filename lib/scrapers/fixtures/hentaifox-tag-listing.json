@@ -1,0 +1,8 @@
+{
+  "url": "https://hentaifox.com/tag/big-breasts/",
+  "description": "HentaiFox tag listing (/tag/big-breasts/, 'gallery adults' engine), served without JS: the same navbar, search box and ad zones as a gallery page, an h1 'Tag: big breasts <span class=t_badge>98412</span>' (a heading with a count badge, not a work title), Latest/Popular sort links, then div.lc_galleries with 16 div.thumb cards — each a complete little gallery card: div.inner_thumb > a[href=/gallery/<id>/] > cover img (first three with a plain src, the rest img.lazy[data-src=…/thumb.jpg] with a blank.gif src) + span.t_flag language flag, div.caption > h2.g_title full bracketed doujin title, and an a.t_cat category link (doujinshi/manga/artist cg/western/game cg/cosplay). og:image is the site's default share image, og:type 'website'. There is no div.gallery_top / div.info, no entity rows (no 'Tags:' / 'Artists:' / 'Parodies:' labels, no a.tag_btn), no 'Pages:' line and no hidden load_* inputs; the page URL is itself a /tag/ path; pagination uses /tag/big-breasts/pag/N/. Must be REFUSED rather than parsed as its first card (which is a real gallery from the same site). Trimmed to 16 of the cards the site serves per page. Unsure: the exact list heading markup and sort links, whether the first cards are eagerly loaded, and the pagination classes; the galleries and names are invented.",
+  "rendered": false,
+  "expect": {
+    "gallery": false
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "url": "https://multporn.net/comics/morning_ledger_vcipljf",
+  "description": "multporn.net comic node as served: Drupal 7 (XHTML+RDFa doctype, Zen-style sub-theme, RDF module metas sioc:num_replies/dc:title in <head>, metatag og:*, shortlink /node/86341). Title in h1.page__title#page-title 'Morning Ledger Vcipljf' (already clean); <title> appends ' porn comic - the best cartoon porn comics, Rule 34 | MULT34'. Info rows are D7 taxonomy-term-reference fields with field-label-inline ('Section:&nbsp;', 'Characters:&nbsp;', 'Tags:&nbsp;', 'Author:&nbsp;') and RELATIVE hrefs carrying RDFa (typeof=skos:Concept property='rdfs:label skos:prefLabel'): Section is the franchise (/category/penroqz — the parody, labelled only 'Section'), Characters /characters/, Tags /tags/, Author /author/. A fivestar 'Rate this comic:' field ('Average: 4.4 (173 votes)') and node links '48312 reads' (not a page count). The pages live in a Juicebox gallery: an empty div.juicebox-container whose only images are inside <noscript> (image-style juicebox_medium URLs with ?itok=), the real gallery being loaded by JS from Drupal.settings.juicebox.configUrl; og:image is the original first page, the expected cover. No page count and NO upload date are shown for the comic — the only dates are the comments' RDFa 'dc:date dc:created' spans, which must not become the upload date. Noise: header search form and 'Log in | Register' links, main menu (Porn Comics, Hentai Manga, Characters, Tags, Authors), a breadcrumb repeating the Section, a JuicyAds 728x90 block above the node, the comments section INSIDE the article (commenter names, a comment naming PenPexg/PenYwwl and linking another /author/), the comment form, a 'Similar comics' Views block below with other covers, titles and 'Author:' /author/ links, a left sidebar with 'Popular sections' (with counts), a 'Popular tags' tagadelic cloud and 'Popular characters', a 300x250 ad, footer. Unsure of: the field machine names, whether Section links go to /category/ and tags to /tags/ (vs /tag/), the label 'Author' vs 'Artists', whether multporn shows a submitted date or a page count, the Juicebox noscript content and og:image choice, the sidebar blocks; title, names, node id and files are invented.",
+  "rendered": false,
+  "expect": {
+    "gallery": true,
+    "source_id": "morning_ledger_vcipljf",
+    "title_name": "Morning Ledger Vcipljf",
+    "uploaded_at": null,
+    "image_link": "https://multporn.net/sites/default/files/comics/morning_ledger_vcipljf/morning_ledger_vcipljf_01.jpg",
+    "tags": ["big ass", "big breasts", "bodysuit", "lesbian", "strapon", "yuri"],
+    "artists": ["pengezp"],
+    "parodies": ["penroqz"],
+    "characters": ["penaklz", "penbfck"],
+    "not": {
+      "tags": ["penroqz", "penaklz", "penbfck", "pengezp", "porn comics", "hentai manga", "gay porn comics", "rule 63", "pictures", "video", "games", "characters", "tags", "authors", "milf", "incest", "futanari", "furry", "pregnant", "anal", "mind control", "quill cijx", "penvxcz", "quill xiqh", "original", "penpexg", "penywwl", "quill rugz", "penskzu", "48312 reads", "reads"],
+      "artists": ["penjadq", "penexhb", "quill iczy", "fixture note bwrarfv.", "penbwra", "guest (not verified)", "Fixture note ytjsect.", "penaklz", "penroqz"],
+      "groups": ["penjadq", "penexhb", "quill iczy", "pengezp", "penroqz"],
+      "parodies": ["quill cijx", "penvxcz", "quill xiqh", "original", "porn comics", "penaklz"],
+      "characters": ["penpexg", "penywwl", "quill rugz", "penskzu", "penroqz", "pengezp"]
+    }
+  }
+}

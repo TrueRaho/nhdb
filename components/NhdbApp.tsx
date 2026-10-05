@@ -18,7 +18,7 @@ const StatsView = dynamic(() => import("./Stats").then((m) => ({ default: m.Stat
 const NhdbDesktop = dynamic(() => import("./Desktop").then((m) => ({ default: m.NhdbDesktop })), { ssr: false });
 
 import { ScrapeJobsProvider, useScrapeJobs } from "./ScrapeJobsProvider";
-import { ADD_PARAM, readAddParam, refKey } from "../lib/sources";
+import { ADD_PARAM, readAddParam } from "../lib/sources";
 import { itemKey } from "../lib/data";
 
 // Handles `/?add=177013,895243` (or encoded gallery links from any supported
@@ -44,7 +44,7 @@ function DeepLinkAdd({ onOpen }: { onOpen: () => void }) {
     window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
 
     onOpen();
-    void startScrape(refs.map(refKey).join(","));
+    void startScrape(refs.map((r) => r.url).join(" "));
   }, [onOpen, startScrape]);
   return null;
 }

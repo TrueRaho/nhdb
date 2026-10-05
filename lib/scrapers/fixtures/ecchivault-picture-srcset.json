@@ -1,0 +1,24 @@
+{
+  "url": "https://ecchivault.example/view/895693/",
+  "description": "Made-up modern gallery site (ecchivault.example, Tailwind-style markup with lazysizes). The point of the case is the cover: it exists ONLY inside a <picture> in div.cover — two <source>s (avif, webp) with data-srcset and an <img class=lazyload> whose src is the classic 1x1 data:image/gif placeholder and whose real address is only in data-srcset ('cover.360.jpg 360w, cover.jpg 720w'). No og:image, no twitter:image, no <noscript> fallback, no data-src. Expected image_link is the <img>'s own largest candidate (the jpeg original); the avif/webp sources are alternative encodings of the same picture. Every other image on the page uses the same lazy <picture> pattern — eight page thumbnails (t/<n>.jpg) and four 'You may also like' cards (section.more-from, a class name with no 'related' word in it) with their own covers — so 'first lazy image' is wrong. The info block is a dl.meta with dt/dd pairs: Series, Characters, Tags, Artist, Circle, Language (with a flag img and '(translated)'), Type (Doujinshi), Pages '24', Posted <time datetime=2025-08-17T09:41:12+00:00>Aug 17, 2025</time>, Uploader; chips are title-cased with <em> count badges ('14,093'). Noise: header nav with /tags/ /artists/ /series/ index links, search box, ad slots, the related cards' artist/circle/character/tag links, footer. Invented site, work and names; structure is a plausible guess.",
+  "rendered": false,
+  "expect": {
+    "gallery": true,
+    "source_id": "895693",
+    "title_name": "Morning Ledger Wvlneiq",
+    "pages": 24,
+    "uploaded_at": "2025-08-17",
+    "image_link": "https://static.ecchivault.example/g/895693/cover.jpg",
+    "tags": ["kimono", "sole female", "sole male", "nakadashi", "kissing", "full color"],
+    "artists": ["quill qybp"],
+    "groups": ["quill jezu"],
+    "parodies": ["quill kedo"],
+    "characters": ["pencmgj", "penxobh"],
+    "not": {
+      "tags": ["english", "translated", "doujinshi", "swimsuit", "tanlines", "ahegao", "vanilla", "big breasts", "chinese"],
+      "artists": ["quill pels", "quill hnkz", "penrowp"],
+      "groups": ["quill mznn", "penytwj", "quill kzvb"],
+      "characters": ["quill ksxd"]
+    }
+  }
+}

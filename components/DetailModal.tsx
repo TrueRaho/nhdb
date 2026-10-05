@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { NhCover } from "./Primitives";
 import { daysAgoLabel } from "../lib/utils";
 import { itemLabel, itemUrl, type Item } from "../lib/data";
-import { SOURCES } from "../lib/sources";
+import { coverSrc, siteName } from "../lib/sources";
 import type { SimilarItem } from "../lib/titles";
 import { getSimilarAction, getTitleAction } from "../app/actions";
 import { GhostTagChips } from "./GhostTags";
@@ -220,8 +220,8 @@ function DetailModalInner({ item, onClose, onTagClick, onDelete, onRead, onOpen,
                   className="w-26 shrink-0 cursor-pointer"
                 >
                   <div className="relative w-full aspect-350/500 rounded-(--nh-radius-card) overflow-hidden bg-nh-pill">
-                    {s.imageLink && (
-                      <Image src={s.imageLink} alt="" fill sizes="104px" className="object-cover object-top" />
+                    {coverSrc(s.imageLink, s.url) && (
+                      <Image src={coverSrc(s.imageLink, s.url)} alt="" fill unoptimized sizes="104px" className="object-cover object-top" />
                     )}
                   </div>
                   <div className="mt-1 font-display font-semibold text-[11px] text-nh-text-1 truncate">
@@ -255,7 +255,7 @@ function DetailModalInner({ item, onClose, onTagClick, onDelete, onRead, onOpen,
           disabled={refreshing}
           variant="outline"
           size="icon"
-          title={`re-scrape metadata from ${SOURCES[item.source].name}`}
+          title={`re-scrape metadata from ${siteName(item.source)}`}
           className="size-11 rounded-[10px] border bg-nh-input shrink-0"
           style={{ borderColor: "var(--nh-border-strong)" }}
         >
@@ -269,7 +269,7 @@ function DetailModalInner({ item, onClose, onTagClick, onDelete, onRead, onOpen,
           className="flex-1 h-11 rounded-[10px] bg-nh-accent text-[#0a0a0a] flex items-center justify-center gap-2 font-display font-extrabold text-sm no-underline"
           style={{ letterSpacing: "-0.01em" }}
         >
-          <span>read on {SOURCES[item.source].name}</span>
+          <span>read on {siteName(item.source)}</span>
           <ExternalLink className="size-3.5" strokeWidth={2.2} />
         </a>
       </div>

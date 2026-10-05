@@ -13,13 +13,17 @@ model Title {
   // the other sites get a surrogate >= 1e9 from titles_foreign_hashtag_seq.
   // A CHECK ties this to (source, source_id) — see migration 9_title_sources.
   hashtag     Int
-  // Which site the title comes from (lib/sources.ts SOURCE_IDS) and its
-  // canonical id there. Unique per user; written only by upsertScrapedTitle.
-  source      String    @db.VarChar(16)
-  sourceId    String    @map("source_id") @db.VarChar(128)
+  // Which site the title comes from — its host name, or one of the seven
+  // legacy keys (lib/sources.ts) — and the gallery id in its address. Unique
+  // per user; written only by upsertScrapedTitle. See migration 9a.
+  source      String    @db.VarChar(253)
+  sourceId    String    @map("source_id") @db.VarChar(255)
+  // The page the title is read at. Null only on a row the pre-9a app wrote
+  // after the migration ran; lib/sources.ts titleUrl covers that case.
+  url         String?   @db.VarChar(1024)
   titleName   String    @map("title_name") @db.VarChar(255)
   alterName   String?   @map("alter_name") @db.VarChar(255)
-  imageLink   String    @map("image_link") @db.VarChar(255)
+  imageLink   String    @map("image_link") @db.VarChar(1024)
   pages       Int
   // Null when the site does not say — never fabricated.
   uploadedAt  DateTime? @map("uploaded_at") @db.Date
@@ -60,7 +64,6 @@ model Artist {
 
   @@unique([userId, idArtist])
   @@unique([userId, artistName])
-  @@unique([userId, artistLink])
   @@map("artists")
 }
 
@@ -75,7 +78,6 @@ model Group {
 
   @@unique([userId, idGroup])
   @@unique([userId, groupName])
-  @@unique([userId, groupLink])
   @@map("groups")
 }
 
@@ -90,7 +92,6 @@ model Character {
 
   @@unique([userId, idCharacter])
   @@unique([userId, characterName])
-  @@unique([userId, characterLink])
   @@map("characters")
 }
 
@@ -105,7 +106,6 @@ model Parody {
 
   @@unique([userId, idParodie])
   @@unique([userId, parodieName])
-  @@unique([userId, parodieLink])
   @@map("parodies")
 }
 
@@ -123,7 +123,6 @@ model Tag {
 
   @@unique([userId, idTag])
   @@unique([userId, tagName])
-  @@unique([userId, tagLink])
   @@map("tags")
 }
 

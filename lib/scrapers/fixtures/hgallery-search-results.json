@@ -1,0 +1,8 @@
+{
+  "url": "https://hgallery.example/search/?q=quill+reop+english&sort=popular",
+  "description": "Made-up gallery site (hgallery.example, same engine and chrome as hgallery-relative-date): a SEARCH RESULTS page, which must be refused. It is full of things that look like a title page: an h1 that is just the query text 'quill reop english' (with a search icon, no 'results for' wording — the count '1,284 results' is a separate p), twelve div.gallery-card results each with its own cover (the first four eager src, the rest img.lazyload data-src over blank.gif), a page-count badge ('28p'), a full bracketed doujin title in h3.card-title, typed chips (a.chip-group/-artist/-character/-tag with /group/x /artist/x /character/x /tag/x hrefs), a /category/doujinshi/ link and a relative date. A left aside.search-filters has 'Narrow by tag' / 'Narrow by character' facets with counts; there is sort tabs, a pagination nav (page 1 of 107), a footer 'Popular tags' row, og:image is the site's og-default.png and og:type 'website'. No gallery info block, no labeled Pages/Uploaded rows, and the address is /search/ with no gallery id. The first card is the very gallery of hgallery-relative-date, so a reader that latches onto the first card would 'succeed' wrongly. Invented site and works; structure is a plausible guess.",
+  "rendered": false,
+  "expect": {
+    "gallery": false
+  }
+}

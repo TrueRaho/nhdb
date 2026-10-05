@@ -22,14 +22,16 @@ session; the browser cannot select another collection.
 
 ## Sources
 
-Titles can come from **nhentai, E-Hentai, Hitomi, HentaiFox, IMHentai, Pururin
-and Hentai2Read**. Paste gallery links from any of them into the add box (a
-whole tab dump is fine), share one to `/add/<link>`, or queue several with
-`/?add=<links>`; a bare number still means an nhentai id. Only title pages are
-accepted — search, tag and listing pages, and links to anywhere else, are
-ignored. Tags, artists, groups, parodies and characters from every site are
-folded into one lowercase vocabulary, so filters, stats, related tags and ghost
-tags work across sites. See `SCRAPER.md` for how each site is read.
+Titles can come from **any gallery site**. Paste gallery links into the add box
+(a whole tab dump is fine), share one to `/add/<link>`, or queue several with
+`/?add=<links>`; a bare number still means an nhentai id. There is no list of
+sites: a link counts when its address looks like one title's, and the scraper
+reads the page from conventions gallery engines share (headings, tag/artist
+links, labeled rows, the doujin title convention) and refuses pages that are
+not a title — search, tag and listing pages, 404s, login walls. Tags, artists,
+groups, parodies and characters from every site are folded into one lowercase
+vocabulary, so filters, stats, related tags and ghost tags work across sites.
+See `SCRAPER.md` for how a page is read.
 
 ## Scraper
 
@@ -82,6 +84,8 @@ Building needs `DATABASE_URL`, `NEON_AUTH_BASE_URL` and a cookie secret of at le
 use the intended deployment branch. Migration 6 and the updated application must
 be deployed together because the old client uses single-user keys; the same goes
 for migration 9 (title sources), since the new code writes `source`/`source_id`.
+Migration 9a (any-site titles) only widens and relaxes, so the previous app
+version keeps working against it; it may be applied before the code ships.
 Scraper hosts should be updated too — an older host still serves nhentai, but
 answers other sites' links with an error the app reports as "older version".
 

@@ -1,6 +1,6 @@
 import type { Item } from "./data";
 import type { ScrapeResult } from "./scrape-payload";
-import { isSourceId } from "./sources";
+import { isSourceKey, titleUrl } from "./sources";
 import type { TitleWithRelations } from "./titles";
 
 export type DbTitle = TitleWithRelations;
@@ -14,8 +14,9 @@ export function dbTitleToItem(title: DbTitle): Item {
     hashtag: title.hashtag,
     // The column is written only by the validated upsert; the guard keeps a
     // hand-edited row from handing the client a source it cannot render.
-    source: isSourceId(title.source) ? title.source : "nhentai",
+    source: isSourceKey(title.source) ? title.source : "nhentai",
     sourceId: title.sourceId,
+    url: titleUrl(title.source, title.sourceId, title.url),
     titleName: title.titleName,
     alterName: title.alterName ?? "",
     imageLink: title.imageLink,
@@ -42,6 +43,7 @@ export function scrapedToItem(s: ScrapeResult): Item {
     hashtag: s.source === "nhentai" ? Number(s.source_id) : 0,
     source: s.source,
     sourceId: s.source_id,
+    url: s.url,
     titleName: s.title_name,
     alterName: "",
     imageLink: s.image_link,

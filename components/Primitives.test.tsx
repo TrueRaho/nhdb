@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ON_OFF, Segmented, SegmentedToggle } from "./Primitives";
+import { NhCover, ON_OFF, Segmented, SegmentedToggle } from "./Primitives";
+import type { Item } from "../lib/data";
 
 afterEach(cleanup);
 
@@ -82,5 +83,81 @@ describe("Segmented", () => {
     ]} onChange={() => {}} />);
     expect(screen.getByRole("tablist", { name: "View" })).toBeTruthy();
     expect(screen.getByRole("tab", { name: "analysis" }).getAttribute("aria-selected")).toBe("true");
+  });
+});
+
+const HITOMI_PAGE = "https://hitomi.la/galleries/1234567.html";
+
+const item = (imageLink: string, url = HITOMI_PAGE): Item => ({
+  hashtag: 1_000_000_007, source: "hitomi", sourceId: "1234567", url, titleName: "Some Title", alterName: "",
+  imageLink, pages: 20, uploadedAt: null, addedAt: 0, readCount: 0, lastReadAt: null,
+  tags: [], artists: [], groups: [], parodies: [], characters: [],
+});
+
+const HITOMI = "https://tn.gold-usergeneratedcontent.net/webpbigtn/a/bc/abc.webp";
+
+/** The <img>'s address relative to this origin, or null when none is drawn. */
+function coverRequest(container: HTMLElement): string | null {
+  const img = container.querySelector("img");
+  if (!img) return null;
+  const src = new URL(img.getAttribute("src")!, window.location.href);
+  expect(src.origin).toBe(window.location.origin);
+  return `${src.pathname}${src.search}`;
+}
+
+describe("NhCover", () => {
+  it("loads the cover through the same-origin proxy, never from the site's CDN", () => {
+    const { container } = render(<NhCover item={item(HITOMI)} />);
+    // The page's origin rides along: the proxy sends it as the Referer that
+    // hotlink-guarded CDNs (Hitomi's among them) check for.
+    expect(coverRequest(container)).toBe(
+      `/api/cover?src=${encodeURIComponent(HITOMI)}&ref=${encodeURIComponent("https://hitomi.la")}`,
+    );
+    // The procedural title is hidden while a real cover is expected.
+    expect(screen.queryByText("Some Title")).toBeNull();
+  });
+
+  it("sends only the page's origin, never its path, as the Referer hint", () => {
+    const { container } = render(<NhCover item={item(HITOMI, "https://www.somesite.org/gallery/42/?utm_source=x")} />);
+    expect(coverRequest(container)).toBe(
+      `/api/cover?src=${encodeURIComponent(HITOMI)}&ref=${encodeURIComponent("https://www.somesite.org")}`,
+    );
+  });
+
+  it("asks without a Referer hint when the title has no page address", () => {
+    const { container } = render(<NhCover item={item(HITOMI, "")} />);
+    expect(coverRequest(container)).toBe(`/api/cover?src=${encodeURIComponent(HITOMI)}`);
+  });
+
+  it("accepts a cover on any CDN — which hosts serve covers is no longer a list", () => {
+    const cover = "https://evil.example/cover.jpg";
+    const { container } = render(<NhCover item={item(cover)} />);
+    expect(coverRequest(container)).toBe(
+      `/api/cover?src=${encodeURIComponent(cover)}&ref=${encodeURIComponent("https://hitomi.la")}`,
+    );
+  });
+
+  it("falls back to the procedural cover when the image fails", () => {
+    const { container } = render(<NhCover item={item(HITOMI)} />);
+    fireEvent.error(container.querySelector("img")!);
+    expect(container.querySelector("img")).toBeNull();
+    expect(screen.getByText("Some Title")).toBeTruthy();
+  });
+
+  // The proxy only fetches web addresses on a named host; asking it for
+  // anything else would just be a broken image.
+  it.each([
+    ["no cover", ""],
+    ["a javascript: link", "javascript:alert(1)"],
+    ["a data: URI", "data:image/png;base64,iVBORw0KGgo="],
+    ["a relative path", "/covers/1.jpg"],
+    ["an IP literal", "https://169.254.169.254/latest/meta-data"],
+    ["credentials in the link", "https://user:pass@cdn.example/cover.jpg"],
+    ["an explicit port", "https://cdn.example:8443/cover.jpg"],
+    ["another scheme", "ftp://cdn.example/cover.jpg"],
+  ])("draws the procedural cover for %s, without asking the proxy", (_what, link) => {
+    const { container } = render(<NhCover item={item(link)} />);
+    expect(container.querySelector("img")).toBeNull();
+    expect(screen.getByText("Some Title")).toBeTruthy();
   });
 });

@@ -1,0 +1,25 @@
+{
+  "url": "https://3hentai.net/d/612345",
+  "description": "3hentai.net gallery page (/d/<id>), server-rendered Bootstrap layout of an nhentai mirror. Info block: div#main-info with an <h1><span class=middle-title> carrying the FULL bracketed title '(C103) [Circle (Artist)] Title (Series) [English] [Scanlator] [Digital]' (title rule must strip the event, circle/artist, parody, language, scanlator and Digital groups), a Japanese h2.subtitle, then nhentai-style div.tag-container rows whose label is a bare text node ('Series:', 'Characters:', 'Tags:', 'Artists:', 'Groups:', 'Languages:', 'Category:', 'Pages:', 'Uploaded:'); each entity is span.filter-elem > a.name with a PLURAL path (/tags/big-breasts, /artists/..., /groups/..., /series/..., /characters/..., dash slugs) whose text ends in a count badge span.tag-count '(168.2K)' / '(712)', followed by a filter button holding only an icon. Pages is a bare span; the upload date is only in <time datetime> (text is relative '9 months ago'). Cover is div#main-cover img.lazy with a placeholder src and the real URL in data-src (same as og:image). The bracketed scanlator '[Quill Jfzc]' is NOT a group and '(C103)' is an event, not a parody. Noise: navbar with Tags/Artists/Characters/Series/Groups index links, a Categories dropdown of format words and a Languages dropdown, search box, ExoClick/JuicyAds slots, 28 lazy thumbnails linking /d/<id>/<n>, a 'Related' grid of six cards whose titles name other circles/artists/parodies (one card is by the same circle about another character), and comments whose text contains fake row labels ('Artist: Quill Enys', 'Tags: netorare, ahegao', 'Pages: 28', 'Uploaded:') plus comment <time datetime> values later than the upload. Unsure of: 3hentai's exact class names (middle-title, filter-elem, tag-count, doujin-col), whether entity URLs use dash slugs or %20, whether counts are shown on the gallery page at all, the CDN host/file names (s5.3hentai.net/d<id>/cover.jpg, thumb.jpg, <n>t.jpg), the label wording ('Category' vs 'Categories'), and the comment markup; all names and ids are invented.",
+  "rendered": false,
+  "expect": {
+    "gallery": true,
+    "source_id": "612345",
+    "title_name": "Morning Ledger Gnmmbik",
+    "pages": 28,
+    "uploaded_at": "2024-01-03",
+    "image_link": "https://s5.3hentai.net/d612345/cover.jpg",
+    "tags": ["big breasts", "sole female", "sole male", "nakadashi", "paizuri", "pantyhose", "x-ray", "kissing", "mosaic censorship"],
+    "artists": ["quill juas"],
+    "groups": ["penjisf"],
+    "parodies": ["quill reop"],
+    "characters": ["quill prqv", "penfjps"],
+    "not": {
+      "tags": ["english", "translated", "japanese", "chinese", "korean", "doujinshi", "manga", "artist cg", "game cg", "western", "image set", "cosplay", "non-h", "netorare", "ahegao", "decensored", "digital", "big breasts (168.2k)", "168.2k", "filter out", "quill reop", "28"],
+      "artists": ["penooet", "quill eaau", "quill azxu", "quill fggx", "quill ruex", "quill enys", "penvcyt", "penhjmb", "quill_yydg", "quill juas (64)"],
+      "groups": ["quill jfzc", "penovba", "quill lpba", "quill anvu", "quill ftti", "quill ktwe", "pensuvq", "c103", "digital"],
+      "parodies": ["original", "quill kedo", "c103", "english"],
+      "characters": ["quill reop"]
+    }
+  }
+}

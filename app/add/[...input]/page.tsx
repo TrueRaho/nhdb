@@ -33,11 +33,11 @@ async function Resolved({ params }: { params: Promise<{ input: string[] }> }) {
   // segment) or raw ("/add/https:/hitomi.la/galleries/1234567.html", several)
   // depending on whether its URL-encode step escapes slashes. Rejoining the
   // segments makes both spellings — and a plain "/add/177013" — land on the
-  // same title, so the shortcut cannot be built wrong. Only a title link from a
-  // supported site gets past this line (lib/sources.ts).
+  // same title, so the shortcut cannot be built wrong. Only a link that looks
+  // like one title's gets past this line (lib/sources.ts).
   const raw = input.map(safeDecode).join("/");
   const ref = parseTitleRef(raw);
-  if (!ref) return <Shell note={`not a title link from a supported site: ${raw}`} error />;
+  if (!ref) return <Shell note={`not a link to a title: ${raw}`} error />;
   return <QuickAdd titleRef={ref} />;
 }
 

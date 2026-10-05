@@ -1,0 +1,8 @@
+{
+  "url": "https://ecchivault.example/view/897253/",
+  "description": "Made-up gallery site (ecchivault.example, same engine and chrome as ecchivault-picture-srcset): what the server answers at a gallery address whose gallery was taken down — a 404 page that must be REFUSED even though the address carries a gallery id (/view/897253/). The main column is section.error-box with a big '404', h1.error-title 'Gallery not found', 'This gallery has been removed. It may have been taken down at the request of the copyright holder, or deleted by its uploader.', the gallery id in a <code>, buttons and a second search form; below it a 'Trending this week' block (section.trending) of three cards, each with a lazy <picture> cover (1x1 gif src, data-srcset), a full bracketed doujin title, an artist/circle link, a tag link and an 'N pages' line. The right column is aside.side-panel with the site's 'Popular Tags' box (24 a.chip /tag/<slug>/ links with <em> count badges — exactly the chip markup a real gallery's info block uses) and a 'Popular Series' box (/series/<slug>/ chips). The <title> is 'Gallery not found - EcchiVault', there is no og:title/og:image, no Pages/Posted rows. A reader must not turn the tag cloud plus a trending card into a title. Invented site; structure is a plausible guess.",
+  "rendered": false,
+  "expect": {
+    "gallery": false
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "url": "https://doujinshelf.example/g/86341/",
+  "description": "Made-up small gallery host (doujinshelf.example, a hand-rolled engine of the kind small mirrors run). The gallery block is as bare as a title page gets: an unmarked cover column (div.g-left > a > img with a plain src, no 'cover' class, no og:image anywhere in the head), an h1 with the romanized title and an h2 with the Japanese one, a 'p.g-len' that says only '36 pages', and Read / Download / Report buttons. There are NO entity links of any kind — no tags, artists, groups, parodies or characters, no labeled rows, no upload date, no thumbnail grid — so every entity list must come back empty and uploaded_at null, but the page must still be read as a gallery (title + cover + page count, and a /g/<id>/ address). Noise: header with logo and plain nav (Latest/Random/Upload/FAQ/Sign in), a search form, a mirror-status notice, an ad iframe, an empty comments box, a footer with DMCA/Contact/RSS links, and an inline script that repeats the page count. The title is deliberately unbracketed, so the doujin-title convention has nothing to infer either. Invented site and work; the structure is a plausible guess, not a copy of a real engine.",
+  "rendered": false,
+  "expect": {
+    "gallery": true,
+    "source_id": "86341",
+    "title_name": "Morning Ledger Fnuzihx",
+    "pages": 36,
+    "uploaded_at": null,
+    "image_link": "https://img.doujinshelf.example/galleries/8610475/cover.jpg",
+    "tags": [],
+    "artists": [],
+    "groups": [],
+    "parodies": [],
+    "characters": []
+  }
+}

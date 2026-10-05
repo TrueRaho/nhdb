@@ -1,0 +1,10 @@
+{
+  "url": "https://e-hentai.org/g/8958199/cae9a87857/",
+  "description": "E-Hentai 'Content Warning' interstitial served at the gallery's own /g/<gid>/<token>/ URL for galleries flagged 'Offensive For Everyone' (until the nw cookie is set). It carries the site nav, the gallery's full title in <title> and in an <h1>, the warning text, and three links: 'View Gallery' (?nw=session, the one to follow), 'Never Warn Me Again' (?nw=always, sets a permanent preference) and 'Get Me Outta Here' (front page). There is no cover, no #gdd, no #taglist, no page count; it must be refused as not a gallery, not parsed as a title from its <h1>. Unsure of: whether the real page repeats the title in an <h1> (it at least names the gallery), the exact inline styles and bracket decoration around the links, and whether the footer is present; the gallery's name/gid/token are invented.",
+  "rendered": false,
+  "expect": {
+    "gallery": false,
+    "follow": "https://e-hentai.org/g/8958199/cae9a87857/?nw=session",
+    "source_id": "8958199/cae9a87857"
+  }
+}

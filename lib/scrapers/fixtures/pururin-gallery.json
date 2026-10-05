@@ -1,0 +1,103 @@
+{
+  "url": "https://pururin.me/gallery/86334/morning-ledger-rssbibo",
+  "description": "pururin.me gallery page (/gallery/<id>/<slug>) as served before Vue mounts (Laravel/Bootstrap 4 layout, server-rendered table, Vue components such as <gallery-rating>/<gallery-favorite> left as unknown tags). Info block: div.gallery-wrapper[itemscope itemtype=schema.org/Book] with div.cover-wrapper img[itemprop=image] (same URL as og:image) and an <h1><span itemprop=name> bilingual heading 'English / 日本語' (title is the first half), then table.table-gallery-info whose first cell is the bare row label: Artist, Circle, Parody, Contents, Character, Category, Language, Scanlator, Convention, Pages ('26 (16.42 MB)' — the size must not be read as a count), Uploader, Uploaded ('September 14, 2024', plain text), Ratings (AggregateRating microdata). Entity links go to /browse/tags/<kind>/<n>/<slug> with kinds artist/circle/parody/content/character/category/language/scanlator/convention; each link's title attribute is bilingual ('Quill Ninc / サンプルハオイサ/サンプルハオイサ') — the parody itself contains a slash, so splitting on '/' instead of ' / ' breaks it. Below the table an 'Edit Tags' modal repeats every list as JSON in hidden inputs (artist_tags, circle_tags, parody_tags, contents_tags, character_tags, scanlator_tags, convention_tags, collection_tags) with the same values. Noise: navbar Tags dropdown (/tags/<kind> index pages), a Category dropdown of format words and a Language dropdown, both linking /browse/tags/category|language/...; breadcrumb with 'Doujinshi'; 6 lazy preview thumbnails (loading.gif src, data-src .../86334/<n>t.jpg); a Related Galleries grid of 6 cards with protocol-relative lazy covers (//cdn.pururin.me/.../<id>/cover.jpg) and their own artist/circle/parody/character/content links (one card is by the same artist about Quill Kedo); comments linking another artist and writing fake row labels ('Character: PenWgbl', 'Tags: netorare', 'Uploaded:'); a footer 'Popular Contents' list of /browse/tags/content links; the scanlator 'Quill Zqxz', the convention 'Comic Market 104' and the uploader 'penpubf' are not artists/groups/tags. Unsure of: pururin.me's current class names (gallery-wrapper, cover-wrapper, box-gallery, tag-link, card-gallery, card-tags), whether the table cells wrap links in ul.list-inline, whether link titles carry the Japanese half, the exact Uploaded format (it may be relative or carry a datetime attribute), whether the edit-tags hidden inputs sit in a modal or beside the table, whether related cards list artist/tag links at all, whether comments are server-rendered, and the footer tag list; the gallery, names and ids are invented.",
+  "rendered": false,
+  "expect": {
+    "gallery": true,
+    "source_id": "86334",
+    "title_name": "Morning Ledger Rssbibo",
+    "pages": 26,
+    "uploaded_at": "2024-09-14",
+    "image_link": "https://cdn.pururin.me/assets/images/data/86334/cover.jpg",
+    "tags": [
+      "big breasts",
+      "sole female",
+      "sole male",
+      "nakadashi",
+      "paizuri",
+      "glasses",
+      "kissing",
+      "pantyhose",
+      "mosaic censorship"
+    ],
+    "artists": [
+      "quill niyc"
+    ],
+    "groups": [
+      "quill lbmc"
+    ],
+    "parodies": [
+      "quill ninc"
+    ],
+    "characters": [
+      "quill drct",
+      "quill erhc"
+    ],
+    "not": {
+      "tags": [
+        "english",
+        "japanese",
+        "chinese",
+        "doujinshi",
+        "manga",
+        "artist cg",
+        "game cg",
+        "artbook",
+        "webtoon",
+        "quill zqxz",
+        "comic market 104",
+        "comic market",
+        "maid",
+        "defloration",
+        "yukata",
+        "bathroom",
+        "bunny girl",
+        "netorare",
+        "femdom",
+        "ahegao",
+        "tentacles",
+        "futanari",
+        "schoolgirl uniform",
+        "big breasts / 巨乳",
+        "contents",
+        "16.42 mb"
+      ],
+      "artists": [
+        "quill niuc",
+        "quill imqp",
+        "quill lilq",
+        "quill ynpv",
+        "quill pghb",
+        "quill xbcf",
+        "penpubf",
+        "quill zqxz",
+        "penjwwb",
+        "penjrfm",
+        "penurln",
+        "quill niyc / 試作乙子甲戌"
+      ],
+      "groups": [
+        "quill zqxz",
+        "quill dfnl",
+        "quill pmxx",
+        "comic market 104",
+        "penpubf",
+        "comic market"
+      ],
+      "parodies": [
+        "penzrcp",
+        "quill zyaj",
+        "quill ninc / サンプルハオイサ/サンプルハオイサ",
+        "quill kedo",
+        "quill dhxh",
+        "original"
+      ],
+      "characters": [
+        "quill vdms (alter)",
+        "penzugh",
+        "quill wnyd",
+        "penwgbl"
+      ]
+    }
+  }
+}

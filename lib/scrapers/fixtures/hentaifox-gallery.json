@@ -1,0 +1,25 @@
+{
+  "url": "https://hentaifox.com/gallery/829958/",
+  "description": "HentaiFox gallery page (/gallery/<id>/), the 'gallery adults' engine as served without JS. div.gallery_top > div.gallery_left > div.cover > a > img with a PROTOCOL-RELATIVE plain src (//i.hentaifox.com/005/8603002/cover.jpg; note the image directory id 8603002 differs from the gallery id 829958), og:image with the same cover over https; div.gallery_right > div.info > h1 holding the FULL bracketed title (title rule applies); one <ul class=parodies|characters|tags|artists|groups|languages|categories> per row, each starting with a bare span.tags_text label directly inside the ul (invalid HTML, as the site serves it) and li > a.tag_btn 'name <span class=t_badge>count</span>' with plain-digit counts and relative /tag/ /parody/ /character/ /artist/ /group/ /language/ /category/ hrefs; span.i_text.pages 'Pages: 26'; NO upload date anywhere on the page (so uploaded_at is null). Hidden inputs load_dir/load_id/load_pages/gallery_id/gallery_title and the g_th = $.parseJSON('{...}') page-size blob in a script. Noise: logo <img> in the navbar, nav links to the plural index pages (/tags/ /artists/ /parodies/ /characters/ /groups/), search box, exoclick ad zones and a 728x90 banner <img> right after the info block, 10 page thumbnails img.lazy[data-src=…/Nt.jpg] with a blank.gif src, 'Related Galleries' (div.lc_galleries > div.thumb > div.inner_thumb img.lazy[data-src=…/thumb.jpg] + span.t_flag flag image + div.caption h2.g_title full bracketed titles of OTHER circles/artists, one by the same circle, + a.t_cat category link incl. 'artist cg'), footer partner links and popunder script. Unsure: whether the cover src is protocol-relative or https (gallery-dl takes the first '<img src=\"' as the cover, so I kept the navbar logo as <img class=… src=…>), whether languages/categories are rendered as ul rows exactly like the entity rows (gallery-dl reads Category up to the next '<span', consistent with a t_badge), whether the related block is titled 'Related Galleries', whether related thumbs carry flags, and the footer/ads; the gallery and every name in it are invented.",
+  "rendered": false,
+  "expect": {
+    "gallery": true,
+    "source_id": "829958",
+    "title_name": "Morning Ledger Scbpivg",
+    "pages": 26,
+    "uploaded_at": null,
+    "image_link": "https://i.hentaifox.com/005/8603002/cover.jpg",
+    "tags": ["big breasts", "huge breasts", "sole male", "ffm threesome", "nakadashi", "paizuri", "blowjob", "kimono", "x-ray"],
+    "artists": ["quill bsot"],
+    "groups": ["quill qbmi"],
+    "parodies": ["quill kedo"],
+    "characters": ["quill ksxd", "quill ieau"],
+    "not": {
+      "tags": ["english", "translated", "doujinshi", "artist cg", "japanese", "quill kedo", "quill ksxd", "quill ieau", "quill bsot", "quill qbmi", "26", "digital", "decensored"],
+      "artists": ["quill buhf", "quill iimj", "quill qnye", "quill iqvj", "quill kitm", "quill qbmi"],
+      "groups": ["quill cpmt", "quill lokz", "quill nvvg", "quill kitm", "quill bsot"],
+      "parodies": ["english", "digital", "c103"],
+      "characters": ["pentfrj", "penzugh", "quill wias", "quill kedo"]
+    }
+  }
+}

@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in required &raquo; DoujinShelf</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" type="image/png" href="/static/img/favicon-32.png" sizes="32x32">
+<link rel="stylesheet" href="/static/css/shelf.min.css?v=2.4.1">
+
+
+</head>
+<body class="page-login">
+
+<div id="top">
+  <div class="inner">
+    <a href="/" class="brand"><img src="/static/img/logo.png" alt="DoujinShelf" width="148" height="34"></a>
+    <ul class="links">
+      <li><a href="/">Latest</a></li>
+      <li><a href="/random/">Random</a></li>
+      <li><a href="/upload/">Upload</a></li>
+      <li><a href="/faq/">FAQ</a></li>
+      <li class="right"><a href="/login/?next=%2Fg%2F83625%2F">Sign in</a></li>
+    </ul>
+    <form class="search" action="/search/" method="get">
+      <input type="search" name="q" placeholder="Search titles" autocomplete="off">
+      <button type="submit" aria-label="Search">&#128269;</button>
+    </form>
+  </div>
+</div>
+
+<div id="wrap">
+  <div class="locked">
+    <div class="locked-icon"><img src="/static/img/lock.svg" alt="" width="64" height="64"></div>
+    <h1>You must be logged in to view this gallery</h1>
+    <p>Gallery <b>#83625</b> has been restricted by its uploader to registered members. Sign in, or <a href="/register/?next=%2Fg%2F83625%2F">create a free account</a> &mdash; it takes ten seconds and no e-mail is required.</p>
+
+    <form class="login-form" action="/login/" method="post">
+
+      <input type="hidden" name="next" value="/g/83625/">
+      <label for="u">Username</label>
+      <input id="u" type="text" name="username" autocomplete="username" required>
+      <label for="p">Password</label>
+      <input id="p" type="password" name="password" autocomplete="current-password" required>
+      <label class="check"><input type="checkbox" name="remember" value="1" checked> Keep me signed in</label>
+      <button type="submit" class="btn btn-primary">Sign in</button>
+      <p class="small"><a href="/login/reset/">Forgot your password?</a></p>
+    </form>
+
+    <div class="locked-why">
+      <h3>Why do some galleries need an account?</h3>
+      <p>Uploaders can limit a gallery to members when it was flagged by other users, or while a takedown request is being reviewed. Restricted galleries do not show up in search for guests.</p>
+    </div>
+  </div>
+</div>
+
+<div id="bottom">
+  <div class="inner">
+    <p><a href="/">DoujinShelf</a> &middot; <a href="/faq/">FAQ</a> &middot; <a href="/dmca/">DMCA</a> &middot; <a href="/contact/">Contact</a> &middot; <a href="/rss/">RSS</a></p>
+    <p class="small">All content is uploaded by users. Everyone depicted is 18 or older.</p>
+  </div>
+</div>
+
+
+
+</body>
+</html>

@@ -1,0 +1,25 @@
+{
+  "url": "https://imhentai.xxx/gallery/8344105/",
+  "description": "IMHentai gallery page (/gallery/<id>/), 'gallery adults' engine as served without JS. div.row.gallery_first > div.left_cover > a > img.lazy whose real cover is in data-src (https://m9.imhentai.xxx/025/h4d8fg6ngb/cover.jpg) while src is a loading_cover.gif placeholder; og:image repeats the cover. div.right_details > h1 with the FULL bracketed title including a scanlator '[Quill Zqvd]' and '[Decensored]' in the tail, p.subtitle with the Japanese title; ul.galleries_info with one <li> per row: span.tags_text label ('Parodies:', 'Characters:', 'Tags:', 'Artists:', 'Groups:', 'Languages:', 'Category:') followed by SINGLE-QUOTED a.tag links 'name <span class=badge>9,874</span>' (comma counts); the parody is a combined nhentai entity rendered as 'penvxcz <span class=split_tag>| quill cuoi</span>' (two names, one link); the language link carries a flag <img>; 'Pages: 28' and 'Posted: September 14, 2024' are both li.pages with no label span. Noise: navbar logo <img>, Browse dropdown to plural index pages, a Categories dropdown linking every format word (/category/manga/ … /category/cosplay/), a Languages dropdown (/language/english/ /language/japanese/ …), search box (name=key), exoclick zones and a 728x90 banner <img> between the info block and the 12 page thumbnails (div.gthumb img.lazy[data-src=…/Nt.jpg]), hidden inputs gallery_id/load_id/load_dir/load_pages/load_server, 'Related' with six other galleries (div.thumb > div.inner_thumb img.lazy[data-src=…/thumb.jpg] + flag image, a.thumb_cat category link, div.caption full bracketed titles by OTHER circles/artists, one by the same circle, one Chinese, one artist cg), a comments block whose text names another artist and the tags 'netorare', 'ahegao', 'full color', a commenter account named after the scanlator, footer logo and links, and the g_th $.parseJSON blob. Unsure: the exact spacing/quoting of the tag rows (gallery-dl's IMHentai extractor matches \"badge'>\" and \"href='/category/\", so single quotes there), whether split_tag text includes the '| ' (Mihon's GalleryAdults strips a '| ' prefix from it), the Posted date format (Mihon parses it from '.pages:contains(Posted:)'), whether IMHentai shows comments at all and their markup, the related block's title/markup and the ad snippets; the gallery and all names are invented.",
+  "rendered": false,
+  "expect": {
+    "gallery": true,
+    "source_id": "8344105",
+    "title_name": "Morning Ledger Vspmgwb",
+    "pages": 28,
+    "uploaded_at": "2024-09-14",
+    "image_link": "https://m9.imhentai.xxx/025/h4d8fg6ngb/cover.jpg",
+    "tags": ["sole female", "sole male", "nakadashi", "blowjob", "schoolgirl uniform", "stockings", "small breasts", "uncensored", "defloration"],
+    "artists": ["quill glme"],
+    "groups": ["quill jcyo"],
+    "parodies": ["penvxcz", "quill cuoi"],
+    "characters": ["pendxqs", "quill zrgy"],
+    "not": {
+      "tags": ["english", "translated", "doujinshi", "manga", "western", "image set", "artist cg", "game cg", "cosplay", "japanese", "chinese", "netorare", "ahegao", "full color", "decensored", "penvxcz", "pendxqs", "quill glme"],
+      "artists": ["quill nnku", "quill cwkh", "quill lneo", "quill fwla", "quill unmi", "quill zqvd", "quill_zqvd", "penvlch", "quill jcyo"],
+      "groups": ["quill hsvd", "quill jybj", "quill edot", "quill fyny", "quill zqvd", "quill_zqvd", "quill glme"],
+      "parodies": ["penvxcz | quill cuoi", "| quill cuoi", "quill cqfe", "english", "decensored"],
+      "characters": ["pencbxg", "penowkh", "penkaro", "penjzcv"]
+    }
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "url": "https://hentairox.com/gallery/880694/",
+  "description": "HentaiRox gallery page (/gallery/<id>/), a sister site on the same 'gallery adults' engine as IMHentai but with slightly different markup, as served without JS. NO og:image; div.row.gallery_first > div.left_cover > a > img.lazy with the real cover in data-src and a 1x1 data:image/gif base64 placeholder in src (plus a <noscript> copy with the real src); div.right_details > h1 with the full bracketed title (no parody tail, '[Digital]' tail) and p.subtitle Japanese title; ul.galleries_info rows li > span.tags_text label + a.tag whose name and count are BOTH child spans (span.item_name 'big breasts', span.item_count '143K' / '6.1K' abbreviated), so the link has no own text; an EMPTY 'Characters:' row (label only — the next row's links must not leak into it); parody 'original'; 'Pages:' and 'Posted:' as li.pages / li.posted with a label span, and the date is RELATIVE ('1 year ago'), so uploaded_at must be null. Noise: navbar logo (svg <img>), plural index links, a 'More' dropdown linking format words and languages, search box, ad zones and a 900x250 banner <img>, 8 page thumbnails with data-src, 'Similar galleries' with six other galleries (own covers, full bracketed titles by other circles/artists, one by the same circle, category links incl. manga and artist cg, 'NNP' page counts), and a 'Popular tags' / 'Popular artists' aside that uses the SAME a.tag > span.item_name/span.item_count markup and /tag/ /artist/ hrefs as the info block — only the region around the h1 distinguishes them. Unsure: hentairox's real CDN host (I used m1/m2.hentairox.com), whether its tag links use span.item_name/item_count or IMHentai's 'name <span class=badge>', whether it shows relative or absolute Posted dates, whether empty rows are rendered, and whether the popular-tags aside exists on gallery pages at all (added as the engine-typical sidebar noise); the gallery and all names are invented.",
+  "rendered": false,
+  "expect": {
+    "gallery": true,
+    "source_id": "880694",
+    "title_name": "Morning Ledger Yiorkgl",
+    "pages": 32,
+    "uploaded_at": null,
+    "image_link": "https://m2.hentairox.com/006/g1n3bo6blo/cover.jpg",
+    "tags": ["big breasts", "sole female", "sole male", "nakadashi", "paizuri", "glasses", "x-ray", "pantyhose", "office lady"],
+    "artists": ["quill twvu"],
+    "groups": ["quill zbex"],
+    "parodies": ["original"],
+    "characters": [],
+    "not": {
+      "tags": ["english", "translated", "doujinshi", "manga", "artist cg", "western", "game cg", "japanese", "chinese", "ahegao", "netorare", "full color", "schoolgirl uniform", "milf", "anal", "dark skin", "femdom", "twintails", "swimsuit", "original", "quill twvu", "digital", "decensored"],
+      "artists": ["quill tflh", "quill sngm", "quill zfvv", "quill etll", "quill dfup", "quill gfgo", "quill pyya", "pennjoa", "quill zbex"],
+      "groups": ["quill armp", "quill cumg", "quill bkjq", "quill djsv", "quill twvu"],
+      "parodies": ["english", "digital", "comic pendpol 2023-04"],
+      "characters": ["quill twvu", "quill zbex", "big breasts", "english", "original"]
+    }
+  }
+}

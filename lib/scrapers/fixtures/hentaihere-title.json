@@ -1,0 +1,24 @@
+{
+  "url": "https://hentaihere.com/m/S88537",
+  "description": "HentaiHere title page (/m/S<id>, Hentai2Read's sister site on the same hentaicdn.com image host), Bootstrap 3, server-rendered. The work's name is clean (no bracket groups) in three places: og:title, a HIDDEN schema.org/Book microdata block (div.hide with itemprop name/author/genre and an AggregateRating, as gallery-dl reads it), and the visible h4 > a followed by span.mngType.text-danger '[Doujinshi]' (a format word, not part of the title); a Japanese alt name sits under it in p.text-muted. Cover is #cover img with a plain src on hentaicdn.com/hentai/cover/_S<id>.jpg (same as og:image). The info block is div#info whose direct child divs are rows 'span.text-info Label:' + sibling <a> values: Catalog (the series, here 'Quill Ninc', a parody), Artist, Category ('Doujinshi', a format word), Content (the tags, comma-separated links), Status ('Completed', a link but not a tag), Views (bare number), Brief Summary (prose). Entity links are absolute /search/<kind>/<slug>/most-popular paths whose kind words are catalog/artist/category/content/status, so only 'artist' matches a common path signal and the row LABELS must classify the rest; there is no group, character, language or page-count row, and no upload date anywhere (uploaded_at null; the chapter list has none). Chapters list li.sub-chp > a[title='Tagged: -'] '1 - <name>' plus a /report/C<id> link. Noise: navbar with Directory and a Category dropdown (Doujinshi/Manga/Licensed/Artist CG links on the same /search/category/ paths as the info row), search form, breadcrumb, ad zones, 'You May Also Like' cards with covers and other artists' /search/artist/ links (one by the SAME artist), a 'Popular Today' sidebar whose items carry [Original]/[Doujinshi] mngType spans, other artists and /search/content/ tag links, a 'Popular Tags' cloud with count badges (including big breasts 11,927, which is also a real tag here), Disqus placeholder (no comments in the served HTML), login modal, footer. Unsure of: what 'Catalog' holds on the real site (I took it to be the series, consistent with hentai2read's Parody row and gallery-dl's '(Type)' in the reader title, but it could be the work type), the link URL scheme (path vs ?s= query), whether Category mixes genres in as Hentai2Read's does, whether a Book microdata block is hidden or wraps the visible heading, and the sidebar/related markup; the title, artist and ids are invented. source_id is lowercase because galleryIdOf folds the path ('S88537' -> 's88537').",
+  "rendered": false,
+  "expect": {
+    "gallery": true,
+    "source_id": "s88537",
+    "title_name": "Morning Ledger Xdyjcea",
+    "uploaded_at": null,
+    "image_link": "https://hentaicdn.com/hentai/cover/_S88537.jpg",
+    "tags": ["big breasts", "blowjob", "creampie", "glasses", "kissing", "paizuri", "pantyhose", "vanilla"],
+    "artists": ["quill mful"],
+    "groups": [],
+    "parodies": ["quill ninc"],
+    "characters": [],
+    "not": {
+      "tags": ["doujinshi", "manga", "licensed", "artist cg", "original", "completed", "quill ninc", "quill mful", "ahegao", "anal", "defloration", "femdom", "milf", "netorare", "tentacles", "uncensored", "incest", "schoolgirl", "office lady", "mind break", "48,213", "big breasts 11,927", "11,927"],
+      "artists": ["quill pyya", "quill czwi", "quill avux", "quill rtmz", "quill blmm", "quill bwew", "hentai2read"],
+      "groups": ["doujinshi", "quill mful"],
+      "parodies": ["doujinshi", "original", "completed"],
+      "characters": ["penfoih", "quill ninc"]
+    }
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "url": "https://nhentai.to/g/874533",
+  "description": "nhentai.to, a mirror that still serves the OLD (circa 2018) nhentai.net markup: #bigcontainer > #cover with a plain <img src> (no lazy attributes on the cover), #info > h1 holding the FULL bracketed title as one text node (no before/pretty/after spans, so the title rule has to be applied), h2 with the Japanese title, section#tags with .tag-container rows whose a.tag carries the name as a bare text node followed by span.count in parentheses \"(98,321)\", hrefs without a trailing slash (/tag/big-breasts), and the page count and date OUTSIDE the rows as \"<div>22 pages</div>\" and \"<div>Uploaded <time datetime>…</time></div>\". og:title is the full bracketed title too. Noise: nav that links popular tags directly (/tag/big-breasts, /tag/ahegao, /language/english), a mirror disclaimer, JuicyAds zones, thumbnails with data-src and a RELATIVE placeholder src (/img/blank.gif, not a data: URI), \"More Like This\" with five Quill Bwie galleries (one by the same circle), server-rendered comments with \"Parody:\" and an artist name in the text, and a footer linking /tag/full-color, /tag/netorare, /language/japanese, /language/chinese. Unsure: nhentai.to's exact CDN host (I recall cdn.dogehls.xyz), whether its cover is lazy-loaded, and whether it has its own comment system (reconstructed in old nhentai comment markup).",
+  "rendered": false,
+  "expect": {
+    "gallery": true,
+    "source_id": "874533",
+    "title_name": "Morning Ledger Hytjtcn",
+    "pages": 22,
+    "uploaded_at": "2020-02-14",
+    "image_link": "https://cdn.dogehls.xyz/galleries/8285414/cover.jpg",
+    "tags": ["big breasts", "blowjob", "horns", "maid", "nakadashi", "paizuri", "sole female", "sole male"],
+    "artists": ["quill txix"],
+    "groups": ["quill xqhr"],
+    "parodies": ["quill fikk"],
+    "characters": ["penuxmx", "quill oist"],
+    "not": {
+      "tags": ["english", "translated", "doujinshi", "ahegao", "full color", "netorare", "japanese", "chinese", "penuxmx", "quill txix"],
+      "artists": ["quill pcsr", "quill jybj", "quill qtcu", "penylto", "penaffb", "penlbis"],
+      "groups": ["quill wvma", "quill cwkh", "quill jaqz", "quill yeds"],
+      "parodies": ["quill bwie", "sample."],
+      "characters": ["penokvv", "penefav", "penggwn"]
+    }
+  }
+}

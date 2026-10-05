@@ -94,6 +94,8 @@ export type TrashEntry = {
   label: string;
   titleName: string;
   imageLink: string;
+  /** The title's page — its origin is the cover's Referer. "" on older lists. */
+  url: string;
   pages: number;
 };
 
@@ -113,7 +115,7 @@ export function parseTrash(raw: string | null): TrashEntry[] {
   const out: TrashEntry[] = [];
   for (const e of parsed) {
     if (!e || typeof e !== "object") continue;
-    const { hashtag, label, titleName, imageLink, pages } = e as Record<string, unknown>;
+    const { hashtag, label, titleName, imageLink, url, pages } = e as Record<string, unknown>;
     if (!isHashtag(hashtag) || seen.has(hashtag)) continue;
     seen.add(hashtag);
     out.push({
@@ -122,6 +124,7 @@ export function parseTrash(raw: string | null): TrashEntry[] {
       label: typeof label === "string" && label.length > 0 && label.length <= 80 ? label : `#${hashtag}`,
       titleName: typeof titleName === "string" ? titleName : `#${hashtag}`,
       imageLink: typeof imageLink === "string" ? imageLink : "",
+      url: typeof url === "string" ? url : "",
       pages: typeof pages === "number" && Number.isFinite(pages) ? pages : 0,
     });
   }

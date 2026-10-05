@@ -5,7 +5,7 @@ import { datasetTag, similarAnyTag, similarTag, statsTag, titleTag, titlesListTa
 import { MIN_SHARED_TITLES, rankAffinity, type AffinityRow, type TagAffinity } from "./affinity";
 import { inferGhostTags, type GhostSource, type GhostSourceKind, type GhostTag } from "./ghost";
 import { parseScrapePayload, type ScrapeEntity } from "./scrape-payload";
-import { parseTitleRef, refLabel, toTitleRef, type TitleRef } from "./sources";
+import { parseTitleRef, refLabel, titleUrl, toTitleKey, type TitleKey } from "./sources";
 import { isHashtag } from "./utils";
 import { DELETE_BATCH } from "./swipe";
 
@@ -118,10 +118,11 @@ export async function upsertScrapedTitle(userId: string, payload: unknown) {
           (SELECT hashtag FROM titles WHERE user_id = ${userId} AND source = ${s.source} AND source_id = ${s.source_id}),
           nextval('titles_foreign_hashtag_seq'))`;
     const [{ hashtag }] = await tx.$queryRaw<{ hashtag: number }[]>(Prisma.sql`
-      INSERT INTO titles (user_id, hashtag, source, source_id, title_name, image_link, pages, uploaded_at)
-      VALUES (${userId}, ${key}, ${s.source}, ${s.source_id}, ${s.title_name}, ${s.image_link}, ${s.pages},
+      INSERT INTO titles (user_id, hashtag, source, source_id, url, title_name, image_link, pages, uploaded_at)
+      VALUES (${userId}, ${key}, ${s.source}, ${s.source_id}, ${s.url}, ${s.title_name}, ${s.image_link}, ${s.pages},
               ${s.uploaded_at}::date)
       ON CONFLICT (user_id, source, source_id) DO UPDATE SET
+        url = EXCLUDED.url,
         title_name = EXCLUDED.title_name,
         image_link = EXCLUDED.image_link,
         pages = EXCLUDED.pages,
@@ -454,7 +455,7 @@ export async function getTitlesByHashtags(userId: string, hashtags: number[]) {
 // The add flow's question, "which of these are already in the collection?",
 // asked by where the titles come from — before a scrape, a title from another
 // site has no hashtag yet. Uncached for the same reason as above.
-export async function getTitlesByRefs(userId: string, refs: TitleRef[]) {
+export async function getTitlesByRefs(userId: string, refs: TitleKey[]) {
   assertUserId(userId);
   if (refs.length === 0) return [];
   return prisma.title.findMany({
@@ -630,13 +631,14 @@ export type StatsPayload = {
   /** `label` is the title's site label ("#177013", "hitomi 1234567"). */
   recentSessions: { hashtag: number; label: string; readAt: string; name: string }[];
   additions: { label: string; count: number }[];
-  mostRead: { hashtag: number; label: string; titleName: string; alterName: string; pages: number; readCount: number; firstArtist: string; imageLink: string }[];
+  /** `url` is the title's page — the cover proxy sends its origin as Referer. */
+  mostRead: { hashtag: number; label: string; titleName: string; alterName: string; pages: number; readCount: number; firstArtist: string; imageLink: string; url: string }[];
 };
 
 // "#177013" / "hitomi 1234567" for a stored row; the bare key if it is unreadable.
 function labelFor(hashtag: number, source: unknown, sourceId: unknown): string {
-  const ref = toTitleRef(source, sourceId);
-  return ref ? refLabel(ref) : `#${hashtag}`;
+  const key = toTitleKey(source, sourceId);
+  return key ? refLabel(key) : `#${hashtag}`;
 }
 
 // An unknown zone makes Postgres throw, and the value arrives from the client,
@@ -767,7 +769,7 @@ export async function getStats(userId: string, timeZone?: string): Promise<Stats
       orderBy: { readCount: "desc" },
       take: 5,
       select: {
-        hashtag: true, source: true, sourceId: true, titleName: true, alterName: true, pages: true,
+        hashtag: true, source: true, sourceId: true, url: true, titleName: true, alterName: true, pages: true,
         readCount: true, imageLink: true,
         artists: { take: 1, include: { artist: { select: { artistName: true } } } },
       },
@@ -832,6 +834,7 @@ export async function getStats(userId: string, timeZone?: string): Promise<Stats
       pages: m.pages,
       readCount: m.readCount,
       imageLink: m.imageLink,
+      url: titleUrl(m.source, m.sourceId, m.url),
       firstArtist: m.artists[0]?.artist.artistName ?? "",
     })),
   };
@@ -842,6 +845,8 @@ export type SimilarItem = {
   titleName: string;
   alterName: string;
   imageLink: string;
+  /** The title's page — the cover proxy sends its origin as Referer. */
+  url: string;
   pages: number;
   shared: number;
 };
@@ -859,15 +864,15 @@ export async function getSimilar(userId: string, hashtag: number, limit = 8): Pr
 
   const rows = await prisma.$queryRaw<{
     hashtag: number; title_name: string; alter_name: string | null;
-    image_link: string; pages: number; shared: bigint;
+    image_link: string; source: string; source_id: string; url: string | null; pages: number; shared: bigint;
   }[]>(Prisma.sql`
-    SELECT t.hashtag, t.title_name, t.alter_name, t.image_link, t.pages,
+    SELECT t.hashtag, t.title_name, t.alter_name, t.image_link, t.source, t.source_id, t.url, t.pages,
            COUNT(*)::bigint AS shared
     FROM titlestotags a
     JOIN titlestotags b ON a.user_id = b.user_id AND a.id_tag = b.id_tag AND a.hashtag <> b.hashtag
     JOIN titles t ON t.user_id = b.user_id AND t.hashtag = b.hashtag
     WHERE a.user_id = ${userId} AND a.hashtag = ${hashtag}
-    GROUP BY t.hashtag, t.title_name, t.alter_name, t.image_link, t.pages
+    GROUP BY t.hashtag, t.title_name, t.alter_name, t.image_link, t.source, t.source_id, t.url, t.pages
     HAVING COUNT(*) >= 2
     ORDER BY shared DESC
     LIMIT ${take}
@@ -878,6 +883,7 @@ export async function getSimilar(userId: string, hashtag: number, limit = 8): Pr
     titleName: r.title_name,
     alterName: r.alter_name ?? "",
     imageLink: r.image_link,
+    url: titleUrl(r.source, r.source_id, r.url),
     pages: r.pages,
     shared: Number(r.shared),
   }));

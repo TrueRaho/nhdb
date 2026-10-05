@@ -1,0 +1,23 @@
+{
+  "url": "https://hentaixcomic.com/manga/morning-ledger-pzngxsq/",
+  "description": "WordPress 'Madara' manga theme (madara 1.7.x + madara-core / wp-manga plugin) title page as served, on a hentai doujin site. Title in div.post-title > h1 that ALSO holds the badge span.manga-title-badges.hot 'HOT' (must not leak into the name) plus heavy theme whitespace. Cover: div.summary_image img.img-responsive.lazyload with src = the theme's lazy placeholder images/dflazy.jpg, data-src = the 193x278 resized thumbnail, data-srcset listing the 193w thumb and the 386w original; og:image and the Yoast JSON-LD ImageObject/thumbnailUrl give the original, which is the expected cover. Info rows are div.post-content_item > div.summary-heading > h5 'Label' + div.summary-content: Rating (RDFa AggregateRating, 'out of 212 total votes'), Rank ('4th, it has 21.3K monthly views' — not a page count), Alternative (plain text Japanese/English alt names), Author(s) /manga-author/ and Artist(s) /manga-artist/ (the same person), Genre(s) /manga-genre/ (mixes the rating word Adult and the format word Doujinshi with real genres), Type (plain text 'Doujinshi'), Tag(s) /manga-tag/; then div.post-status: Release /manga-release/2021/ (a year, not a date), Status 'Completed', comment count '5 comments'. No page count, no parody/character/group fields. Upload day: Yoast JSON-LD WebPage datePublished 2021-03-04 (dateModified and article:modified_time 2024-06-01), matching the only chapter's span.chapter-release-date 'March 4, 2021'. Noise: header nav and c-sub-header-nav genre menus (/manga-genre/), a breadcrumb with the Doujinshi genre, a 'YOU MAY ALSO LIKE' related-manga row with other covers (same dflazy placeholder, data-src) and dates, WP comments (commenters, a comment naming another artist in prose and the word netorare, comment dates), the sidebar 'Popular Manga' widget (covers, chapter links, post-on dates) and 'Genres' widget with span.count badges, footer, and Madara's hidden Bootstrap login modal (div.modal.fade#form-login with a password input; the sign-up modal it also carries is left out for size) that every Madara page has — the page is a title, not a login wall. Unsure of: whether this site keeps Madara's default 'manga' slug, whether its chapter list is server-rendered or loaded by AJAX into #manga-chapters-holder (written server-rendered here), the badge being inside vs. beside the h1 (version-dependent), the exact rating/rank markup, whether Tag(s) is shown on the summary, and the sidebar widget markup; title, names, ids and files are invented.",
+  "rendered": false,
+  "expect": {
+    "gallery": true,
+    "source_id": "morning-ledger-pzngxsq",
+    "title_name": "Morning Ledger Pzngxsq",
+    "uploaded_at": "2021-03-04",
+    "image_link": "https://hentaixcomic.com/wp-content/uploads/2021/03/morning-ledger-pzngxsq.jpg",
+    "tags": ["big breasts", "romance", "schoolgirl uniform", "teacher", "glasses", "nakadashi", "sole female", "sole male"],
+    "artists": ["quill bdwp"],
+    "groups": [],
+    "parodies": [],
+    "characters": [],
+    "not": {
+      "tags": ["adult", "doujinshi", "completed", "2021", "hot", "rating", "rank", "4th", "ahegao", "futanari", "incest", "milf", "netorare", "tentacles", "webtoon", "yuri", "manhwa", "uncensored", "trending", "all manga", "chapter 1", "quill bdwp", "morning ledger pxduqhl", "morning ledger nasqarl"],
+      "artists": ["Fixture note sziswot.", "quill_jruq", "quill hyhh", "hentaixcomic"],
+      "parodies": ["doujinshi", "quill lcax"],
+      "characters": ["penzonc"]
+    }
+  }
+}

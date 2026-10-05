@@ -1,0 +1,25 @@
+{
+  "url": "https://nhentai.net/g/838034/",
+  "description": "nhentai.net gallery page as the server sends it (impit path, no JS). #bigcontainer > #cover img.lazyload with the real cover in data-src and a 1x1 GIF data: URI in src (plus a <noscript> copy); #info > h1.title split into span.before / span.pretty / span.after, h2.title with the Japanese title, h3#gallery_id; section#tags with one .tag-container row per label (Parodies/Characters/Tags/Artists/Groups/Languages/Categories/Pages/Uploaded), entities as a.tag > span.name + span.count with abbreviated counts (\"141K\", \"6K\", \"47\"); Pages as a search link; Uploaded as time[datetime] with an absolute date. Noise: header nav linking /tags/ /artists/ /characters/ /parodies/ /groups/ (plural index pages), two ad zones (banner image + iframes), 24 page thumbnails (…/Nt.jpg), the \"More Like This\" block with five other galleries whose captions carry their own circles/artists and the same parody (one is by the same circle), an empty comment container, and the window._gallery JSON.parse(\"…\\u0022…\") blob in a script (the reader's data; it repeats the gallery's tags with types, including language/category). Unsure: whether comments are server-rendered (I believe nhentai fills #comment-container client-side from /api/gallery/<id>/comments, so it is empty here), the exact _n_app fields, and the ad zone markup.",
+  "rendered": false,
+  "expect": {
+    "gallery": true,
+    "source_id": "838034",
+    "title_name": "Morning Ledger Epwygus",
+    "pages": 24,
+    "uploaded_at": "2022-08-27",
+    "image_link": "https://t3.nhentai.net/galleries/8170593/cover.jpg",
+    "tags": ["sole female", "sole male", "nakadashi", "blowjob", "x-ray", "defloration", "stockings", "swimsuit", "tanlines"],
+    "artists": ["quill ziar"],
+    "groups": ["quill rhhv"],
+    "parodies": ["quill rfns"],
+    "characters": ["penoyud", "penunqe", "penpgoq"],
+    "not": {
+      "tags": ["english", "translated", "doujinshi", "24", "quill rfns", "penoyud", "quill ziar"],
+      "artists": ["quill clxg", "quill twpq", "quill vgjz", "quill iosx"],
+      "groups": ["quill dite", "quill cpmt", "quill iqbg", "quill qfyr"],
+      "parodies": ["quill cdpm"],
+      "characters": ["pensqja", "penlkyt"]
+    }
+  }
+}

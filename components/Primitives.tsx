@@ -4,6 +4,7 @@ import { useState, type ComponentType, type CSSProperties, type KeyboardEvent, t
 import Image from "next/image";
 import { coverSeed, itemLabel, type Item } from "../lib/data";
 import { mulberry32, paletteFor } from "../lib/cover-art";
+import { coverSrc } from "../lib/sources";
 import { cn } from "../lib/utils";
 
 /** The options for a plain boolean SegmentedToggle. */
@@ -232,7 +233,12 @@ export function SegmentedToggle<T extends string | number | boolean>({
 const SIZE_PX = { sm: 140, card: 280, large: 360 } as const;
 
 export function NhCover({ item, size = "card" }: { item: Item; size?: "card" | "large" | "sm" }) {
-  const hasImage = !!item.imageLink;
+  const src = coverSrc(item.imageLink, item.url);
+  // A cover the proxy could not get (gone upstream, a site that moved its CDN)
+  // falls back to the procedural one, title and all — not a blank gradient.
+  // Remembered per URL, so a re-scraped cover gets its own try.
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const hasImage = !!src && failedSrc !== src;
   const [loaded, setLoaded] = useState(false);
   const seed = coverSeed(item);
   const [a, b] = paletteFor(seed);
@@ -272,17 +278,24 @@ export function NhCover({ item, size = "card" }: { item: Item; size?: "card" | "
 
       {hasImage && (
         <Image
-          src={item.imageLink}
+          src={src}
           alt=""
           fill
+          unoptimized
           sizes={`${px}px`}
           loading="lazy"
           // The wrapper's procedural gradient is the placeholder; the cover fades
           // in over it once decoded — no stored blur, generated on the fly from
-          // the hashtag. The ref covers cache hits (where onLoad may not fire) by
-          // reading `complete` synchronously when the element mounts.
+          // the hashtag. The ref covers cache hits (where onLoad/onError may not
+          // fire) by reading `complete` synchronously when the element mounts;
+          // a complete image with no width is a broken one.
           onLoad={() => setLoaded(true)}
-          ref={(el) => { if (el?.complete) setLoaded(true); }}
+          onError={() => setFailedSrc(src)}
+          ref={(el) => {
+            if (!el?.complete) return;
+            if (el.naturalWidth > 0) setLoaded(true);
+            else setFailedSrc(src);
+          }}
           className={`object-cover object-top transition-opacity duration-700 ease-out ${loaded ? "opacity-100" : "opacity-0"}`}
         />
       )}

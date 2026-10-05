@@ -1,0 +1,98 @@
+{
+  "url": "https://www.simply-hentai.com/quill-rrsu/morning-ledger-celutsx",
+  "description": "Simply Hentai album page as the DOM looks AFTER its Nuxt 2 (Vue) app hydrated: div#__nuxt > <!----> > div#__layout, scoped-CSS data-v-* attributes on every element, <!----> v-if placeholders, nuxt-link-active classes, vue-meta head tags with data-n-head=\"1\" (no data-server-rendered left), a BreadcrumbList JSON-LD whose last item is the work, and the window.__NUXT__=(function(a,b,...){...}(...)) state script that still holds the album AND the related albums' series/artists/tags as JS literals. The gallery address is /<series-slug>/<album-slug> with NO number anywhere (gallery-dl reads the whole path; older links used <series>.simply-hentai.com/<album-slug>), so source_id is the album slug — NOTE galleryIdOf currently returns null for this two-segment shape, which this fixture is meant to expose. Info block: h1.album-title with the clean name (og:title the same), a Japanese h2, a stats row with '24 pages' as bare text after an svg (no 'Pages:' label), then the gallery-dl 'box' components: div.box > div.box-title 'Series' | 'Language' | 'Characters' | 'Tags' | 'Artists' + div.box-content of a.chip links on singular paths (/series/ /language/ /character/ /tag/ /artist/, dash slugs, no counts, Title Case names). No circle/group box. Upload date is 'Uploaded <span>14.06.2023</span>' in dd.mm.yyyy (the __NUXT__ created_at agrees). Cover: picture > source[type=image/webp][srcset=....webp] + img src=....jpg with vue-lazyload's lazy=\"loaded\" (the jpg equals og:image; the webp is the same image and must not win just because it comes first). Noise: header nav (Albums/Series/Characters/Artists/Tags/Images/GIFs/Videos), a hidden Language dropdown with /language/ links, search form, breadcrumb repeating the series link, ad iframes, 8 page thumbnails linking /<path>/page/N with a '+16' tile, 'Similar albums' cards with their own covers (two still lazy=\"loading\" with a placeholder src and data-src), series/artist links, dd.mm.yyyy dates and /character/ /tag/ chips (one card is by the SAME artist, one is another series), comments with fake labels ('Tags:', 'Artists:', 'Characters: PenFoih, Quill Vphm', 'Uploaded the raw too: 16.06.2023') and title= timestamps, a 'Popular tags' sidebar with count chips (Big Breasts 96.1K overlaps a real tag), a 'Popular series' list, cookie bar, footer. Unsure of: the whole post-2022 Nuxt markup (class names, whether the box-title/box-content structure survived from old.simply-hentai.com, where pages/date/stats sit, the chip classes), whether the site is Nuxt 2 or 3 (a Nuxt 3 build would carry __NUXT_DATA__ JSON instead), the CDN path shape (gallery-dl takes the album id from og:image's second-to-last segment, so I used cdn.simply-hentai.com/image/<id>/giant_thumb_<hash>.jpg), whether series names keep the slash, and the related/comments/sidebar markup; the album, artist and ids are invented. The id is series slug + album slug (lib/sources.ts galleryIdOf): an album slug alone can repeat under another series, and two titles must never share a key.",
+  "rendered": true,
+  "expect": {
+    "gallery": true,
+    "source_id": "quill-rrsu/morning-ledger-celutsx",
+    "title_name": "Morning Ledger Celutsx",
+    "pages": 24,
+    "uploaded_at": "2023-06-14",
+    "image_link": "https://cdn.simply-hentai.com/image/87846/giant_thumb_e2afd71067.jpg",
+    "tags": [
+      "big breasts",
+      "bikini",
+      "glasses",
+      "kissing",
+      "nakadashi",
+      "paizuri",
+      "sole female",
+      "sole male"
+    ],
+    "artists": [
+      "quill lqeu"
+    ],
+    "groups": [],
+    "parodies": [
+      "quill ninc"
+    ],
+    "characters": [
+      "quill drct",
+      "quill erhc"
+    ],
+    "not": {
+      "tags": [
+        "english",
+        "japanese",
+        "chinese",
+        "korean",
+        "quill ninc",
+        "quill drct",
+        "quill erhc",
+        "quill lqeu",
+        "ahegao",
+        "anal",
+        "futanari",
+        "incest",
+        "lolicon",
+        "mind break",
+        "tentacles",
+        "milf",
+        "onsen",
+        "femdom",
+        "stockings",
+        "schoolgirl uniform",
+        "defloration",
+        "netorare",
+        "netorare-free",
+        "penwgbl",
+        "penjgli",
+        "albums",
+        "images",
+        "gifs",
+        "videos",
+        "24 pages",
+        "18.4k views",
+        "big breasts 96.1k",
+        "96.1k"
+      ],
+      "artists": [
+        "quill xlla",
+        "quill ixcy",
+        "quill zxgx",
+        "penhcac",
+        "penjwwb",
+        "penjwwl",
+        "pennitp",
+        "simply hentai"
+      ],
+      "groups": [
+        "quill lqeu"
+      ],
+      "parodies": [
+        "original work",
+        "quill kedo",
+        "quill reop",
+        "penvxcz",
+        "english"
+      ],
+      "characters": [
+        "penwgbl",
+        "quill ezgv (alter)",
+        "penjgli",
+        "quill vphm",
+        "penfoih"
+      ]
+    }
+  }
+}

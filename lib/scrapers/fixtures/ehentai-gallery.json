@@ -1,0 +1,24 @@
+{
+  "url": "https://e-hentai.org/g/8032040/8e713445a8/",
+  "description": "E-Hentai gallery page (/g/<gid>/<token>/) as served to a logged-out visitor: div.gm with #gd1 cover as a div whose inline style is 'background:transparent url(https://ehgt.org/...) no-repeat' (no <img>, no OpenGraph, no JSON-LD), #gn English heading with bracketed lead/tail, #gj Japanese heading, #gdc category div 'Doujinshi', #gdn uploader link, #gdd table (Posted/Parent/Visible/Language with TR badge/File Size/Length '46 pages'/Favorited), rating map, #taglist rows td.tc 'language:' 'parody:' 'character:' 'group:' 'artist:' 'female:' 'male:' 'other:' with div.gt/div.gtl > a href=https://e-hentai.org/tag/ns:name+with+plus. Traps: 'Showing 1 - 40 of 46 images' pagination (pages must be 46, not 40); 40 thumbnail sprites in #gdt that are ALSO inline background:url(https://ehgt.org/m/...) divs (not the cover); a #gnd 'newer version' box with another gallery's title and an 'added 2024-05-20' date; Parent row linking another gid; the scanlator '[Quill Xbyx]' in the title tail and uploader 'quill_xbyx' (neither is a group/artist); comments auto-linking https://e-hentai.org/tag/artist:quill+xbcf and quoting 'female:tanlines' as plain text; language:english / language:translated rows. Unsure of: the 2024 thumbnail grid shape (#gdt.gt100 > a > div with sprite background; older pages used div.gdtm > div > a > img), whether #gd5 is wrapped in #gright, the exact placement of #gnd, the #gdo options block, the footer links and the ad snippet; the gallery itself (names, gid/token, hashes) is invented.",
+  "rendered": false,
+  "expect": {
+    "gallery": true,
+    "source_id": "8032040/8e713445a8",
+    "title_name": "Morning Ledger Grkiztb",
+    "pages": 46,
+    "uploaded_at": "2024-05-18",
+    "image_link": "https://ehgt.org/3d/9a/673664397f0eeb7a9eef8f29d7e3c2b3a39ac608-2318847-1280-1807-jpg_250.jpg",
+    "tags": ["big breasts", "kemonomimi", "nakadashi", "paizuri", "schoolgirl uniform", "swimsuit", "sole male", "mosaic censorship"],
+    "artists": ["quill ythf"],
+    "groups": ["quill zvro"],
+    "parodies": ["quill reop"],
+    "characters": ["quill zhch", "quill tsip"],
+    "not": {
+      "tags": ["english", "translated", "doujinshi", "tanlines", "decensored", "digital"],
+      "artists": ["quill xbcf", "quill_xbyx", "quill xbyx", "penktfu"],
+      "groups": ["quill xbyx", "quill_xbyx"],
+      "parodies": ["english"]
+    }
+  }
+}

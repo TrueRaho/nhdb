@@ -7,7 +7,7 @@ import { titlesListTag, datasetTag, statsTag, titleTag, similarTag, similarAnyTa
 import { revalidateTag } from "next/cache";
 import { scrapeTitle, ScrapeError, type ScrapeVia } from "@/lib/scraper";
 import { parseScrapePayload, scrapedRef, type ScrapeResult } from "@/lib/scrape-payload";
-import { parseTitleRef, refKey, SOURCES, sourceUrl, type TitleRef } from "@/lib/sources";
+import { parseTitleRef, refKey, siteName, type TitleRef } from "@/lib/sources";
 import { upsertScrapedTitle } from "@/lib/titles";
 
 // The proxied browser fallback (esp. on Render) can take ~15-30s; let the
@@ -25,12 +25,11 @@ type ScraperCall =
   | { kind: "answered"; status: number; data: unknown }
   | { kind: "unreachable"; response: NextResponse };
 
-// What a host is asked for: the canonical form of the title, never the text the
-// user pasted. nhentai keeps the bare id every host version understands; the
-// other sites go as their rebuilt gallery URL, which reads unambiguously in a
-// host's logs.
+// What a host is asked for: the title's page address as parsed here, never
+// the text the user pasted. nhentai keeps the bare id every host version
+// understands.
 function hostInput(ref: TitleRef): string {
-  return ref.source === "nhentai" ? ref.id : sourceUrl(ref);
+  return ref.source === "nhentai" ? ref.id : ref.url;
 }
 
 // Calls one scraper host. "answered" = reachable and gave a definitive verdict
@@ -196,13 +195,14 @@ export async function POST(req: Request) {
   if (!input) {
     return NextResponse.json({ error: "Missing 'input' field" }, { status: 400 });
   }
-  // Only a title from a supported site is ever scraped: a search page, a tag
-  // page or a link to anywhere else stops here — before the budget is charged
-  // and before any host is contacted (lib/sources.ts is the allow-list).
+  // Only an address that looks like ONE title's is scraped: a home page, a
+  // search, a tag list or anything that is not a link stops here — before the
+  // budget is charged and before any host is contacted (lib/sources.ts). Whether
+  // the page really is a title is for the scraper to read.
   const ref = parseTitleRef(input);
   if (!ref) {
     return NextResponse.json(
-      { error: "Not a title link from a supported site", code: "BAD_INPUT" },
+      { error: "Not a link to a title", code: "BAD_INPUT" },
       { status: 400 },
     );
   }
@@ -259,13 +259,15 @@ export async function POST(req: Request) {
       const result = await callScraper(hosts[i], ref, timeout);
 
       if (result.kind === "answered") {
-        // A 400 about a well-formed link from another site means the host
-        // does not know that site — a scraper from before multi-site support.
-        // Say so, and let a newer host further down the list try.
-        if (result.status === 400 && ref.source !== "nhentai") {
+        // A 400 about a link this app accepted, from a host that does not say
+        // it reads any site, means a scraper from before it could. Say so, and
+        // let a newer host further down the list try. A current host's 400 is
+        // its verdict (a site resolving into a private network, say) and stands.
+        const readsAnySite = (result.data as { reads?: unknown } | null)?.reads === "any-site";
+        if (result.status === 400 && ref.source !== "nhentai" && !readsAnySite) {
           lastError = NextResponse.json(
             {
-              error: `Your scraper host (${hosts[i].label || "host"}) could not read this ${SOURCES[ref.source].name} ` +
+              error: `Your scraper host (${hosts[i].label || "host"}) could not read this ${siteName(ref.source)} ` +
                 "link — it is probably running an older version. Update it and try again.",
               code: "BAD_INPUT",
             },

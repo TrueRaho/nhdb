@@ -11,7 +11,7 @@ import type { Item } from "../lib/data";
 import type { ScrapeVia } from "../lib/scraper";
 import type { ScrapeResult } from "../lib/scrape-payload";
 import { scrapedToItem } from "../lib/mappers";
-import { refKey, refLabel, SOURCES, type TitleRef } from "../lib/sources";
+import { refKey, refLabel, siteName, type TitleRef } from "../lib/sources";
 import { commitScrapedAction, findExistingTitlesAction, updateAlterNameAction } from "../app/actions";
 
 // Deliberately standalone: this route exists to open in under a second from a
@@ -38,8 +38,10 @@ type Phase =
   | { k: "error"; message: string };
 
 export function QuickAdd({ titleRef }: { titleRef: TitleRef }) {
-  // A primitive for the effect's deps: the page hands over a fresh object.
+  // Primitives for the effect's deps: the page hands over a fresh object. The
+  // key looks the title up; the address is what gets scraped.
   const ref = refKey(titleRef);
+  const page = titleRef.url;
   const [phase, setPhase] = useState<Phase>({ k: "loading", note: "checking collection…" });
   // Always starts empty and is only ever written by the user — nothing here
   // prefills it, not even the name a known title already carries. An empty
@@ -75,7 +77,7 @@ export function QuickAdd({ titleRef }: { titleRef: TitleRef }) {
           res = await fetch("/api/scrape", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ input: ref, persist: false }),
+            body: JSON.stringify({ input: page, persist: false }),
             signal: ac.signal,
           });
         } catch {
@@ -106,7 +108,7 @@ export function QuickAdd({ titleRef }: { titleRef: TitleRef }) {
     })();
 
     return () => ac.abort();
-  }, [ref, attempt]);
+  }, [ref, page, attempt]);
 
   const typedName = alterName.trim();
 
@@ -141,7 +143,7 @@ export function QuickAdd({ titleRef }: { titleRef: TitleRef }) {
     <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col gap-3 p-4">
       <header className="flex items-baseline gap-2">
         <span className="font-display text-[17px] font-bold tracking-tight text-nh-text-1">quick add</span>
-        <span className="font-mono text-[11px] text-nh-accent" title={SOURCES[titleRef.source].name}>
+        <span className="font-mono text-[11px] text-nh-accent" title={siteName(titleRef.source)}>
           {refLabel(titleRef)}
         </span>
         <span className="flex-1" />

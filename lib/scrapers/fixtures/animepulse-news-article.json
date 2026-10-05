@@ -1,0 +1,8 @@
+{
+  "url": "https://animepulse.example/article/218843/quill-bbfy-manga-gets-tv-anime-adaptation",
+  "description": "Made-up, ordinary (non-adult) anime news site (animepulse.example), an article page that must be REFUSED as not a gallery. The address has a long number in it (/article/218843/<slug>), so it passes as 'could be a title' and only the page can say no. It carries everything a careless reader takes for a title page: og:type 'article' with og:title and an og:image (the key visual), article:published_time and article:tag metas, a JSON-LD NewsArticle (headline, image, datePublished, author), an h1 headline, a large hero <img> with a srcset, a byline with an /author/ link and a concrete <time>, an aside.infobox table whose rows are labeled 'Series' (/series/ link), 'Original work' (manga by an /people/ link), 'Studio', 'Genres' (/genre/ links), 'Volumes: 9' and 'Premiere', a cast list of /character/ links, and an article footer 'Tags:' row of rel=tag /tag/ links (anime, manga, seiran-sha, …). Noise: masthead nav with /category/manga/ etc., breadcrumbs, share bar, Related News cards with images and dates, Disqus comments, a sidebar with Trending and Popular Topics /tag/ links, ad slots. A reader must not store 'Quill Bbfy Manga Gets TV Anime Adaptation…' as a title with parody 'quill bbfy' and tags 'anime'/'manga'. Invented site, work, people and companies; markup is a plausible generic news CMS layout.",
+  "rendered": false,
+  "expect": {
+    "gallery": false
+  }
+}

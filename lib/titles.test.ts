@@ -248,12 +248,31 @@ describe("search across sites", () => {
   it("finds a title by a pasted gallery link", async () => {
     expect(await orOf("https://hitomi.la/reader/1234567.html#3")).toContainEqual({ source: "hitomi", sourceId: "1234567" });
   });
+
+  it("finds a title from any site by its link, filed under the site's host", async () => {
+    expect(await orOf("https://3hentai.net/d/612345/3")).toContainEqual({ source: "3hentai.net", sourceId: "612345" });
+    expect(await orOf("https://www.myreadingmanga.info/some-title-english/"))
+      .toContainEqual({ source: "myreadingmanga.info", sourceId: "some-title-english" });
+    // typed without its scheme
+    expect(await orOf("e-hentai.org/g/899557/edd545586a/")).toContainEqual({ source: "ehentai", sourceId: "899557/edd545586a" });
+  });
+
+  it("finds a title by its legacy `source:id` text", async () => {
+    expect(await orOf("hitomi:1234567")).toContainEqual({ source: "hitomi", sourceId: "1234567" });
+  });
+
+  it("adds no title clause for a link that names no title", async () => {
+    for (const q of ["https://3hentai.net/tags/big-breasts", "https://nhentai.net/", "netorare"]) {
+      expect((await orOf(q)).some((c) => "source" in (c as object))).toBe(false);
+    }
+  });
 });
 
 const NH = "https://nhentai.net";
 const scrape: ScrapeResult = {
   source: "nhentai",
   source_id: "42",
+  url: `${NH}/g/42/`,
   title_name: "Shared source title",
   image_link: "https://t.nhentai.net/galleries/1/cover.jpg",
   pages: 20,
@@ -272,16 +291,59 @@ describe("scrape payload validation", () => {
     { ...scrape, pages: Infinity },
     { ...scrape, source_id: "2147483648" },
     { ...scrape, source: "example" },
-    { ...scrape, image_link: "https://example.test/cover.jpg" },
+    { ...scrape, source: "nhentai.xxx" }, // the address is on nhentai.net
+    { ...scrape, source_id: "42 " },
+    { ...scrape, url: "https://evil.example/g/42/" },
+    { ...scrape, url: `${NH}/g/43/` },
+    { ...scrape, url: `${NH}/tag/tag/` },
+    { ...scrape, source: "3hentai.net", source_id: "612345", url: undefined },
+    { ...scrape, image_link: "javascript:alert(1)" },
+    { ...scrape, image_link: "/galleries/1/cover.jpg" },
     { ...scrape, title_name: "x".repeat(256) },
     { ...scrape, tags: [null] },
     { ...scrape, artists: [{ ...scrape.artists[0], total_works: -1 }] },
     { ...scrape, groups: [{ ...scrape.groups[0], link: false }] },
-    { ...scrape, groups: [{ ...scrape.groups[0], link: "https://evil.example/group/" }] },
   ])("rejects malformed payload %# before starting a transaction", async (payload) => {
     await expect(upsertScrapedTitle(USER, payload)).rejects.toMatchObject({ name: "ValidationError" });
     expect(transaction).not.toHaveBeenCalled();
     expect(queryRaw).not.toHaveBeenCalled();
+  });
+
+  // An nhentai id is its hashtag, an INT4 the database keeps below 1e9. The
+  // boundary refuses one that cannot be (400) rather than let the insert fail
+  // in Postgres (500).
+  it.each([
+    { ...scrape, source_id: "2147483648", url: `${NH}/g/2147483648/` },
+    { ...scrape, source_id: "1000000000", url: undefined },
+  ])("rejects an nhentai id that cannot be a hashtag (%#) before starting a transaction", async (payload) => {
+    await expect(upsertScrapedTitle(USER, payload)).rejects.toMatchObject({ name: "ValidationError" });
+    expect(transaction).not.toHaveBeenCalled();
+  });
+
+  it("accepts a cover on any CDN", async () => {
+    queryRaw.mockImplementation(async (q) =>
+      q.strings.join("").includes("INSERT INTO titles") ? [{ hashtag: 42 }] : [{ id: 7, name: q.values[1] }]);
+    await upsertScrapedTitle(USER, { ...scrape, image_link: "https://cdn.some-other-host.net/x/cover.webp?sig=1" });
+    const title = queryRaw.mock.calls.map(([q]) => q).find((q) => q.strings.join("").includes("INSERT INTO titles"))!;
+    expect(title.values).toContain("https://cdn.some-other-host.net/x/cover.webp?sig=1");
+  });
+
+  it("drops an entity link off the title's site instead of refusing the title", async () => {
+    queryRaw.mockImplementation(async (q) =>
+      q.strings.join("").includes("INSERT INTO titles") ? [{ hashtag: 42 }] : [{ id: 7, name: q.values[1] }]);
+    await upsertScrapedTitle(USER, {
+      ...scrape,
+      groups: [{ ...scrape.groups[0], link: "https://evil.example/group/" }],
+      tags: [{ name: "tag", link: "javascript:alert(1)", total_works: 3 }],
+    });
+    expect(transaction).toHaveBeenCalledOnce();
+    const groups = queryRaw.mock.calls.map(([q]) => q).find((q) => q.strings.join("").includes('INSERT INTO "groups"'))!;
+    expect(groups.values).toEqual([USER, "group", "", 10]);
+    const tags = queryRaw.mock.calls.map(([q]) => q).find((q) => q.strings.join("").includes('INSERT INTO "tags"'))!;
+    expect(tags.values).toEqual([USER, "tag", "", 3]);
+    // links on the site are kept
+    const artists = queryRaw.mock.calls.map(([q]) => q).find((q) => q.strings.join("").includes('INSERT INTO "artists"'))!;
+    expect(artists.values).toEqual([USER, "artist", `${NH}/artist/artist/`, 10]);
   });
 });
 
@@ -356,7 +418,9 @@ describe("collection ownership", () => {
     expect(title.strings.join("?")).toContain("ON CONFLICT (user_id, source, source_id) DO UPDATE");
     expect(title.strings.join("?")).not.toContain("alter_name");
     expect(title.strings.join("?")).not.toContain("nextval");
-    expect(title.values.slice(0, 4)).toEqual([USER, 42, "nhentai", "42"]);
+    expect(title.values.slice(0, 5)).toEqual([USER, 42, "nhentai", "42", `${NH}/g/42/`]);
+    // A re-scrape refreshes the address along with the rest of the scrape.
+    expect(title.strings.join("?")).toMatch(/DO UPDATE SET[\s\S]*\burl = EXCLUDED\.url/);
     for (const model of [db.titleArtist, db.titleGroup, db.titleCharacter, db.titleParody, db.titleTag]) {
       expect(model.deleteMany).toHaveBeenCalledWith({ where: { userId: USER, hashtag: 42 } });
       expect(model.createMany).toHaveBeenCalledWith({
@@ -373,22 +437,51 @@ describe("collection ownership", () => {
     answerUpserts(1_000_000_005);
     await upsertScrapedTitle(USER, {
       ...scrape,
-      source: "hitomi",
-      source_id: "1234567",
-      image_link: "",
+      source: "3hentai.net",
+      source_id: "612345",
+      url: "https://3hentai.net/d/612345",
+      image_link: "https://s5.3hentai.net/d612345/cover.jpg",
       uploaded_at: null,
       artists: [], groups: [], characters: [], parodies: [],
-      tags: [{ name: "tag", link: "https://hitomi.la/tag/tag-all.html", total_works: 0 }],
+      tags: [{ name: "tag", link: "https://3hentai.net/tags/tag", total_works: 0 }],
     });
     const title = titleStatement();
     const sql = title.strings.join("?");
     // Reuse the row's key, else draw one — never trust a key from the payload.
     expect(sql).toMatch(/COALESCE\(\s*\(SELECT hashtag FROM titles WHERE user_id = \? AND source = \? AND source_id = \?\),\s*nextval\('titles_foreign_hashtag_seq'\)\)/);
-    expect(title.values).toEqual([USER, USER, "hitomi", "1234567", "hitomi", "1234567", scrape.title_name, "", 20, null]);
+    expect(title.values).toEqual([
+      USER, USER, "3hentai.net", "612345", "3hentai.net", "612345", "https://3hentai.net/d/612345",
+      scrape.title_name, "https://s5.3hentai.net/d612345/cover.jpg", 20, null,
+    ]);
     expect(db.titleTag.createMany).toHaveBeenCalledWith({
       data: [{ userId: USER, hashtag: 1_000_000_005, idTag: 7 }],
       skipDuplicates: true,
     });
+  });
+
+  it("files a legacy site's title under its legacy key, at its canonical page", async () => {
+    answerUpserts(1_000_000_006);
+    // The seven-site shape older hosts send: a legacy key, no url.
+    await upsertScrapedTitle(USER, {
+      ...scrape,
+      source: "hitomi",
+      source_id: "1234567",
+      url: undefined,
+      image_link: "",
+      uploaded_at: null,
+      artists: [], groups: [], characters: [], parodies: [],
+      tags: [{ name: "tag", link: "https://hitomi.la/tag/tag-all.html", total_works: 0 }],
+    });
+    expect(titleStatement().values).toEqual([
+      USER, USER, "hitomi", "1234567", "hitomi", "1234567", "https://hitomi.la/galleries/1234567.html",
+      scrape.title_name, "", 20, null,
+    ]);
+  });
+
+  it("writes the rebuilt page for a legacy nhentai payload without a url", async () => {
+    answerUpserts(42);
+    await upsertScrapedTitle(USER, { ...scrape, url: undefined });
+    expect(titleStatement().values.slice(0, 5)).toEqual([USER, 42, "nhentai", "42", `${NH}/g/42/`]);
   });
 
   it("does not let a site without counts zero another site's count", async () => {
@@ -399,11 +492,17 @@ describe("collection ownership", () => {
   });
 
   it("looks titles up by where they come from, inside the collection", async () => {
-    await getTitlesByRefs(USER, [{ source: "hitomi", id: "1" }, { source: "nhentai", id: "2" }]);
+    await getTitlesByRefs(USER, [
+      { source: "hitomi", id: "1" }, { source: "nhentai", id: "2" }, { source: "myreadingmanga.info", id: "some-title" },
+    ]);
     expect(findMany).toHaveBeenLastCalledWith(expect.objectContaining({
       where: {
         userId: USER,
-        OR: [{ source: "hitomi", sourceId: "1" }, { source: "nhentai", sourceId: "2" }],
+        OR: [
+          { source: "hitomi", sourceId: "1" },
+          { source: "nhentai", sourceId: "2" },
+          { source: "myreadingmanga.info", sourceId: "some-title" },
+        ],
       },
     }));
   });
@@ -434,6 +533,43 @@ describe("collection ownership", () => {
     expect(recent.strings.join("?")).toContain("USING (user_id, hashtag)");
     expect(findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { userId: USER, readCount: { gt: 0 } } }));
     expect(cacheTag).toHaveBeenCalledWith("stats:alice");
+  });
+
+  it("hands the most-read titles their page, rebuilding a legacy row's", async () => {
+    queryRaw.mockResolvedValue([]);
+    const most = (over: Record<string, unknown>) => ({
+      hashtag: 1, source: "nhentai", sourceId: "1", url: null, titleName: "t", alterName: null, pages: 10,
+      readCount: 2, imageLink: "", artists: [], ...over,
+    });
+    findMany.mockResolvedValueOnce([
+      most({ hashtag: 177013, sourceId: "177013" }),
+      most({ hashtag: 1_000_000_001, source: "hitomi", sourceId: "1234567" }),
+      most({ hashtag: 1_000_000_002, source: "3hentai.net", sourceId: "612345", url: "https://3hentai.net/d/612345" }),
+    ]);
+    const { mostRead } = await getStats(USER, "UTC");
+    expect(mostRead.map((m) => [m.label, m.url])).toEqual([
+      ["#177013", "https://nhentai.net/g/177013/"],
+      ["hitomi 1234567", "https://hitomi.la/galleries/1234567.html"],
+      ["3hentai 612345", "https://3hentai.net/d/612345"],
+    ]);
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({ select: expect.objectContaining({ url: true }) }));
+  });
+
+  it("hands similar titles their page", async () => {
+    const sim = (over: Record<string, unknown>) => ({
+      hashtag: 1, title_name: "t", alter_name: null, image_link: "", source: "nhentai", source_id: "1", url: null,
+      pages: 10, shared: BigInt(3), ...over,
+    });
+    queryRaw.mockResolvedValueOnce([
+      sim({ hashtag: 177013, source_id: "177013" }),
+      sim({ hashtag: 1_000_000_002, source: "3hentai.net", source_id: "612345", url: "https://3hentai.net/d/612345" }),
+    ]);
+    const items = await getSimilar(USER, 42);
+    expect(items.map((i) => i.url)).toEqual(["https://nhentai.net/g/177013/", "https://3hentai.net/d/612345"]);
+    expect(items[0]).toEqual({
+      hashtag: 177013, titleName: "t", alterName: "", imageLink: "", url: "https://nhentai.net/g/177013/", pages: 10, shared: 3,
+    });
+    expect(queryRaw.mock.calls[0][0].strings.join("?")).toMatch(/SELECT [^;]*\bt\.url\b/);
   });
 
   it("cannot join similar titles across users sharing a hashtag", async () => {

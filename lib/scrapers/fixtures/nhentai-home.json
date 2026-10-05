@@ -1,0 +1,8 @@
+{
+  "url": "https://nhentai.net/",
+  "description": "nhentai.net front page (listing, not a title): header nav, banner ad, \"Popular Now\" (div.index-popular, 5 galleries) and \"New Uploads\" (25 galleries) as div.gallery[data-tags] > a.cover > img.lazyload[data-src] + div.caption, pagination, ad iframes. Every card has a cover, a /g/<id>/ link and a full bracketed doujin title in its caption, so a page that looks for \"a cover image near a title-like string\" will be fooled. There is no h1, no #info, no entity links (/tag/x, /artist/x …) and no Pages/Uploaded rows; og:type is \"website\". Must be refused. Unsure: the exact Popular Now / New Uploads icon classes and the category tag ids (33174/33175) in data-tags.",
+  "rendered": false,
+  "expect": {
+    "gallery": false
+  }
+}

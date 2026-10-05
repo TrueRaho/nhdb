@@ -8,15 +8,14 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { NhCover } from "./Primitives";
 import { itemKey, itemLabel, type Item } from "../lib/data";
-import { parseInputs, parseTitleRef, refLabel, SOURCE_IDS, SOURCES } from "../lib/sources";
+import { parseInputs, parseRefKey, refLabel } from "../lib/sources";
 import { useScrapeJobs, type ScrapeJob } from "./ScrapeJobsProvider";
 
-const SITE_NAMES = SOURCE_IDS.map((id) => SOURCES[id].name.toLowerCase()).join(", ");
-
-// A job's key is its title ref; show it the way the rest of the app labels titles.
+// A job's key is its title's `source:id`; show it the way the rest of the app
+// labels titles.
 function jobLabel(job: ScrapeJob): string {
-  const ref = parseTitleRef(job.key);
-  return ref ? refLabel(ref) : job.input;
+  const key = parseRefKey(job.key);
+  return key ? refLabel(key) : job.input;
 }
 
 export function AddModal({ open, onClose, recentAdds, embedded, onAdd }: {
@@ -115,7 +114,7 @@ export function AddModal({ open, onClose, recentAdds, embedded, onAdd }: {
 
         <div className="flex-1 overflow-auto min-h-0 p-4">
           <div className="font-mono text-[9.5px] uppercase tracking-widest text-nh-text-3 mb-1.5">
-            title links from {SITE_NAMES} · bare numbers are nhentai ids · paste a whole tab dump — anything that is not a title is ignored
+            a title link from any gallery site · bare numbers are nhentai ids · paste a whole tab dump — links that are not a title are ignored
           </div>
           <Textarea
             value={input}

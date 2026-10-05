@@ -1,0 +1,8 @@
+{
+  "url": "https://hentaireads.example/tag/ahegao/",
+  "description": "Made-up WordPress-based doujin blog (hentaireads.example; a _s/underscores-derived theme with Yoast SEO): the archive of ONE tag, /tag/ahegao/, which must be refused. The h1.page-title is the bare tag name 'Ahegao' (the 'Tag' word sits in a separate span.archive-kicker, so the heading itself reads like a short work title), followed by a description with a count ('1,872 galleries'). Yoast declares og:type 'article' (its default for anything but the front page), og:title 'Ahegao Archives - HentaiReads', and a JSON-LD @graph with a CollectionPage whose primaryImageOfPage / thumbnailUrl is the FIRST post's cover — so a reader trusting declared metadata gets a cover and a title-like name. The body is ten <article class='post … tag-ahegao …'> teasers, each with a wp-post-image cover (srcset 300w/212w/724w, loading=lazy from the third), an h2.entry-title with a full bracketed doujin title, a concrete <time class='entry-date published' datetime=…>, 'Posted in' category links (Doujinshi/Manga/Artist CG) and 'Tagged' rel=tag links (every one includes ahegao). Around it: masthead nav with category links, search forms, ad slot, numbered pagination (188 pages), and a sidebar (aside#secondary.widget-area) with Latest Uploads and a tag cloud (div.tagcloud, aria-label counts). The address is a /tag/ path with no gallery id. Unsure: whether Yoast emits og:type 'article' or omits it on tag archives, and the exact theme markup; the site and works are invented.",
+  "rendered": false,
+  "expect": {
+    "gallery": false
+  }
+}

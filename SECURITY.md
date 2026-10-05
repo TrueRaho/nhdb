@@ -93,40 +93,82 @@ takes a table lock, defers the composite foreign keys for the rename, and
 **refuses to run if the target account already has a collection**, so it can
 never merge two libraries or overwrite one.
 
-## What can be stored: titles, and only titles
+## What can be stored: titles, from any site
 
-Titles come from seven sites (nhentai, E-Hentai, Hitomi, HentaiFox, IMHentai,
-Pururin, Hentai2Read). Anything a user types or pastes is untrusted, and so is
-anything their scraper host answers, so there are three gates — each refuses on
-its own, and none trusts the one before it:
+Titles can come from any gallery site — there is no list of sites (there was
+one, of seven, until migration 9a). Anything a user types or pastes is
+untrusted, and so is anything their scraper host answers, so there are three
+gates — each refuses on its own, and none trusts the one before it:
 
-1. **Input is an allow-list of gallery pages** (`lib/sources.ts`). A link is
-   accepted only if it matches one site's *title* page pattern (`/g/<id>/`,
-   `/gallery/<id>/`, `/galleries/<id>.html`, a Hentai2Read slug that is not one
-   of the site's own sections…). Search pages, tag pages, home pages and links
-   to any other host match nothing and are dropped — in the paste box, in
-   `?add=`, in `/add/<link>`, in `/api/scrape` (a `400` before the scrape budget
-   is charged or any host is contacted) and again on the scraper host.
-2. **The fetched address is rebuilt from the id**, never taken from the input.
-   The pasted URL — its host, path, query string — is gone after step 1; the
-   scraper fetches `SOURCES[site].url(id)` (or the site's metadata API) and
-   nothing else. A response that redirects to another host is not read
-   (`fetchHosts` per adapter), and a page without a title's markup is refused
-   as "not a title" rather than stored.
+1. **The input must look like one title's address** (`lib/sources.ts`): a web
+   address (http(s), a DNS name — never an IP literal — no credentials, the
+   scheme's own port) in which `galleryIdOf` finds a gallery id. Home, search,
+   tag, artist and listing pages are refused — in the paste box, in `?add=`, in
+   `/add/<link>`, in `/api/scrape` (a `400` before the scrape budget is charged
+   or any host is contacted) and again on the scraper host.
+2. **The page must read as a title** (`lib/scrapers/extract.ts`). A page that
+   does not say enough to be one — a listing, a 404, a login wall, a news
+   article — is refused as `NOT_FOUND` rather than stored. A redirect to
+   another site or to another title's id is not read. Every address the
+   scraper fetches, including links it follows (a content warning's "View
+   Gallery"), must resolve to public addresses only (`lib/net-address.ts`) and
+   stay on the title's site; followed links are capped at two.
 3. **The write boundary re-derives the payload** (`lib/scrape-payload.ts`),
    because a commit's payload comes back from the browser and a host's answer
    comes from a machine the user controls. Unknown keys are dropped; the source
-   must be a known site and the id its canonical form; the cover must be https
-   on that site's own image hosts (the same list `next.config.ts` lets the image
-   optimizer fetch, kept in step by a test); every entity link must be https on
-   the site itself; every string fits its column; entity counts are bounded.
-   `/api/scrape` runs the same check on a host's answer before passing it on,
-   and refuses an answer about a different title than the one asked for.
+   must be a host name (or a legacy key) and the stored `url` a web address on
+   that site whose gallery id IS the payload's id, so one title's data cannot be
+   filed under another's; the cover must be a web address; an entity link that
+   leaves the title's site is dropped (the entity is kept); every string fits
+   its column; entity counts are bounded. `/api/scrape` runs the same check on a
+   host's answer before passing it on, and refuses an answer about a different
+   title than the one asked for.
 
 In the database, `titles_source_hashtag_check` keeps the key ranges apart
-(an nhentai row's hashtag is its id, below 1e9; nothing else may sit there) and
-`(user_id, source, source_id)` is unique. The list of sites is deliberately an
-application allow-list, not a database constraint.
+(an nhentai row's hashtag is its id, below 1e9; nothing else may sit there),
+`(user_id, source, source_id)` is unique, and `titles_source_format_check` /
+`titles_url_check` are backstops for the format. Seven sites keep the short
+keys their rows were saved under before 9a (`lib/sources.ts` LEGACY) — a naming
+table for old rows, not a gate.
+
+What this no longer stops: a user storing titles from a site nobody else would
+call a gallery. That is their collection; the gates exist so that what is
+stored is a title-shaped record of a real page, and that fetching it cannot be
+turned against the deployment.
+
+## Covers: `/api/cover`
+
+Covers are not loaded from the sites' CDNs by the browser. Some CDNs serve an
+image only to a request carrying the gallery's own site as `Referer` (Hitomi's
+thumbnail host does; any of them may start), and a page on this origin cannot
+send one — nor can the Next image optimizer, which forwards no headers. So every
+cover `<img>` points at the same-origin proxy (`lib/sources.ts` `coverSrc`:
+`/api/cover?src=<cover>&ref=<title page origin>`), which fetches the cover with
+that origin as `Referer` (`lib/cover-proxy.ts`). The image optimizer is off and
+has no `remotePatterns`, so it is not a second way to fetch anything.
+
+The URL arrives from the browser and covers live on any CDN, so this is a
+server-side fetch of arbitrary client input. There is no host list behind it;
+these rules are the whole defence, and each matters on its own:
+
+- **A web address only** (`parseWebUrl`): http(s), a DNS name (no IP literal),
+  no credentials, the scheme's own port — nothing but a web server's 80/443 is
+  ever dialled.
+- **Public addresses only**, checked before every hop with
+  `assertPublicHostname`: a name can resolve anywhere, including
+  `169.254.169.254`, and every resolved address must be public.
+- **Redirects by hand** (`redirect: "manual"`), at most three, each hop
+  re-checked the same way.
+- **Only an image comes back.** The type is sniffed from the bytes (JPEG, PNG,
+  GIF, WebP, AVIF) and set by the proxy, never echoed from upstream, so an SVG or
+  HTML answer cannot run on this origin and no JSON/HTML answer from anything is
+  relayed; the body is capped at 4 MB (Vercel's response limit is 4.5 MB).
+  Responses carry `nosniff`, a `sandbox` CSP and
+  `Cross-Origin-Resource-Policy: same-origin`, so other sites cannot embed the
+  proxy.
+- **Signed-in users only**, or the deployment would be a public Referer-spoofing
+  image fetcher. Answers are cached `private` (browser only), so no shared cache
+  serves them past the check.
 
 ## Per-user scraper hosts
 
@@ -236,6 +278,13 @@ The client-side pool cap (`MAX_CONCURRENT_SCRAPES = 4`) is per tab and is about
 politeness to the tunnel, not abuse. It is not a throttle.
 
 ## Known gaps
+
+- **A signed-in user can fetch any public image through `/api/cover`**, with any
+  Referer they name. Titles come from any site, so there is no list of image
+  hosts to restrict it to; what it can reach is public web servers on 80/443
+  answering with an image of at most 4 MB, so the exposure is bandwidth, not
+  access. Sign-up is open, so this is abuse a determined account could commit;
+  if it happens, a per-user budget like the scrape budget is the fix.
 
 - **No explicit Origin check on `POST /api/scrape`.** Route Handlers get none
   from Next.js, unlike Server Actions. Session cookies are `SameSite=Lax`, so a

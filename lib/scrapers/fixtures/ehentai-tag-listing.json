@@ -1,0 +1,8 @@
+{
+  "url": "https://e-hentai.org/tag/female:big+breasts",
+  "description": "E-Hentai tag search results (/tag/female:big+breasts) in the default 'Compact' list mode (table.itg.gltc) for a logged-out visitor: site nav, the 'E-Hentai Galleries: The Free Hentai Doujinshi, Manga...' h1, the category toggle grid, the search box pre-filled with female:\"big breasts$\", 'Found about 312,415 results.', cursor-based searchnav (?next=), then one row per gallery with its own category div, hover thumbnail (first rows src=, later rows data-src= with a 1x1 data: GIF placeholder), posted date, rating, torrent icon, an <a href=/g/<gid>/<token>/> wrapping div.glink title plus div.gt title=\"namespace:tag\" chips, uploader link and 'N pages'. Fourteen distinct galleries each look like a complete little gallery card (title, cover, date, pages, namespaced tags), and the page URL itself is a /tag/ path, so it must be REFUSED as not a gallery rather than parsed as the first row. Trimmed to 14 of the 25 rows the site serves per page to stay under 30 KB. Unsure of: whether /tag/ paths still render as their own page or redirect to /?f_search=, the exact searchtext wording for tag searches, the glthumb/posted wrapper nesting, and the ad/footer snippets; all galleries, names and hashes are invented.",
+  "rendered": false,
+  "expect": {
+    "gallery": false
+  }
+}

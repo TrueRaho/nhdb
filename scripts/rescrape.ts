@@ -52,16 +52,17 @@ async function main() {
   }
   const sql = neon(process.env.DATABASE_URL!);
   const rows = (all
-    ? await sql`SELECT hashtag, source, source_id, title_name FROM titles WHERE user_id = ${userId} ORDER BY hashtag`
+    ? await sql`SELECT hashtag, source, source_id, url, title_name FROM titles WHERE user_id = ${userId} ORDER BY hashtag`
     : await sql`
-        SELECT hashtag, source, source_id, title_name FROM titles t
+        SELECT hashtag, source, source_id, url, title_name FROM titles t
         WHERE t.user_id = ${userId}
           AND NOT EXISTS (SELECT 1 FROM titlestotags tt WHERE tt.user_id = t.user_id AND tt.hashtag = t.hashtag)
         ORDER BY hashtag
-      `) as { hashtag: number; source: string; source_id: string; title_name: string }[];
-  // `source:id` — what /api/scrape parses; the hashtag of a title from another
-  // site is only the collection's key, not something its site knows.
-  const ref = (r: (typeof rows)[number]) => `${r.source}:${r.source_id}`;
+      `) as { hashtag: number; source: string; source_id: string; url: string | null; title_name: string }[];
+  // The title's page is what /api/scrape reads; a row the pre-9a app wrote has
+  // no url, and its legacy `source:id` is still something the route parses.
+  // The hashtag of a title from another site is only the collection's key.
+  const ref = (r: (typeof rows)[number]) => r.url ?? `${r.source}:${r.source_id}`;
 
   const targets = rows.slice(0, limit);
   console.log(`${rows.length} titles ${all ? "total" : "without tags"}, processing ${targets.length}`);

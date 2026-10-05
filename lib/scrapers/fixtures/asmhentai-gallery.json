@@ -1,0 +1,25 @@
+{
+  "url": "https://asmhentai.com/g/875158/",
+  "description": "AsmHentai gallery page (/g/<id>/), the 'gallery adults' engine family (same owner as HentaiFox/HentaiRox/HentaiEra) as served without JS. div.book_page > div.cover > a > img with a plain https src (no og:image in the head), div.info > h1 with the FULL bracketed title '(C103) [Circle (Artist)] Title (Quill Cqfe) [English] [Quill Xweg] [Digital]' (title rule must strip event, circle/artist, parody, language, scanlator and Digital groups) and a Japanese h2. Each row is div.tags > h3 'Label:' + div.tag_list > a.tag with relative singular paths (/parody/ /character/ /tag/ /artist/ /group/ /language/ /category/, dash slugs, trailing slash) and no count badges. The parody carries nhentai's alias inside the anchor as <span class=split_tag>| quill cuoi</span>, so the anchor text reads 'penvxcz | quill cuoi' and must be split into two names. Languages ('english', 'translated') and Category ('doujinshi') rows use the same a.tag markup as the entity rows and must not become entities. Pages is div.pages > h3 'Pages: 26'; NO upload date anywhere (uploaded_at null; comment ages are relative). Hidden inputs load_server/load_dir/load_id/t_pages/gallery_id. Noise: logo img, nav to the plural index pages, a Languages dropdown with /language/ links, search form, ad zones, 12 lazy thumbnails img.lazy[data-src=.../Nt.jpg] with a blank.gif src and a 'Show All Thumbnails (26)' button, 'Related Books' (div.preview_item with lazy thumb.jpg covers, h2.caption_title full bracketed titles naming OTHER circles/artists, one by the same circle, plus flag /language/ links and a.cat category links incl. 'artist cg' and 'manga'), comments whose text contains fake row labels ('Tags: netorare, ahegao', 'Artist: Quill Ovli', 'Pages: 26', 'Parodies: penvxcz'), footer partner links. Unsure of: whether the cover is a plain src or lazy data-src and whether og:image exists, the exact row wrapper (div.tags > h3 + div.tag_list is my best recollection; the Keiyoushi extension reads '.tags:contains(Tags:) .tag' with ownText + '.split_tag'), whether count badges are shown, whether a 'Posted:' date row exists, the related-block heading, the hidden-input names, and the whole comments markup; the gallery and every circle/artist name are invented.",
+  "rendered": false,
+  "expect": {
+    "gallery": true,
+    "source_id": "875158",
+    "title_name": "Morning Ledger Yrvoais",
+    "pages": 26,
+    "uploaded_at": null,
+    "image_link": "https://images.asmhentai.com/018/875158/cover.jpg",
+    "tags": ["big breasts", "bike shorts", "dark skin", "nakadashi", "paizuri", "sole female", "sole male", "sweating", "x-ray"],
+    "artists": ["quill trnl"],
+    "groups": ["quill xsle"],
+    "parodies": ["penvxcz", "quill cuoi"],
+    "characters": ["penowkh", "penrznp"],
+    "not": {
+      "tags": ["english", "translated", "japanese", "chinese", "doujinshi", "manga", "artist cg", "netorare", "ahegao", "penvxcz", "penowkh", "penrznp", "quill trnl", "quill xsle", "digital", "decensored", "26"],
+      "artists": ["quill aynk", "quill xtxg", "quill rlvc", "quill tqgo", "quill ovli", "quill xsle", "quill xweg", "penhxaa", "pensxwt"],
+      "groups": ["quill qipd", "quill dhxj", "quill soey", "quill elhc", "quill xemo", "quill xweg", "quill trnl", "c103", "digital"],
+      "parodies": ["penvxcz | quill cuoi", "quill cqfe", "quill eiuj", "english", "c103"],
+      "characters": ["penvxcz", "quill cuoi"]
+    }
+  }
+}

@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import type { Dataset } from "./HeaderFilter";
 import type { StatsPayload } from "../lib/titles";
 import { getStatsAction } from "../app/actions";
+import { coverSrc } from "../lib/sources";
 
 export function StatsView({ dataset, onTagClick }: {
   dataset: Dataset; onTagClick: (t: string) => void;
@@ -310,8 +311,8 @@ export function StatsView({ dataset, onTagClick }: {
               style={{ borderBottom: i < stats.mostRead.length - 1 ? "1px solid var(--nh-border)" : undefined }}
             >
               <div className="w-[30px] h-[42px] shrink-0 rounded-sm overflow-hidden relative">
-                {m.imageLink && (
-                  <Image src={m.imageLink} alt="" fill sizes="30px" className="object-cover object-top" />
+                {coverSrc(m.imageLink, m.url) && (
+                  <Image src={coverSrc(m.imageLink, m.url)} alt="" fill unoptimized sizes="30px" className="object-cover object-top" />
                 )}
               </div>
               <div className="flex-1 min-w-0">

@@ -1,0 +1,24 @@
+{
+  "url": "https://hitomi.la/galleries/8367076.html",
+  "description": "hitomi.la gallery page as the DOM after its JavaScript ran (gallery.js filled the template from ltn.gold-usergeneratedcontent.net/galleries/<id>.js). Info block: div.gallery.dj-gallery with h1#gallery-brand > a (clean title, no bracket groups), h2#artists > ul.comma-list (two artists), div.gallery-info table whose FIRST CELL is the label (Group / Type / Language / Series / Characters / Tags, no colons), tag links /tag/female%3Abig%20breasts-all.html whose text is 'big breasts ♀' (namespace only in the URL, gender only as a symbol), un-namespaced tags (/tag/full%20color-all.html), and span.date in hitomi's raw 'YYYY-MM-DD HH:MM:SS-06' form. The cover sits in a sibling div.cover-column (before the info block in source order) as <picture> with an avif <source srcset> and a protocol-relative webpbigtn <img src>; expected cover is that img src made https. The same column holds two more <h1> elements ('Read Online', 'Download') that are buttons, not titles. Thumbnail strip: first six lazyloaded, the rest class=lazyload with only data-src/data-srcset; the page count is NOT stated anywhere (thumbnails are paged by simplePager), so no pages expectation. Noise: navbar with format words (doujinshi, manga, artist CG, game CG, image set), index links for tags/artists/series/characters/groups, an 18-entry language dropdown, search box, ExoClick ad slots, and a div#related-content with five related gallery blocks (.dj/.manga/.acg) that each carry their own h1.pencbxg title, .artist-list, a table.dj-desc with the SAME first-cell labels (Series / Type / Language / Tags), namespaced tag links, their own covers and p.date; one related gallery is by the same artist (quill uspn) about a different series. Unsure of: the exact ids on the info cells (#groups, #type, ...), whether the date is span.date or a div and whether common.js rewrites it to the viewer's local time after load (kept raw), the related-section wrapper and heading, the thumbnail path names (webpsmallbigtn / avifsmallbigtn), the language display names in the info row vs listings, and the footer; all names, ids and hashes are invented.",
+  "rendered": true,
+  "expect": {
+    "gallery": true,
+    "source_id": "8367076",
+    "title_name": "Morning Ledger Djxieas",
+    "uploaded_at": "2024-02-11",
+    "image_link": "https://tn.gold-usergeneratedcontent.net/webpbigtn/d/52/b1616bc2fdc7aef1fe0cfded0329771c70be0d37dc53d40f49e851c80448cc84.webp",
+    "tags": ["big breasts", "nakadashi", "paizuri", "pantyhose", "sole female", "twintails", "sole male", "full color", "uncensored"],
+    "artists": ["quill uspn", "quill iqpv"],
+    "groups": ["quill mjle"],
+    "parodies": ["quill rfns"],
+    "characters": ["penkkrw", "penoyud"],
+    "not": {
+      "tags": ["english", "doujinshi", "manga", "artist cg", "game cg", "image set", "read online", "download", "milf", "huge breasts", "kimono", "netorare", "ahegao", "schoolgirl uniform", "nurse", "dilf", "bunny girl", "dark skin", "swimsuit", "glasses", "stockings", "ponytail", "variant set", "tentacles", "monster girl", "elf", "slime girl", "multi-work series", "big breasts ♀", "female:big breasts"],
+      "artists": ["quill fuyl", "quill fpyn", "quill iwvh", "quill gvrg", "quill jmny"],
+      "groups": ["english", "doujinshi"],
+      "parodies": ["original", "quill tvzr", "quill reop", "quill kedo"],
+      "characters": ["english"]
+    }
+  }
+}

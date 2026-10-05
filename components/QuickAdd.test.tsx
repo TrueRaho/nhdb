@@ -2,16 +2,18 @@
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QuickAdd } from "./QuickAdd";
+import type { TitleRef } from "../lib/sources";
 
 // The real action returns a complete Item (dbTitleToItem), so the stub must
 // too — a partial object would let a render bug hide behind a lenient mock.
 vi.mock("../app/actions", () => ({
   findExistingTitlesAction: vi.fn(async () => []),
-  commitScrapedAction: vi.fn(async (raw: { source: string; source_id: string }, alterName?: string) => ({
+  commitScrapedAction: vi.fn(async (raw: { source: string; source_id: string; url: string }, alterName?: string) => ({
     // The key the database hands out: nhentai's id, else a fresh one.
     hashtag: raw.source === "nhentai" ? Number(raw.source_id) : 1_000_000_001,
     source: raw.source,
     sourceId: raw.source_id,
+    url: raw.url,
     titleName: "PenXjbs",
     alterName: alterName?.trim() ?? "",
     imageLink: "",
@@ -30,9 +32,13 @@ vi.mock("../app/actions", () => ({
 }));
 import { commitScrapedAction, findExistingTitlesAction, updateAlterNameAction } from "../app/actions";
 
-const scraped = (hashtag: number, source = "nhentai") => ({
+const nhUrl = (id: number) => `https://nhentai.net/g/${id}/`;
+
+// What a scraper host answers with — the title's page address included.
+const scraped = (hashtag: number, source = "nhentai", url = nhUrl(hashtag)) => ({
   source,
   source_id: String(hashtag),
+  url,
   title_name: "PenXjbs",
   image_link: "",
   pages: 225,
@@ -48,6 +54,7 @@ const existingItem = (hashtag: number, alterName = "") => ({
   hashtag,
   source: "nhentai",
   sourceId: String(hashtag),
+  url: nhUrl(hashtag),
   titleName: "PenXjbs",
   alterName,
   imageLink: "",
@@ -82,7 +89,9 @@ function stubScrape(...responses: ({ ok: true } | { ok: false; status: number; e
   return fn;
 }
 
-const nh = (id: number) => ({ source: "nhentai" as const, id: String(id) });
+// What the /add page hands over: parseTitleRef's key plus the page to scrape.
+const nh = (id: number): TitleRef => ({ source: "nhentai", id: String(id), url: nhUrl(id) });
+const HITOMI: TitleRef = { source: "hitomi", id: "1234567", url: "https://hitomi.la/galleries/1234567.html" };
 
 const nameField = () => screen.getByLabelText(/alternative name/i) as HTMLInputElement;
 const button = () => screen.getAllByRole("button").at(-1) as HTMLButtonElement;
@@ -158,7 +167,10 @@ describe("QuickAdd — new title", () => {
     await act(async () => button().click());
 
     // One round trip creates the row AND names it.
-    expect(commitScrapedAction).toHaveBeenCalledWith(expect.objectContaining({ source: "nhentai", source_id: "177013" }), "PenEbir");
+    expect(commitScrapedAction).toHaveBeenCalledWith(
+      expect.objectContaining({ source: "nhentai", source_id: "177013", url: nhUrl(177013) }),
+      "PenEbir",
+    );
     await waitFor(() => expect(screen.getByText(/saved as "PenEbir"/i)).toBeTruthy());
   });
 
@@ -227,32 +239,67 @@ describe("QuickAdd — failures", () => {
 });
 
 describe("QuickAdd — other sites", () => {
-  it("checks the collection and scrapes by the title's ref, and shows its site", async () => {
+  it("checks the collection by the title's key, scrapes its page, and shows its site", async () => {
     const fetchFn = vi.fn(async () => ({
       ok: true,
       status: 200,
-      json: async () => ({ scraped: { ...scraped(1234567, "hitomi"), tags: [], artists: [] }, via: "impit" }),
+      json: async () => ({ scraped: { ...scraped(1234567, "hitomi", HITOMI.url), tags: [], artists: [] }, via: "impit" }),
     }) as unknown as Response);
     vi.stubGlobal("fetch", fetchFn);
-    render(<QuickAdd titleRef={{ source: "hitomi", id: "1234567" }} />);
+    render(<QuickAdd titleRef={HITOMI} />);
 
-    expect(screen.getByText("hitomi 1234567")).toBeTruthy();
+    // Labelled as ever, and named by its host on hover.
+    expect(screen.getByText("hitomi 1234567").getAttribute("title")).toBe("hitomi.la");
     await waitFor(() => expect(screen.getAllByText("PenXjbs").length).toBeGreaterThan(0));
     expect(findExistingTitlesAction).toHaveBeenCalledWith(["hitomi:1234567"]);
     const [, init] = fetchFn.mock.calls[0] as unknown as [string, { body: string }];
-    expect(JSON.parse(init.body)).toEqual({ input: "hitomi:1234567", persist: false });
+    expect(JSON.parse(init.body)).toEqual({ input: HITOMI.url, persist: false });
 
     await act(async () => button().click());
-    expect(commitScrapedAction).toHaveBeenCalledWith(expect.objectContaining({ source: "hitomi", source_id: "1234567" }), "");
+    expect(commitScrapedAction).toHaveBeenCalledWith(
+      expect.objectContaining({ source: "hitomi", source_id: "1234567", url: HITOMI.url }),
+      "",
+    );
+    await waitFor(() => expect(screen.getByText(/saved to collection/i)).toBeTruthy());
+  });
+
+  it("adds a title from a site it has never seen, by the address it was given", async () => {
+    // No list of sites: the page the share sheet handed over is what is read.
+    const page = "https://www.somesite.org/gallery/42/";
+    const fetchFn = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ scraped: { ...scraped(42, "somesite.org", page), image_link: "https://cdn.somesite-img.net/42/cover.jpg" }, via: "impit" }),
+    }) as unknown as Response);
+    vi.stubGlobal("fetch", fetchFn);
+    const { container } = render(<QuickAdd titleRef={{ source: "somesite.org", id: "42", url: page }} />);
+
+    expect(screen.getByText("somesite 42").getAttribute("title")).toBe("somesite.org");
+    await waitFor(() => expect(screen.getAllByText("PenXjbs").length).toBeGreaterThan(0));
+    expect(findExistingTitlesAction).toHaveBeenCalledWith(["somesite.org:42"]);
+    const [, init] = fetchFn.mock.calls[0] as unknown as [string, { body: string }];
+    expect(JSON.parse(init.body)).toEqual({ input: page, persist: false });
+    // The preview's cover goes through the proxy, with the page's origin as Referer.
+    const src = new URL(container.querySelector("img")!.getAttribute("src")!, window.location.href);
+    expect(src.origin).toBe(window.location.origin);
+    expect(`${src.pathname}${src.search}`).toBe(
+      `/api/cover?src=${encodeURIComponent("https://cdn.somesite-img.net/42/cover.jpg")}&ref=${encodeURIComponent("https://www.somesite.org")}`,
+    );
+
+    await act(async () => button().click());
+    expect(commitScrapedAction).toHaveBeenCalledWith(
+      expect.objectContaining({ source: "somesite.org", source_id: "42", url: page }),
+      "",
+    );
     await waitFor(() => expect(screen.getByText(/saved to collection/i)).toBeTruthy());
   });
 
   it("renames a known title from another site by the key it is stored under", async () => {
     vi.mocked(findExistingTitlesAction).mockResolvedValueOnce([
-      { ...existingItem(1_000_000_002, "old"), source: "hitomi", sourceId: "1234567" } as never,
+      { ...existingItem(1_000_000_002, "old"), source: "hitomi", sourceId: "1234567", url: HITOMI.url } as never,
     ]);
-    stubScrape({ ok: true });
-    render(<QuickAdd titleRef={{ source: "hitomi", id: "1234567" }} />);
+    const fetchFn = stubScrape({ ok: true });
+    render(<QuickAdd titleRef={HITOMI} />);
     await waitFor(() => expect(screen.getByText(/already in collection/i)).toBeTruthy());
     await act(async () => {
       const input = nameField();
@@ -262,5 +309,6 @@ describe("QuickAdd — other sites", () => {
     });
     await act(async () => button().click());
     expect(updateAlterNameAction).toHaveBeenCalledWith(1_000_000_002, "new name");
+    expect(fetchFn).not.toHaveBeenCalled();
   });
 });

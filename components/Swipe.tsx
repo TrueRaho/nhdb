@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 import { coverSeed, itemLabel, itemUrl, type Item } from "../lib/data";
 import { paletteFor } from "../lib/cover-art";
-import { SOURCES } from "../lib/sources";
+import { coverSrc, siteName } from "../lib/sources";
 import { deleteTitlesAction, getSwipeCardsAction, getSwipeDeckAction, updateAlterNameAction } from "../app/actions";
 import {
   CARD_BATCH, DELETE_BATCH, POSTPONE_GAP, PREFETCH_AHEAD, SWIPE_DISTANCE,
@@ -151,7 +151,7 @@ export function SwipeDeck({ userId }: { userId: string }) {
     setNotice(null);
     if (dir === "left") {
       setTrash(addToTrash(userId, {
-        hashtag: it.hashtag, label: itemLabel(it), titleName: it.titleName, imageLink: it.imageLink, pages: it.pages,
+        hashtag: it.hashtag, label: itemLabel(it), titleName: it.titleName, imageLink: it.imageLink, url: it.url, pages: it.pages,
       }));
       setQueue((q) => q.filter((h) => h !== it.hashtag));
       setTally((t) => ({ ...t, trashed: t.trashed + 1 }));
@@ -262,7 +262,7 @@ export function SwipeDeck({ userId }: { userId: string }) {
           <button
             type="button"
             onClick={() => openTitle(item)}
-            aria-label={`open ${itemLabel(item)} on ${SOURCES[item.source].name}`}
+            aria-label={`open ${itemLabel(item)} on ${siteName(item.source)}`}
             className="grid size-9 place-items-center rounded-lg bg-nh-pill text-nh-text-2 hover:text-nh-text-1"
           >
             <ExternalLink className="size-4" />
@@ -436,15 +436,17 @@ function RoundButton({ label, onClick, disabled, dim, tone, children }: {
 }
 
 function Cover({ item, priority }: { item: Item; priority?: boolean }) {
-  if (!item.imageLink) {
+  const src = coverSrc(item.imageLink, item.url);
+  if (!src) {
     const [a, b] = paletteFor(coverSeed(item));
     return <div className="absolute inset-0" style={{ background: `linear-gradient(160deg, ${a}, ${b})` }} />;
   }
   return (
     <Image
-      src={item.imageLink}
+      src={src}
       alt=""
       fill
+      unoptimized
       priority={priority}
       draggable={false}
       sizes="(max-width: 560px) 100vw, 520px"
@@ -537,7 +539,7 @@ function SwipeCard({ ref, item, canKeep, canPostpone, onSwipe, onBlocked, onRefu
       ref={el}
       role="group"
       aria-roledescription="card"
-      aria-label={`${item.titleName} — tap to open on ${SOURCES[item.source].name}`}
+      aria-label={`${item.titleName} — tap to open on ${siteName(item.source)}`}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
@@ -621,7 +623,7 @@ function TrashSheet({ open, onOpenChange, entries, onRestore, onDeleteAll, delet
           {entries.map((e) => (
             <div key={e.hashtag} className="flex items-center gap-3 border-b border-nh-border py-2 last:border-b-0">
               <div className="relative h-14 w-10 shrink-0 overflow-hidden rounded-sm bg-nh-pill">
-                {e.imageLink && <Image src={e.imageLink} alt="" fill sizes="40px" className="object-cover object-top" />}
+                {coverSrc(e.imageLink, e.url) && <Image src={coverSrc(e.imageLink, e.url)} alt="" fill unoptimized sizes="40px" className="object-cover object-top" />}
               </div>
               <div className="min-w-0 flex-1">
                 <div className="truncate font-display text-[13px] font-semibold text-nh-text-1">{e.titleName}</div>

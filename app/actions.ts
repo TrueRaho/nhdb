@@ -10,7 +10,7 @@ import {
   type QueryParams, type TagAffinityParams,
 } from "../lib/titles";
 import { isHashtag } from "../lib/utils";
-import { parseTitleRef, refKey, type TitleRef } from "../lib/sources";
+import { parseRefKey, parseTitleRef, refKey, type TitleKey } from "../lib/sources";
 import { CARD_BATCH } from "../lib/swipe";
 import { dbTitleToItem } from "../lib/mappers";
 import type { Item } from "../lib/data";
@@ -121,15 +121,15 @@ export async function getTitleAction(hashtag: number): Promise<Item | null> {
 // One paste's worth; parseInputs output beyond this is not a human's paste.
 const MAX_LOOKUP = 200;
 
-// Which of these titles (`source:id` refs) are already in the collection?
-// Uncached read — the add flow uses it to skip re-scraping known titles.
-// Anything that does not parse as a ref is simply not looked up.
+// Which of these titles (`source:id` keys, or anything parseTitleRef reads)
+// are already in the collection? Uncached read — the add flow uses it to skip
+// re-scraping known titles. Anything that does not parse is simply not looked up.
 export async function findExistingTitlesAction(refs: string[]): Promise<Item[]> {
   const userId = await requireUserId();
-  const parsed = new Map<string, TitleRef>();
+  const parsed = new Map<string, TitleKey>();
   for (const raw of Array.isArray(refs) ? refs.slice(0, MAX_LOOKUP) : []) {
-    const ref = typeof raw === "string" ? parseTitleRef(raw) : null;
-    if (ref) parsed.set(refKey(ref), ref);
+    const key = typeof raw === "string" ? (parseTitleRef(raw) ?? parseRefKey(raw)) : null;
+    if (key) parsed.set(refKey(key), { source: key.source, id: key.id });
   }
   if (parsed.size === 0) return [];
   const titles = await getTitlesByRefs(userId, [...parsed.values()]);

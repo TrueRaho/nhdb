@@ -1,0 +1,25 @@
+{
+  "url": "https://www.luscious.net/albums/quill-uzno-quill-ujly-morning-ledger-oirnbri-quill-jnjz-english_830956/",
+  "description": "luscious.net album page (/albums/<slug>_<id>/), a client-rendered React SPA (CRA bundles, styled-components hashed classes mixed with BEM-ish 'o-' classes), captured as the DOM after JS ran. The id is the numeric tail of the slug. Info block: div.album-info-wrapper with h1.o-h1.album-heading carrying the FULL bracketed title (lead '[Circle (Artist)]', tail '(Quill Jnjz) [English]'). Every entity is ONE kind of chip, a.o-tag > span.o-tag__text, all with the SAME /tags/search/page/1/?tagged=<ns>:<slug> href, so the kind is only in the visible text prefix: 'Artist: Quill Ujly', 'Group: Quill Uzno', 'Series: Quill Jnjz' (= parody), 'Character: ...', 'Female: Big Breasts' (namespace stripped -> tag 'big breasts'), 'Language: English' (a language, never an entity), and un-namespaced 'Kissing'/'Fingering' (plain tags). Rows 'Language:', 'Content: Hentai' and 'Genres: Doujinshi, Yuri' are labelled links (format/category words; 'Yuri' coincides with a real tag). Page count is only prose in a stats row ('32 pictures', next to '0 animated' and like/view/favorite counters) and 'Show all 32 pictures'; dates are RELATIVE only ('Created 7 months ago'), so uploaded_at is null. Cover trap: the static index.html head keeps a generic og:image (the site's share logo, og-luscious-logo.jpg) BEFORE the react-helmet og:image (data-react-helmet) that names the real cover; the real cover is also the img.album-cover-image next to the h1. Noise: header nav with Genres/Content dropdowns of format words, search box, ad iframes, uploader 'by penxlrr' (not an artist), a description with fake labels ('Translated by Quill Emsx', 'Characters: PenTxii x PenVpvx', 'Tags: yuri, wholesome', 'Pages: 32'), 8 w315 picture thumbnails, six Related Albums cards with their own covers, bracketed titles and the SAME o-tag chips (other artists/groups/series/characters; one by the same artist about Quill Foaw, one about the same series by another circle), comments with fake labels, a Trending Tags sidebar of namespaced chips, and a footer. Unsure of: luscious's real class names (album-heading, album-info-item, o-tag), whether tag hrefs are /tags/search/page/1/?tagged=ns:slug or /tags/ns:slug/, whether chips show 'Artist: X' vs 'Artist / X', whether a 'Group:' namespace exists (it may be folded into Artist), the exact stats wording, whether the page ever shows an absolute date, and the CDN file naming (cdnio/w315.luscious.net, <n>_<ULID>.640x0.jpg). All names and ids are invented.",
+  "rendered": true,
+  "expect": {
+    "gallery": true,
+    "source_id": "830956",
+    "title_name": "Morning Ledger Oirnbri",
+    "pages": 32,
+    "uploaded_at": null,
+    "image_link": "https://cdnio.luscious.net/penxlrr/830956/001_89OI8P9K8M2A5F9O3O0N3F2A1H.640x0.jpg",
+    "tags": ["yuri", "small breasts", "big breasts", "schoolgirl uniform", "cunnilingus", "kissing", "fingering"],
+    "artists": ["quill ujly"],
+    "groups": ["quill uzno"],
+    "parodies": ["quill jnjz"],
+    "characters": ["quill eqds", "quill hola"],
+    "not": {
+      "tags": ["english", "language: english", "doujinshi", "hentai", "hentai manga", "western", "artist cg", "game cg", "yaoi", "futanari", "cosplay", "real people", "non-erotic", "female: big breasts", "female:big breasts", "female: yuri", "artist: quill ujly", "quill ujly", "group: quill uzno", "quill uzno", "series: quill jnjz", "quill jnjz", "character: quill eqds", "quill eqds", "quill hola", "wholesome", "slice of life", "stockings", "dark skin", "image set", "type: image set", "elf", "huge breasts", "shota", "netorare", "ahegao", "32 pictures"],
+      "artists": ["penxlrr", "penkmqm", "quill mahu", "quill srxt", "quill jruq", "penqech", "penpeci", "pentcyy", "penqamo", "artist: quill ujly", "quill uzno"],
+      "groups": ["quill udlk", "quill bgnl", "quill emsx", "quill cazr", "penxlrr", "luscious", "group: quill uzno", "quill ujly"],
+      "parodies": ["quill fyua", "quill foaw", "quill kedo", "series: quill jnjz", "english"],
+      "characters": ["quill qvdm", "quill jaef", "quill nmlo", "quill baro", "quill fjwi", "pentxii x penvpvx", "character: quill eqds"]
+    }
+  }
+}

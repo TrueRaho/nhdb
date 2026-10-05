@@ -1,0 +1,23 @@
+{
+  "url": "https://nhentai.net/g/862946/",
+  "description": "nhentai.net gallery page as the DOM after its JavaScript ran (Playwright fallback path: page.content()). Same #info / section#tags / .tag-container engine as nhentai-gallery, but: the cover and the first six thumbnails have been swapped by the lazyload-image element (class lazyloaded, src = data-src, .webp); the rest still carry the 1x1 GIF placeholder; time[datetime] text has been rewritten to relative (\"2 years, 6 months ago\"), so the concrete date is only in the datetime/title attributes; the empty Characters and Groups rows are present but carry class \"hidden\" and an empty span.tags; the pretty title itself contains \" | \" (romaji | English), which must not be mistaken for a \"Title | Site\" separator; the bracketed tail holds a magazine \"(COMIC PenDpol 2024-03)\" that is NOT a parody and a scanlator \"[Quill Mapj]\" that is NOT a group; category is \"manga\" and parody is \"original\". Noise: nav, injected ExoClick-style ad iframes, \"More Like This\" with five galleries (one by the same artist, others by other artists, all with their own covers), and client-rendered comments whose bodies contain a fake \"Tags: netorare, ahegao\" row label and an \"Artist: Quill Olfx\" label, plus comment time[datetime] elements later than the upload. Unsure: nhentai's exact relative-time wording, the comment markup (I reconstructed it from the comment API fields), and whether 2024 uploads use .webp covers (I believe the API's \"t\":\"w\" type is real).",
+  "rendered": true,
+  "expect": {
+    "gallery": true,
+    "source_id": "862946",
+    "title_name": "Morning Ledger Tgfljzx | Morning Ledger Uwupfcb",
+    "pages": 20,
+    "uploaded_at": "2024-03-29",
+    "image_link": "https://t1.nhentai.net/galleries/8581306/cover.webp",
+    "tags": ["big breasts", "sole female", "sole male", "nakadashi", "mosaic censorship", "paizuri", "schoolgirl uniform", "glasses"],
+    "artists": ["quill ruxw"],
+    "parodies": ["original"],
+    "not": {
+      "tags": ["english", "translated", "manga", "netorare", "ahegao", "original", "quill ruxw", "20"],
+      "artists": ["quill olfx", "quill nqbp", "quill aahp", "quill aaul", "penihjk", "penhdim"],
+      "groups": ["quill mapj", "comic pendpol 2024-03", "comic pendpol"],
+      "parodies": ["comic pendpol 2024-03", "comic pendpol", "comic pendpol beast 2023-08", "comic sample shelf #112"],
+      "characters": ["senpai"]
+    }
+  }
+}

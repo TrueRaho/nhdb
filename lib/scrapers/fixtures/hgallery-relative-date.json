@@ -1,0 +1,23 @@
+{
+  "url": "https://hgallery.example/gallery/848218/",
+  "description": "Made-up gallery site (hgallery.example) on a generic 'gallery-top / gallery-info' layout of the kind many tube-style doujin mirrors use. A complete, well-tagged gallery whose ONLY date is relative: the 'Uploaded:' row says '3 days ago' with no datetime/title attribute, there is no <time>, no article:published_time, no JSON-LD and no date in any URL, so uploaded_at must be null rather than a day computed from 'now'. Everything else is ordinary and must still be read: a full bracketed h1 '(C104) [Quill Gdty (Quill Bejf)] … (Quill Reop) [English] [Digital]' plus a Japanese h2, a cover column (div.gallery-cover > a > img, also in og:image), labeled rows Parodies / Characters / Tags / Artists / Groups / Languages / Category / Pages / Uploaded with a.tag > span.name + span.count badges (8,412 / 152K style), 'Pages: 28'. Noise a careless reader would grab: nav dropdown of /category/<format>/ links, a 10-thumbnail preview grid with blank.gif placeholders and /gallery/<id>/<n>/ reader links (10 of 28), a 'More Like This' grid (section.related-galleries) of four cards with their own covers, bracketed titles, artist/group/character/tag chips and relative dates, comments that link a different artist and a tag the gallery lacks ('Fixture note kdgdibo. glasses tag'), and a footer 'Popular tags' row. Languages (english, translated) and the category (doujinshi) are not entities. Invented site, work and names; the structure is a plausible composite, not a copy of one engine.",
+  "rendered": false,
+  "expect": {
+    "gallery": true,
+    "source_id": "848218",
+    "title_name": "Morning Ledger Klotdrr",
+    "pages": 28,
+    "uploaded_at": null,
+    "image_link": "https://cdn.hgallery.example/galleries/8431651/cover.jpg",
+    "tags": ["big breasts", "sole female", "sole male", "nakadashi", "pantyhose", "schoolgirl uniform", "x-ray"],
+    "artists": ["quill bejf"],
+    "groups": ["quill gdty"],
+    "parodies": ["quill reop"],
+    "characters": ["quill xiuz", "quill yydg"],
+    "not": {
+      "tags": ["english", "translated", "doujinshi", "glasses", "ahegao", "stockings", "office lady", "netorare", "paizuri", "swimsuit", "uncensored", "full color", "milf", "femdom", "chinese", "manga", "artist cg", "cosplay"],
+      "artists": ["quill clck", "quill kjra"],
+      "groups": ["quill zvro", "quill maix"]
+    }
+  }
+}

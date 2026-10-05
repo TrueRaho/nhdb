@@ -1,5 +1,5 @@
 import { seedFromString } from "./cover-art";
-import { refKey, refLabel, sourceUrl, type SourceId, type TitleRef } from "./sources";
+import { refKey, refLabel, type TitleKey } from "./sources";
 
 // Client-facing shape of a title, produced by lib/mappers.ts from DB rows.
 export type Item = {
@@ -9,9 +9,11 @@ export type Item = {
    * preview that is not saved yet carries 0.
    */
   hashtag: number;
-  /** Where the title comes from — see lib/sources.ts. */
-  source: SourceId;
+  /** Where the title comes from: its site (host name or legacy key) — see lib/sources.ts. */
+  source: string;
   sourceId: string;
+  /** The page the title is read at, on its site. */
+  url: string;
   titleName: string;
   alterName: string;
   imageLink: string;
@@ -30,13 +32,13 @@ export type Item = {
 
 type Sourced = Pick<Item, "source" | "sourceId">;
 
-export const itemRef = (item: Sourced): TitleRef => ({ source: item.source, id: item.sourceId });
+export const itemRef = (item: Sourced): TitleKey => ({ source: item.source, id: item.sourceId });
 
 /** "#177013" for nhentai (as ever), "hitomi 1234567" for the rest. */
 export const itemLabel = (item: Sourced): string => refLabel(itemRef(item));
 
 /** The title's page on its own site. */
-export const itemUrl = (item: Sourced): string => sourceUrl(itemRef(item));
+export const itemUrl = (item: Pick<Item, "url">): string => item.url;
 
 /** Stable per-title identity for the client (job keys, dedup across a save). */
 export const itemKey = (item: Sourced): string => refKey(itemRef(item));

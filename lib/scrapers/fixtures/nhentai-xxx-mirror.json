@@ -1,0 +1,24 @@
+{
+  "url": "https://nhentai.xxx/g/830956/",
+  "description": "nhentai.xxx, an nhentai mirror on its own engine (bootstrap layout, jQuery Lazy). The gallery block is div.gallery_top > div.gt_left (cover img.lazy, real URL in data-src, a relative /front/images/ld.gif placeholder in src) + div.gt_right > div.info: an h1 with the FULL bracketed title (the title rule has to strip it), p.subtitle with the Japanese title, then div.tags > div.tag_row rows whose label span.tags_text has NO colon (\"Parodies\", \"Tags\", \"Category\"), and entities as ul.tag_list > li > a.tag_btn > span.tag_name + span.tag_count with decimal-K counts (\"18.2K\", \"9.8K\"). Below it, ul.g_info puts \"Pages: 26\" next to \"Favorites: 1,987\" and shows only a RELATIVE date (\"Posted: 2 years ago\"), so uploaded_at must be null. Noise that uses the very same /artist/x /tag/x /character/x /group/x URL shapes: the \"Related Galleries\" cards (each with its own cover, an h2 title, a doujinshi category link and its own artist/group/character/tag links; one is by the same artist), a \"Popular Tags\" and a \"Popular Artists\" sidebar, a languages dropdown in the header, JuicyAds zones, and a footer. meta keywords repeats the gallery's own entities. Unsure: this is a reconstruction — I do not remember nhentai.xxx's exact class names or whether it shows an upload date at all; the image CDN (nhentaimg.com with /<server>/<10-char id>/ paths) is from memory.",
+  "rendered": false,
+  "expect": {
+    "gallery": true,
+    "source_id": "830956",
+    "title_name": "Morning Ledger Cwyvmiv",
+    "pages": 26,
+    "uploaded_at": null,
+    "image_link": "https://i3.nhentaimg.com/017/eo4kf5io4p/cover.jpg",
+    "tags": ["big breasts", "sole female", "sole male", "nakadashi", "full color", "paizuri", "x-ray", "kimono"],
+    "artists": ["quill wjeb"],
+    "groups": ["quill qpwn"],
+    "parodies": ["quill kedo"],
+    "characters": ["quill ksxd", "penogha"],
+    "not": {
+      "tags": ["english", "translated", "doujinshi", "fox girl", "ahegao", "netorare", "dark skin", "stockings", "milf", "anal", "schoolgirl uniform", "glasses", "japanese", "chinese"],
+      "artists": ["quill eiha", "quill eolc", "quill eovx", "quill ruxw", "quill txix"],
+      "groups": ["quill emiz", "quill athh", "quill uzno"],
+      "characters": ["quill ieau", "pentwer", "pencmgj", "penludo"]
+    }
+  }
+}

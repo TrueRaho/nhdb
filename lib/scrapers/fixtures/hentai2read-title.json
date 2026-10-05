@@ -1,0 +1,24 @@
+{
+  "url": "https://hentai2read.com/morning_ledger_vhszmee/",
+  "description": "hentai2read.com title page (/<slug>/, the page that lists a title's chapters) as served (OneUI/Bootstrap 3 admin theme, jQuery). There is NO <h1>: the name is in a hidden div[itemscope itemtype=schema.org/Book].hide that holds only itemprop=name plus an AggregateRating, in og:title, and in the info block's h3.block-title link 'Morning Ledger Vhszmee <small>[Doujinshi]</small>' (the small badge is not part of the title). og:image is the site-wide noImage.png placeholder; the real cover is the img.img-responsive inside a <picture> (whose webp <source srcset> is .../cover/webp/_S86341.jpg.webp) in the 'Manga Info' div.block-content. Rows are ul.list-simple-mini > li > <b>Label</b> + a.tagButton links, with a malformed '<li class=text-muted>試作たそてね<li>' alt-title line first: Parody ('Quill Yfbg dj.' -> the series without ' dj.'), Ranking (plain text '5,812th, it has 2.3K monthly views' — not a page count), Status (Completed), Release Year ('-' placeholder in a javascript:void(0) link), Page ('52 pages' inside a javascript:void(0) link), Author and Artist (the same person under /hentai-list/author/ and /hentai-list/artist/), Category (mixes the rating 'Adult', the formats 'Doujinshi' and 'Serialized' with the genres 'Big Breasts' and 'Romance'), Content, Character, Language (English, javascript:void(0)). Parody, Category, Content AND Character links all point at /hentai-list/category/<Name>/, so the URL path cannot tell a parody or a character from a tag — only the row label can. No concrete upload date anywhere: chapter rows say 'about 1 year ago' / 'about 2 years ago'. Noise: the left nav#sidebar with a 'Popular Tags' submenu of /hentai-list/category/ links, a 'Hentai Spotlight' slider ABOVE the info block with other titles' covers and data-mid ids (one is another Quill Eagq doujin), a hidden-xs ad, a right column 'Popular This Week' list whose items carry other authors (/hentai-list/author/), parodies and characters as /hentai-list/category/ links, a 'Latest Updates' list, a Storyline paragraph naming PenFpqu in prose, the chapter list (chapter links /<slug>/<n>/, data-cid, uploader '[Anonymous]'), a Disqus placeholder, footer. Unsure of: the exact Ranking wording and whether it is a link, the Release Year/Language link shape, whether characters really go to /hentai-list/category/ (they may have their own path), the author/artist slug format (lowercase_underscore vs Title%20Case), the 'Manga Info' caption element, the Spotlight/Popular/Latest sidebar markup and its position, the chapter row markup and the search form field names; the title, names, slug and ids are invented.",
+  "rendered": false,
+  "expect": {
+    "gallery": true,
+    "source_id": "morning_ledger_vhszmee",
+    "title_name": "Morning Ledger Vhszmee",
+    "pages": 52,
+    "uploaded_at": null,
+    "image_link": "https://img1.hentaicdn.com/hentai/cover/_S86341.jpg",
+    "tags": ["big breasts", "romance", "creampie", "paizuri", "swimsuit", "x-ray"],
+    "artists": ["quill zsre"],
+    "parodies": ["quill yfbg"],
+    "characters": ["quill fjwi", "quill held"],
+    "not": {
+      "tags": ["adult", "doujinshi", "serialized", "completed", "english", "-", "ahegao", "anal", "futanari", "incest", "milf", "mind break", "netorare", "tentacles", "original", "quill yfbg dj.", "quill yfbg", "quill fjwi", "quill held", "quill siwx dj.", "quill dwyo", "quill nils", "quill zsre", "5,812th"],
+      "artists": ["anonymous", "[anonymous]", "penemgx", "quill eqat", "quill vhvu", "quill mkwl"],
+      "groups": ["quill zsre", "anonymous"],
+      "parodies": ["quill yfbg dj.", "quill siwx", "quill siwx dj.", "original", "doujinshi"],
+      "characters": ["-", "quill dwyo", "quill nils", "penfpqu"]
+    }
+  }
+}

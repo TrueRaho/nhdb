@@ -14,6 +14,8 @@ const SECRET = process.env.SCRAPER_SECRET;
 // is abuse, and buffering unbounded bodies would let a client exhaust memory.
 const MAX_BODY_BYTES = 64 * 1024;
 
+const READS = "any-site";
+
 // Constant-time bearer-token check (a plain !== compare leaks the match
 // length/prefix through timing). Unequal lengths short-circuit — that only
 // reveals the token's length, not its content.
@@ -72,25 +74,27 @@ const server = http.createServer(async (req, res) => {
        .end(JSON.stringify({ error: "Invalid JSON" }));
     return;
   }
-  // The input is a title link or id from a supported site; scrapeTitle reduces
-  // it to (site, id) through the allow-list in lib/sources.ts and fetches only
-  // the address rebuilt from that — so whoever holds the secret still cannot
-  // point this box at an arbitrary URL.
+  // The input is a title link (any site) or an nhentai id; scrapeTitle reduces
+  // it to (site, id, page) through lib/sources.ts and fetches only addresses
+  // that look like one title's and resolve to public addresses — so whoever
+  // holds the secret cannot point this box at its own network.
   if (typeof input !== "string") {
     res.writeHead(400, { "Content-Type": "application/json" })
        .end(JSON.stringify({ error: "Missing 'input' string", code: "BAD_INPUT" }));
     return;
   }
 
+  // `reads: "any-site"` tells the app this host reads any site, so a 400 from
+  // it is a verdict about the link — not a sign of an outdated host.
   try {
     const { scraped, via } = await scrapeTitle(input);
     res.writeHead(200, { "Content-Type": "application/json" })
-       .end(JSON.stringify({ scraped, via }));
+       .end(JSON.stringify({ scraped, via, reads: READS }));
   } catch (e) {
     if (e instanceof ScrapeError) {
       const status = e.code === "BAD_INPUT" ? 400 : e.code === "NOT_FOUND" ? 404 : 502;
       res.writeHead(status, { "Content-Type": "application/json" })
-         .end(JSON.stringify({ error: e.message, code: e.code }));
+         .end(JSON.stringify({ error: e.message, code: e.code, reads: READS }));
     } else {
       console.error("scrape failed:", e);
       res.writeHead(500, { "Content-Type": "application/json" })

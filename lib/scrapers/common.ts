@@ -1,42 +1,13 @@
-// What every site adapter shares: the error type, the adapter contract, and the
-// small text helpers that turn one site's markup into the common ScrapeResult.
+// What the scraper's layers share: the error type and the small text helpers
+// that turn a page's markup into the common ScrapeResult.
 
-import type { CheerioAPI } from "cheerio";
-import { cleanText, normalizeEntityName, type EntityKind, type ScrapeEntity, type ScrapeResult } from "../scrape-payload";
-import { isAllowedImageUrl, type SourceId } from "../sources";
+import { cleanText, MAX_ENTITIES_PER_KIND, normalizeEntityName, type EntityKind, type ScrapeEntity } from "../scrape-payload";
 
 export class ScrapeError extends Error {
   constructor(message: string, public code: "BAD_INPUT" | "CLOUDFLARE" | "NOT_FOUND" | "TIMEOUT") {
     super(message);
     this.name = "ScrapeError";
   }
-}
-
-export interface SiteRequest {
-  url: string;
-  method?: "GET" | "POST";
-  headers?: Record<string, string>;
-  body?: string;
-}
-
-export interface SiteAdapter {
-  /** The one request that fetches a title's metadata — built from the id alone. */
-  request(id: string): SiteRequest;
-  /**
-   * Hosts the answer may come from once redirects are followed. A gallery that
-   * redirects anywhere else (an ad page, a mirror, a login wall on another
-   * domain) is not read at all.
-   */
-  fetchHosts: readonly string[];
-  /** The site's real answer, rather than an interstitial or a stub? */
-  isComplete(body: string): boolean;
-  /** Document → title. Throws ScrapeError("NOT_FOUND") when it is not a title. */
-  parse(body: string, id: string): ScrapeResult;
-  /**
-   * Selector the browser fallback waits for. Only HTML pages behind Cloudflare
-   * have one; JSON endpoints are fetched by impit alone.
-   */
-  browserReady?: string;
 }
 
 // Cloudflare interstitials served instead of the real page.
@@ -51,7 +22,7 @@ export function looksLikeChallenge(html: string): boolean {
 }
 
 /** A whole HTML document, as opposed to an empty body or a JSON error. */
-export const looksLikeHtml = (body: string) => /<body[\s>]/i.test(body);
+export const looksLikeHtml = (body: string) => /<body[\s>]|<html[\s>]/i.test(body);
 
 const TITLE_MAX = 255;
 
@@ -131,37 +102,6 @@ export function absoluteUrl(href: string | undefined, origin: string): string {
   }
 }
 
-/** A cover on the site's own image hosts, or "" — never a link elsewhere. */
-export function coverOrEmpty(source: SourceId, href: string | undefined, origin: string): string {
-  const url = absoluteUrl(href, origin);
-  return url && isAllowedImageUrl(source, url) ? url : "";
-}
-
-/** og:image / og:title and friends, for the sites whose own markup is thin. */
-export function meta($: CheerioAPI, property: string): string {
-  return (
-    $(`meta[property="${property}"]`).attr("content") ??
-    $(`meta[name="${property}"]`).attr("content") ??
-    ""
-  ).trim();
-}
-
-// Which entity a site's row label ("Artists:", "Circle", "Contents") names.
-// "Category" is deliberately absent: Pururin uses it for the format
-// (Doujinshi, Manga), which is not a tag; a site that means genres by it says
-// so in its own adapter.
-const LABEL_KINDS: Record<string, EntityKind> = {
-  artist: "artists", artists: "artists", author: "artists", authors: "artists",
-  group: "groups", groups: "groups", circle: "groups", circles: "groups",
-  parody: "parodies", parodies: "parodies", series: "parodies",
-  character: "characters", characters: "characters",
-  tag: "tags", tags: "tags", content: "tags", contents: "tags", genre: "tags", genres: "tags",
-};
-
-export function kindFromLabel(label: string): EntityKind | null {
-  return LABEL_KINDS[label.toLowerCase().replace(/[^a-z]/g, "")] ?? null;
-}
-
 /** Collects a title's entities: names normalized, one row per name per kind. */
 export class EntityBag {
   private readonly lists: Record<EntityKind, ScrapeEntity[]> = {
@@ -172,11 +112,11 @@ export class EntityBag {
   add(kind: EntityKind, rawName: string, link: string, total_works = 0): void {
     const name = clip(normalizeEntityName(rawName));
     const key = `${kind}\u0000${name}`;
-    // A link longer than its column could not be stored; one entity is not
-    // worth failing the whole title over.
-    if (!name || !link || link.length > 255 || this.seen.has(key)) return;
+    if (!name || this.seen.has(key) || this.lists[kind].length >= MAX_ENTITIES_PER_KIND) return;
     this.seen.add(key);
-    this.lists[kind].push({ name, link, total_works });
+    // A link longer than its column could not be stored; the entity is kept
+    // without one rather than the whole title failing over it.
+    this.lists[kind].push({ name, link: link.length <= 255 ? link : "", total_works });
   }
 
   get size(): number {

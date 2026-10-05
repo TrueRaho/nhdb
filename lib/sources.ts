@@ -1,263 +1,358 @@
-// The sites a title can come from, and the only shapes their addresses may take.
+// Where a title comes from — any gallery site, recognised by the shape of its
+// address instead of a list of sites.
 //
-// Everything that turns user input into "a title to scrape" goes through here:
-// the add box, the `?add=` deep link, the `/add/<link>` share target, the
-// /api/scrape route and the scraper host. Recognition is an ALLOW-LIST of
-// gallery-page patterns, one set per site — a search page, a tag page, a home
-// page or a link to anywhere else matches nothing and is dropped. The id is
-// pulled out of the match and the address the scraper actually fetches is
-// rebuilt from it (`sourceUrl`), so a pasted URL never reaches a fetch as-is:
-// whatever surrounded the id (another host, a query string, a path that
-// redirects elsewhere) is gone.
+// A title's identity is (source, id):
+//   source — the site: its host name without "www." ("hentaifox.com"). Seven
+//            sites were known by name before the app could read any site, and
+//            keep the short keys their rows were saved under ("nhentai",
+//            "ehentai"…, see LEGACY) so those rows stay the same titles. That
+//            is a naming table for old rows, not a list of what may be added.
+//   id     — the part of the gallery's address that names it on its site,
+//            found by `galleryIdOf` from patterns gallery engines share: a path
+//            word like /g/ /gallery/ /view/ followed by a number or slug, a
+//            long number, a slug ending in one, an ?id= query.
+// The page address itself is kept with the title (`url`); nothing rebuilds one.
 //
-// Client-safe on purpose (no node imports): the browser parses pastes with it.
+// What a page IS (a gallery, or a listing, a search, a login wall) is decided
+// by the scraper reading it (lib/scrapers/extract.ts) — an address alone can
+// only say "this could be a gallery". Client-safe (no node imports): the paste
+// box parses with it.
 
-export const SOURCE_IDS = [
-  "nhentai",
-  "ehentai",
-  "hitomi",
-  "hentaifox",
-  "imhentai",
-  "pururin",
-  "hentai2read",
-] as const;
-
-export type SourceId = (typeof SOURCE_IDS)[number];
-
-/** One title on one site. `id` is canonical — see `SourceDef.normalizeId`. */
-export interface TitleRef {
-  source: SourceId;
+/** A title, by where it comes from. */
+export interface TitleKey {
+  /** The site: a host name ("hentaifox.com") or a legacy key ("nhentai"). */
+  source: string;
+  /** The gallery's id on that site — see `galleryIdOf`. */
   id: string;
 }
 
-interface SourceDef {
-  /** Display name. */
-  name: string;
-  /** Compact label for badges. */
-  short: string;
-  /** Hosts the site serves pages from. Entity links must point at one of them. */
-  hosts: readonly string[];
-  /**
-   * Hosts covers may be loaded from, in next/image `remotePatterns` syntax
-   * (`*.` = exactly one subdomain label). next.config.ts lists the same set —
-   * lib/sources.test.ts keeps the two in step — so a stored cover is always one
-   * the image optimizer will serve.
-   */
-  imageHosts: readonly string[];
-  /** Gallery-page addresses, matched anywhere inside a token. Global regexes. */
-  patterns: readonly RegExp[];
-  /** A match → the canonical id, or null when the captured value is not one. */
-  idFromMatch(m: RegExpMatchArray): string | null;
-  /** A raw id (from `source:id` text or a stored row) → canonical, or null. */
-  normalizeId(raw: string): string | null;
-  /** The gallery page a reader opens, and the page the scraper starts from. */
-  url(id: string): string;
+/** A title to scrape: its key plus the page to read it from. */
+export interface TitleRef extends TitleKey {
+  url: string;
 }
 
-// A positive decimal id, leading zeros dropped. Capped at nine digits: the
-// database keeps nhentai ids below 1e9 (the range above is where titles from
-// the other sites get their internal keys — see migration 9).
-function numericId(raw: string | undefined): string | null {
-  if (!raw || !/^\d{1,12}$/.test(raw)) return null;
-  const n = Number(raw);
-  return n > 0 && n < 1_000_000_000 ? String(n) : null;
-}
+// ---------------------------------------------------------------------------
+// The seven sites with legacy keys
+// ---------------------------------------------------------------------------
 
-// hentai2read addresses a title by slug, not number, so its pattern is the one
-// place a bare path segment counts. Slugs are lowercase words joined by
-// underscores; the site's own sections use hyphens (`hentai-list`) and fall
-// out of the pattern, and the single-word ones are listed here. The scraper
-// still refuses a page without the title markup, so a section missing from
-// this list fails as "not a title" instead of being stored.
-const H2R_RESERVED = new Set([
-  "about", "account", "admin", "api", "artist", "artists", "assets", "author",
-  "authors", "blog", "bookmark", "bookmarks", "categories", "category", "cdn",
-  "comments", "contact", "css", "dmca", "doujinshi", "faq", "feed", "forum",
-  "help", "hentai", "home", "images", "img", "index", "js", "latest", "list",
-  "login", "logout", "manga", "new", "news", "page", "popular", "privacy",
-  "profile", "random", "read", "reader", "register", "rss", "search", "settings",
-  "sitemap", "static", "support", "tag", "tags", "terms", "top", "upload",
-  "uploads", "user", "users",
-]);
-
-function h2rSlug(raw: string | undefined): string | null {
-  if (!raw) return null;
-  const slug = raw.toLowerCase();
-  if (slug.length > 120 || !/^[a-z0-9]+(?:_[a-z0-9]+)*$/.test(slug)) return null;
-  return H2R_RESERVED.has(slug) ? null : slug;
-}
-
-export const SOURCES: Record<SourceId, SourceDef> = {
-  nhentai: {
-    name: "nhentai",
-    short: "nh",
-    hosts: ["nhentai.net"],
-    // t.nhentai.net, t1–t7, i, i1–i5 — any single-label subdomain
-    imageHosts: ["*.nhentai.net"],
-    patterns: [/nhentai\.net\/g\/(\d+)/gi],
-    idFromMatch: (m) => numericId(m[1]),
-    normalizeId: (raw) => numericId(raw.replace(/^#/, "")),
-    url: (id) => `https://nhentai.net/g/${id}/`,
-  },
-  ehentai: {
-    name: "E-Hentai",
-    short: "eh",
-    hosts: ["e-hentai.org"],
-    imageHosts: ["ehgt.org", "*.ehgt.org"],
-    // A gallery is addressed by its numeric gid AND a 10-hex token; neither
-    // alone opens it, so the canonical id carries both: "899557/edd545586a".
-    patterns: [/e-hentai\.org\/(?:g|mpv)\/(\d+)\/([0-9a-f]{10})/gi],
-    idFromMatch: (m) => {
-      const gid = numericId(m[1]);
-      return gid ? `${gid}/${m[2].toLowerCase()}` : null;
-    },
-    normalizeId: (raw) => {
-      const m = raw.match(/^(\d+)\/([0-9a-f]{10})$/i);
-      const gid = m ? numericId(m[1]) : null;
-      return gid ? `${gid}/${m![2].toLowerCase()}` : null;
-    },
-    url: (id) => `https://e-hentai.org/g/${id}/`,
-  },
-  hitomi: {
-    name: "Hitomi",
-    short: "hitomi",
-    hosts: ["hitomi.la"],
-    imageHosts: ["*.gold-usergeneratedcontent.net", "*.hitomi.la"],
-    // /galleries/123.html, /reader/123.html, and the slugged type pages
-    // (/doujinshi/some-title-english-123.html) all end in "-<id>.html".
-    patterns: [
-      /hitomi\.la\/(?:galleries|reader|doujinshi|manga|cg|gamecg|imageset|anime)\/(?:[^/?#\s]*-)?(\d+)\.html/gi,
-    ],
-    idFromMatch: (m) => numericId(m[1]),
-    normalizeId: (raw) => numericId(raw),
-    url: (id) => `https://hitomi.la/galleries/${id}.html`,
-  },
-  hentaifox: {
-    name: "HentaiFox",
-    short: "hfox",
-    hosts: ["hentaifox.com"],
-    imageHosts: ["*.hentaifox.com"],
-    // /gallery/<id>/ is the title page, /g/<id>/<page>/ the reader.
-    patterns: [/hentaifox\.com\/(?:gallery|g)\/(\d+)/gi],
-    idFromMatch: (m) => numericId(m[1]),
-    normalizeId: (raw) => numericId(raw),
-    url: (id) => `https://hentaifox.com/gallery/${id}/`,
-  },
-  imhentai: {
-    name: "IMHentai",
-    short: "imh",
-    hosts: ["imhentai.xxx"],
-    imageHosts: ["*.imhentai.xxx"],
-    // /gallery/<id>/ is the title page, /view/<id>/<page>/ the reader.
-    patterns: [/imhentai\.xxx\/(?:gallery|view)\/(\d+)/gi],
-    idFromMatch: (m) => numericId(m[1]),
-    normalizeId: (raw) => numericId(raw),
-    url: (id) => `https://imhentai.xxx/gallery/${id}/`,
-  },
-  pururin: {
-    name: "Pururin",
-    short: "pururin",
-    hosts: ["pururin.me"],
-    imageHosts: ["*.pururin.me"],
-    // pururin.to / .io are the site's former domains; the ids carried over.
-    patterns: [/pururin\.(?:me|to|io)\/(?:gallery|read)\/(\d+)/gi],
-    idFromMatch: (m) => numericId(m[1]),
-    normalizeId: (raw) => numericId(raw),
-    // The route wants a slug segment and does not check it — "x" is what the
-    // long-standing gallery-dl extractor used.
-    url: (id) => `https://pururin.me/gallery/${id}/x`,
-  },
-  hentai2read: {
-    name: "Hentai2Read",
-    short: "h2r",
-    hosts: ["hentai2read.com"],
-    imageHosts: ["*.hentaicdn.com"],
-    // The title page is /<slug>/; a chapter (/<slug>/<n>/) belongs to it.
-    patterns: [/hentai2read\.com\/([a-z0-9_]+)(?=[/?#\s"')\]]|$)/gi],
-    idFromMatch: (m) => h2rSlug(m[1]),
-    normalizeId: (raw) => h2rSlug(raw),
-    url: (id) => `https://hentai2read.com/${id}/`,
-  },
+// Rows saved before the app read arbitrary sites carry these keys and ids in
+// these shapes (an nhentai row's hashtag IS its id — migration 9). A new scrape
+// of the same site must land on the same key, and the ids galleryIdOf finds
+// for these sites' addresses are exactly the old ids (lib/sources.test.ts pins
+// that), so only the key and the reader URL need a table.
+const LEGACY: Record<string, { host: string; also?: readonly string[]; url: (id: string) => string }> = {
+  nhentai: { host: "nhentai.net", url: (id) => `https://nhentai.net/g/${id}/` },
+  ehentai: { host: "e-hentai.org", url: (id) => `https://e-hentai.org/g/${id}/` },
+  hitomi: { host: "hitomi.la", url: (id) => `https://hitomi.la/galleries/${id}.html` },
+  hentaifox: { host: "hentaifox.com", url: (id) => `https://hentaifox.com/gallery/${id}/` },
+  imhentai: { host: "imhentai.xxx", url: (id) => `https://imhentai.xxx/gallery/${id}/` },
+  // pururin.to / .io are the site's former domains; the ids carried over. The
+  // route wants a slug segment and does not check it.
+  pururin: { host: "pururin.me", also: ["pururin.to", "pururin.io"], url: (id) => `https://pururin.me/gallery/${id}/x` },
+  hentai2read: { host: "hentai2read.com", url: (id) => `https://hentai2read.com/${id}/` },
 };
 
-export function isSourceId(v: unknown): v is SourceId {
-  return typeof v === "string" && (SOURCE_IDS as readonly string[]).includes(v);
+const LEGACY_BY_HOST = new Map(
+  Object.entries(LEGACY).flatMap(([key, def]) => [def.host, ...(def.also ?? [])].map((h) => [h, key] as const)),
+);
+
+export const isLegacySource = (source: string): boolean => Object.hasOwn(LEGACY, source);
+
+/** The address a legacy row's title is read at, or null for any other source. */
+export function legacyUrl(source: string, id: string): string | null {
+  return isLegacySource(source) ? LEGACY[source].url(id) : null;
 }
 
-/** `source:id` — the one string form of a ref (job keys, the scrape route's input). */
-export function refKey(ref: TitleRef): string {
+// ---------------------------------------------------------------------------
+// Sites
+// ---------------------------------------------------------------------------
+
+/** "www.HentaiFox.com" → "hentaifox.com"; a legacy site's host → its key. */
+export function siteKey(hostname: string): string {
+  let host = hostname.toLowerCase().replace(/\.$/, "");
+  const bare = host.replace(/^(?:www\d*|m|mobile)\./, "");
+  if (bare.includes(".")) host = bare;
+  return LEGACY_BY_HOST.get(host) ?? host;
+}
+
+// A DNS name with a top-level label that has a letter in it — which also rules
+// out an IPv4 literal ("127.0.0.1" would otherwise read as four labels).
+const HOSTNAME = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?=[a-z0-9-]*[a-z])[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+
+/** A key `siteKey` could have produced: a legacy key or a dotted host name. */
+export function isSourceKey(v: unknown): v is string {
+  return typeof v === "string" && (isLegacySource(v) || HOSTNAME.test(v));
+}
+
+/** The site's host name, for display and for "same site" checks. */
+export function siteHost(source: string): string {
+  return isLegacySource(source) ? LEGACY[source].host : source;
+}
+
+/** What the UI calls the site: its host name ("e-hentai.org", "hentaifox.com"). */
+export const siteName = siteHost;
+
+/** Do two hosts belong to one site? Equal, or one is a subdomain of the other. */
+export function isSameSite(a: string, b: string): boolean {
+  const x = siteHost(siteKey(a));
+  const y = siteHost(siteKey(b));
+  return x === y || x.endsWith(`.${y}`) || y.endsWith(`.${x}`);
+}
+
+// ---------------------------------------------------------------------------
+// The gallery id inside an address
+// ---------------------------------------------------------------------------
+
+// Path words that introduce a title: what follows them names it.
+// "/g/177013", "/gallery/42/", "/view/1200000/3/", "/galleries/1234567.html",
+// "/doujinshi/some-title-1234567.html", "/manga/some-title/", "/m/S12345"…
+const GALLERY_WORDS = new Set([
+  "g", "gallery", "galleries", "view", "read", "reader", "mpv", "d", "doujin", "doujins", "doujinshi",
+  "manga", "comic", "comics", "hentai", "album", "albums", "post", "posts", "title", "titles", "work",
+  "works", "book", "books", "cg", "artistcg", "gamecg", "imageset", "anime", "m", "item", "watch",
+]);
+
+// Path words of the pages AROUND titles — a tag's list, an artist's, a search.
+// An address that starts with one is a list of titles, not a title.
+const LISTING_WORDS = new Set([
+  "tag", "tags", "tagged", "artist", "artists", "author", "authors", "group", "groups", "circle", "circles",
+  "parody", "parodies", "series", "character", "characters", "category", "categories", "genre", "genres",
+  "language", "languages", "lang", "search", "browse", "popular", "latest", "new", "random", "top",
+  "ranking", "rankings", "user", "users", "uploader", "profile", "login", "logout", "register", "signup",
+  "account", "favorites", "favourites", "bookmarks", "page", "index", "home", "list", "hentai-list",
+  "manga-list", "manga-genre", "manga-author", "manga-artist", "manga-tag", "pairing", "type", "types",
+  "content", "contents", "uploads", "info", "help", "about", "contact", "faq", "dmca", "terms", "privacy",
+  "blog", "news", "forum", "forums", "rss", "feed", "sitemap", "api", "static", "assets", "cdn", "images",
+  "img", "css", "js", "settings",
+]);
+
+// Query parameters that carry a title's id on sites without clean paths. The
+// last two are WordPress's, and only ever numbers.
+const ID_PARAMS = ["id", "gid", "g", "gallery", "galleryid", "gallery_id", "manga_id", "mid", "v", "post", "p"];
+const NUMERIC_ONLY_PARAMS = new Set(["post", "p"]);
+
+const MAX_ID = 128;
+
+/** "000123" → "123"; null for anything but 1–12 digits with a value. */
+function number(raw: string): string | null {
+  if (!/^\d{1,12}$/.test(raw)) return null;
+  const n = Number(raw);
+  return n > 0 ? String(n) : null;
+}
+
+function segments(url: URL): string[] {
+  return url.pathname.split("/").filter(Boolean).map((s) => {
+    let seg = s;
+    try {
+      seg = decodeURIComponent(s);
+    } catch {
+      // keep the raw segment
+    }
+    return seg.toLowerCase().replace(/\.(?:html?|php|aspx?|jsp)$/, "");
+  });
+}
+
+const SLUG = /^[a-z0-9][a-z0-9_.-]{0,119}$/;
+
+// One path segment as an id: a number, a slug that ends in a long number
+// ("some-title-english-1234567" → the number; a short tail like "-2" is part of
+// the name), a letter-prefixed number ("s12345"), or — where slugs name titles
+// — the slug itself.
+function idOfSegment(seg: string, slugOk: boolean): string | null {
+  const n = number(seg);
+  if (n) return n;
+  const tail = seg.match(/[-_](\d{4,12})$/);
+  if (tail) return number(tail[1]);
+  if (/^[a-z]\d{3,12}$/.test(seg)) return seg;
+  // A gallery word on its own ("/manga/", "/hentai/") names a section, not a title.
+  return slugOk && SLUG.test(seg) && !LISTING_WORDS.has(seg) && !GALLERY_WORDS.has(seg) ? seg : null;
+}
+
+/**
+ * The gallery id in an address, or null when the address does not look like a
+ * single title (a home page, a tag list, a search). Checked in order:
+ *   1. after a gallery word: "/g/899557/edd545586a" → "899557/edd545586a" (a hex
+ *      token right after a number is part of the id), "/gallery/42/" → "42";
+ *   2. an id query parameter: "view.php?id=123" → "123";
+ *   3. a long number anywhere in the path: "/12345/some-slug" → "12345";
+ *   4. a lone slug, optionally followed by a chapter number:
+ *      "/morningledgerjoregra/" and "/morningledgerjoregra/1/" → "morningledgerjoregra".
+ */
+export function galleryIdOf(url: URL): string | null {
+  const segs = segments(url);
+  if (segs.length > 0 && LISTING_WORDS.has(segs[0])) return null;
+
+  for (let i = 0; i < segs.length - 1; i++) {
+    if (!GALLERY_WORDS.has(segs[i])) continue;
+    const id = idOfSegment(segs[i + 1], true);
+    if (!id) continue;
+    const token = segs[i + 2];
+    if (/^\d+$/.test(id) && token && /^[0-9a-f]{6,40}$/.test(token) && /[a-f]/.test(token)) {
+      return `${id}/${token}`;
+    }
+    return id.length <= MAX_ID ? id : null;
+  }
+
+  for (const key of ID_PARAMS) {
+    const v = url.searchParams.get(key);
+    if (!v) continue;
+    const n = number(v);
+    if (n) return n;
+    // "?id=abc123": an opaque id, kept as written — case can matter in one.
+    if (!NUMERIC_ONLY_PARAMS.has(key) && /^[A-Za-z0-9][A-Za-z0-9_-]{2,63}$/.test(v)) return v;
+  }
+
+  for (const [i, seg] of segs.entries()) {
+    // "/2024/05/some-post/" is a date, not an id.
+    if (/^(?:19|20)\d\d$/.test(seg) && /^\d{1,2}$/.test(segs[i + 1] ?? "")) continue;
+    if (/^\d{4,12}$/.test(seg) || (i === 0 && /^\d+$/.test(seg))) {
+      const n = number(seg);
+      if (n) return n;
+    }
+    const tail = seg.match(/[-_](\d{4,12})$/);
+    if (tail) return number(tail[1]);
+  }
+
+  // A blog files a post under its date: "/2024/05/<slug>/" names the slug.
+  const rest = /^(?:19|20)\d\d$/.test(segs[0] ?? "") ? segs.slice(segs.findIndex((s) => !/^\d{1,4}$/.test(s))) : segs;
+  const [first, second] = rest;
+  if (first && (rest.length === 1 || (rest.length === 2 && /^\d{1,4}$/.test(second)))) {
+    const slug = idOfSegment(first, true);
+    if (slug && slug.length >= 3 && slug.length <= MAX_ID) return slug;
+  }
+  // "/<series-slug>/<title-slug>": a title filed under its series. Both parts
+  // are the id — the title's slug alone can repeat under another series.
+  if (rest.length === 2 && /[-_]/.test(second) && second.length >= 8) {
+    const series = idOfSegment(first, true);
+    const title = idOfSegment(second, true);
+    if (series && title && `${series}/${title}`.length <= MAX_ID) return `${series}/${title}`;
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Addresses
+// ---------------------------------------------------------------------------
+
+/** Longest page or cover address the app keeps (the titles.url column). */
+export const MAX_URL = 1024;
+
+/**
+ * An address the app may store or fetch: http(s), a dotted host name (no bare
+ * IP — a gallery site has a name), no credentials, the scheme's own port.
+ */
+export function parseWebUrl(raw: unknown): URL | null {
+  if (typeof raw !== "string" || raw.length === 0 || raw.length > MAX_URL) return null;
+  let url: URL;
+  try {
+    url = new URL(raw.trim());
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+  if (url.username || url.password || url.port) return null;
+  if (!HOSTNAME.test(url.hostname.toLowerCase())) return null;
+  return url;
+}
+
+// Tracking parameters a shared link picks up; they never name the title.
+const TRACKING = /^(?:utm_.*|fbclid|gclid|yclid|mc_[a-z]+|ref|ref_src|source|share|s_id)$/i;
+
+/** The address without its fragment and tracking noise. */
+function tidy(url: URL): string {
+  const out = new URL(url.toString());
+  out.hash = "";
+  for (const key of [...out.searchParams.keys()]) if (TRACKING.test(key)) out.searchParams.delete(key);
+  return out.toString();
+}
+
+/** A title from one address, or null when it does not look like a title's. */
+export function refFromUrl(raw: string): TitleRef | null {
+  const url = parseWebUrl(raw);
+  if (!url) return null;
+  const source = siteKey(url.hostname);
+  const id = galleryIdOf(url);
+  if (!id) return null;
+  // nhentai's key IS the hashtag, which the database keeps below 1e9.
+  if (source === "nhentai" && !(Number(id) > 0 && Number(id) < 1_000_000_000)) return null;
+  // A legacy site's title is read at its canonical page — a pasted reader
+  // page or chapter becomes the title's own page, as it always did.
+  return { source, id, url: legacyUrl(source, id) ?? tidy(url) };
+}
+
+// A bare "177013" or "#177013" has always meant nhentai, and still does.
+function nhentaiRef(raw: string): TitleRef | null {
+  const n = number(raw.replace(/^#/, ""));
+  return n && Number(n) < 1_000_000_000 ? { source: "nhentai", id: n, url: LEGACY.nhentai.url(n) } : null;
+}
+
+// `nhentai:177013`, `hitomi:1234567`: the ref text older clients and the
+// rescrape script send. Only a legacy key can be rebuilt into an address.
+const REF_TEXT = /^([a-z0-9]+):(\S+)$/;
+function legacyRefText(raw: string): TitleRef | null {
+  const m = raw.match(REF_TEXT);
+  if (!m || !isLegacySource(m[1])) return null;
+  return refFromUrl(LEGACY[m[1]].url(m[2]));
+}
+
+// Every web address in a blob of text, in order. Links glued together without
+// a separator ("…/g/837933/https://nhentai.net/g/177013/" — a share-sheet
+// shortcut appending) are split apart, and an address typed without its scheme
+// ("nhentai.net/g/177013") counts.
+const URLISH = /(?:https?:\/\/|\b(?:www\.)?(?=[a-z0-9-]+\.[a-z0-9.-]+\/))[^\s"'<>`]+/gi;
+export function urlsIn(text: string): string[] {
+  const out: string[] = [];
+  for (const m of text.matchAll(URLISH)) {
+    for (const part of m[0].split(/(?=https?:\/\/)/i)) {
+      const trimmed = part.replace(/[)\].,;:!?'"»”’>]+$/, "");
+      if (!trimmed) continue;
+      out.push(/^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
+    }
+  }
+  return out;
+}
+
+/** `source:id` — the string form of a title's key (job keys, lookups). */
+export function refKey(ref: TitleKey): string {
   return `${ref.source}:${ref.id}`;
 }
 
-/** Where a reader opens the title. */
-export function sourceUrl(ref: TitleRef): string {
-  return SOURCES[ref.source].url(ref.id);
+/** A `source:id` key back into its parts, or null when it is not one. */
+export function parseRefKey(key: unknown): TitleKey | null {
+  if (typeof key !== "string") return null;
+  const at = key.indexOf(":");
+  return at > 0 ? toTitleKey(key.slice(0, at), key.slice(at + 1)) : null;
 }
-
-/** Compact human label: "#177013" for nhentai (as ever), "eh 899557", "hitomi 1234567"… */
-export function refLabel(ref: TitleRef): string {
-  if (ref.source === "nhentai") return `#${ref.id}`;
-  const id = ref.source === "ehentai" ? ref.id.split("/")[0] : ref.id;
-  return `${SOURCES[ref.source].short} ${id}`;
-}
-
-/** A ref from stored/sent parts, or null when they do not form a canonical one. */
-export function toTitleRef(source: unknown, id: unknown): TitleRef | null {
-  if (!isSourceId(source) || typeof id !== "string") return null;
-  const canonical = SOURCES[source].normalizeId(id);
-  return canonical ? { source, id: canonical } : null;
-}
-
-// Every gallery link inside one token, in the order they appear. matchAll, not
-// match: a share-sheet shortcut that appends links without a separator hands
-// over one token holding several URLs back to back
-// ("…/g/837933/https://nhentai.net/g/177013/"), and taking only the first
-// match would silently drop every title but one.
-function linksIn(text: string): TitleRef[] {
-  const found: { at: number; ref: TitleRef }[] = [];
-  for (const source of SOURCE_IDS) {
-    const def = SOURCES[source];
-    for (const pattern of def.patterns) {
-      for (const m of text.matchAll(pattern)) {
-        const id = def.idFromMatch(m);
-        if (id) found.push({ at: m.index ?? 0, ref: { source, id } });
-      }
-    }
-  }
-  return found.sort((a, b) => a.at - b.at).map((f) => f.ref);
-}
-
-const REF_TEXT = /^([a-z0-9]+):(\S+)$/;
 
 /**
  * One title from one piece of input: "177013" / "#177013" (nhentai, as ever),
- * a `source:id` ref, or a gallery link from any supported site. Null for
- * anything else — including links to supported sites that are not a title
- * (search, tag and listing pages).
+ * a legacy `source:id` ref, or a link to a title on any site. Null for anything
+ * else, including links that look like listings (tags, searches, home pages).
  */
 export function parseTitleRef(input: string): TitleRef | null {
   const t = input.trim();
-  if (/^#?\d+$/.test(t)) return toTitleRef("nhentai", t.replace(/^#/, ""));
-  const asRef = t.match(REF_TEXT);
-  if (asRef && isSourceId(asRef[1])) return toTitleRef(asRef[1], asRef[2]);
-  return linksIn(t)[0] ?? null;
+  if (/^#?\d+$/.test(t)) return nhentaiRef(t);
+  const asRef = legacyRefText(t);
+  if (asRef) return asRef;
+  for (const url of urlsIn(t)) {
+    const ref = refFromUrl(url);
+    if (ref) return ref;
+  }
+  return null;
 }
 
 // Pull every title out of an arbitrary blob of text, in paste order, deduped.
 // This is the *batch* counterpart to parseTitleRef: the add box is filled by
 // pasting far more often than by typing, and iOS Safari's "Copy Links" (tab
 // overview → long-press "N Tabs" → Copy Links) dumps every open tab at once,
-// interleaving page TITLES with the URLs. Splitting such a dump into tokens and
-// parsing each one whole turned every word of every title into its own bogus
-// entry.
+// interleaving page TITLES with the URLs.
 //
-// A gallery link is unambiguous and always counts, whatever the id's length.
-// Bare numbers (nhentai ids) are trusted only as far as their company allows:
-// when every token is a number the box was typed by hand, so any digit run
-// counts; as soon as prose is mixed in it is a paste, where stray digits are
-// page counts, years and chapter numbers, so only id-shaped runs (5-7 digits)
-// survive. Consequence: a pre-10000 gallery inside a paste has to arrive as a
-// URL, not a bare number.
+// A link counts when its address looks like one title's (galleryIdOf); the
+// scraper still refuses a page that turns out not to be one. Bare numbers
+// (nhentai ids) are trusted only as far as their company allows: when every
+// token is a number the box was typed by hand, so any digit run counts; as soon
+// as prose is mixed in it is a paste, where stray digits are page counts, years
+// and chapter numbers, so only id-shaped runs (5-7 digits) survive.
 export function parseInputs(text: string): TitleRef[] {
   const tokens = text.split(/[\s,]+/).filter(Boolean);
   const typedByHand = tokens.every((t) => /^#?\d+$/.test(t));
@@ -273,22 +368,19 @@ export function parseInputs(text: string): TitleRef[] {
     refs.push(ref);
   };
 
-  // One left-to-right pass over the tokens keeps the output in paste order. A
-  // link is matched anywhere inside its token, so surrounding punctuation
-  // (markdown link syntax, a trailing slash, quotes) is fine.
   for (const token of tokens) {
-    const links = linksIn(token);
-    if (links.length > 0) {
-      links.forEach(push);
+    const urls = urlsIn(token);
+    if (urls.length > 0) {
+      urls.forEach((u) => push(refFromUrl(u)));
       continue;
     }
-    const asRef = token.match(REF_TEXT);
-    if (asRef && isSourceId(asRef[1])) {
-      push(toTitleRef(asRef[1], asRef[2]));
+    const asRef = legacyRefText(token);
+    if (asRef) {
+      push(asRef);
       continue;
     }
     const m = token.match(bare);
-    if (m) push(toTitleRef("nhentai", m[1]));
+    if (m) push(nhentaiRef(m[1]));
   }
   return refs;
 }
@@ -309,54 +401,44 @@ export function readAddParam(search: string): TitleRef[] {
 }
 
 // ---------------------------------------------------------------------------
-// What a stored title may point at
+// Showing a title
 // ---------------------------------------------------------------------------
 
-/** `*.example.com` = exactly one label in front; `**.` = one or more; else exact. */
-export function hostMatches(pattern: string, host: string): boolean {
-  const h = host.toLowerCase();
-  if (pattern.startsWith("**.")) {
-    const base = pattern.slice(3);
-    return h.endsWith(`.${base}`) && h.length > base.length + 1;
-  }
-  if (pattern.startsWith("*.")) {
-    const base = pattern.slice(2);
-    if (!h.endsWith(`.${base}`)) return false;
-    const label = h.slice(0, -(base.length + 1));
-    return label.length > 0 && !label.includes(".");
-  }
-  return h === pattern;
+/** Where a stored title is read: its saved address, or a legacy row's rebuilt one. */
+export function titleUrl(source: string, id: string, url: string | null | undefined): string {
+  return url || legacyUrl(source, id) || `https://${siteHost(source)}/`;
 }
 
-// A plain https URL: no credentials, no custom port, at most 255 characters
-// (the column width). Anything else is not a link this app stores.
-function plainHttps(raw: string): URL | null {
-  if (typeof raw !== "string" || raw.length === 0 || raw.length > 255) return null;
-  let url: URL;
-  try {
-    url = new URL(raw);
-  } catch {
-    return null;
-  }
-  if (url.protocol !== "https:" || url.username || url.password || url.port) return null;
-  return url;
+/** Compact label: "#177013" for nhentai (as ever), "hentaifox 42", "e-hentai 899557"… */
+export function refLabel(ref: TitleKey): string {
+  if (ref.source === "nhentai") return `#${ref.id}`;
+  const host = siteHost(ref.source);
+  const labels = host.split(".");
+  const site = labels.length > 1 ? labels.slice(0, -1).join(".") : host;
+  // "899557/edd545586a" shows its number; "series/title-slug" its title.
+  const parts = ref.id.split("/");
+  const id = /^\d+$/.test(parts[0]) ? parts[0] : parts[parts.length - 1];
+  return `${site} ${id.length > 24 ? `${id.slice(0, 23)}…` : id}`;
 }
 
-/** A cover on one of the site's image hosts. */
-export function isAllowedImageUrl(source: SourceId, raw: string): boolean {
-  const url = plainHttps(raw);
-  return !!url && SOURCES[source].imageHosts.some((p) => hostMatches(p, url.hostname));
+/** Stored parts → a key, or null when they could not have been written. */
+export function toTitleKey(source: unknown, id: unknown): TitleKey | null {
+  return isSourceKey(source) && typeof id === "string" && id.length > 0 ? { source, id } : null;
 }
 
-/** A link to a page of the site itself (an artist, a tag…). */
-export function isSourceLink(source: SourceId, raw: string): boolean {
-  const url = plainHttps(raw);
-  if (!url) return false;
-  const host = url.hostname.toLowerCase().replace(/^www\./, "");
-  return SOURCES[source].hosts.includes(host);
-}
+export const COVER_PATH = "/api/cover";
 
-/** Every cover host, for next.config.ts and the test that keeps it in sync. */
-export function allImageHosts(): string[] {
-  return [...new Set(SOURCE_IDS.flatMap((s) => SOURCES[s].imageHosts))];
+/**
+ * What an <img> loads for a stored cover: the same-origin proxy (/api/cover),
+ * which fetches it with the title page's origin as Referer — image hosts that
+ * refuse hotlinks check for exactly that, and a browser on this origin cannot
+ * send it. "" when the link is not a web address, so the caller draws the
+ * procedural cover instead.
+ */
+export function coverSrc(imageLink: string | null | undefined, pageUrl?: string | null): string {
+  const img = parseWebUrl(imageLink);
+  if (!img) return "";
+  const page = pageUrl ? parseWebUrl(pageUrl) : null;
+  const ref = page ? `&ref=${encodeURIComponent(page.origin)}` : "";
+  return `${COVER_PATH}?src=${encodeURIComponent(img.toString())}${ref}`;
 }

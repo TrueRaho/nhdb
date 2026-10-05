@@ -1,0 +1,8 @@
+{
+  "url": "https://doujinshelf.example/g/83625/",
+  "description": "Made-up small gallery host (doujinshelf.example, same engine and chrome as doujinshelf-minimal-gallery): what a guest gets at a members-only gallery address — a login wall, served with the gallery's own /g/<id>/ URL, which must be REFUSED (there is nothing to follow without credentials). The page has the site header (logo, Latest/Random/Upload/FAQ/Sign in, search form), then div.locked with a lock icon, an h1 'You must be logged in to view this gallery', a paragraph naming only the gallery number (#83625) and a register link, a visible form.login-form (hidden csrf/next inputs, username, input[type=password], 'Keep me signed in', submit, reset link) and a 'Why do some galleries need an account?' explainer, then the footer. No title of the work, no cover (the only images are the logo and lock.svg), no og:*, no page count, no entity links. A reader must not take the h1 for a work title or the lock icon for a cover. Invented site; structure is a plausible guess.",
+  "rendered": false,
+  "expect": {
+    "gallery": false
+  }
+}

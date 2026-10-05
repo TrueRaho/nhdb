@@ -1,0 +1,25 @@
+{
+  "url": "https://hentaiera.com/gallery/8027560/",
+  "description": "HentaiEra gallery page (/gallery/<id>/), server-rendered PHP on the same 'gallery adults' engine as IMHentai/HentaiRox but with the variant row layout gallery-dl's imhentai extractor implies for the sister sites without ul.galleries_info: div.galleries_info holds one ul.tags_list PER category, whose FIRST li.tags_text is the label with NO colon ('Parodies', 'Characters', 'Tags', 'Artists', 'Groups', 'Languages', 'Category'), followed by li > a.tag with single-quoted attributes, the name as the link's own text and a count badge <span class='badge'>14.2K</span> (abbreviated K counts and plain '38'). The language row's first link starts with a flag <img>. Pages and date are NOT in the rows but in div.gallery_details spans after an icon: 'Pages: 26', 'Posted: Nov 26, 2023' (absolute) next to a bare view count '48,317'. h1 is the full bracketed title '(C102) [Quill Scil (Quill Bejf)] Morning Ledger Ieuikwe (Quill Kedo) [English] [PenAccn] [Digital]' (event, circle/artist, parody, language, scanlator, Digital groups to strip); p.subtitle Japanese. Cover: div.left_cover img.lazy with a real-looking placeholder src (/images/blank_cover.png) and the cover in data-src, equal to og:image. Noise: meta keywords mixing tags with parody/character/artist/language/category words, navbar with Tags/Parodies/Characters/Artists/Groups index links and Categories/Languages dropdowns of format words and languages, ad slots and a banner img, hidden inputs (load_id/load_dir/load_pages), 10 lazy thumbnails, 'Show all 26 pages', a 'Related Galleries' grid of six cards with own lazy covers, full bracketed titles by other circles/artists (one by the SAME circle about PenZugh) and category links (doujinshi, manga, artist cg), comments with fake labels ('Parodies: penblhd again', 'Tags: ahegao', 'Translated by PenAccn'), a sidebar 'Popular Tags' and 'Popular Parodies' using the SAME ul.tags_list > a.tag + badge markup and /tag/ /parody/ hrefs as the info block (only the region around the h1 tells them apart), footer partner links, and a g_th $.parseJSON page-list script. Unsure of: hentaiera's real wrapper classes (galleries_info as a div, tags_list, gallery_details, g_pages/g_posted), whether labels carry a colon, whether badges are abbreviated, the date format and whether it is relative, the CDN host pattern (mN.hentaiera.com/<dir>/<load_id>/cover.jpg), and whether the sidebar exists on gallery pages; the gallery and all names are invented.",
+  "rendered": false,
+  "expect": {
+    "gallery": true,
+    "source_id": "8027560",
+    "title_name": "Morning Ledger Ieuikwe",
+    "pages": 26,
+    "uploaded_at": "2023-11-26",
+    "image_link": "https://m4.hentaiera.com/013/j7gp5gj2ke/cover.jpg",
+    "tags": ["big breasts", "sole female", "sole male", "nakadashi", "blowjob", "kimono", "defloration", "ponytail", "kissing", "x-ray"],
+    "artists": ["quill bejf"],
+    "groups": ["quill scil"],
+    "parodies": ["quill kedo"],
+    "characters": ["penxobh", "penogha"],
+    "not": {
+      "tags": ["english", "translated", "japanese", "chinese", "korean", "doujinshi", "manga", "western", "image set", "artist cg", "game cg", "cosplay", "non-h", "ahegao", "netorare", "anal", "milf", "dark skin", "femdom", "full color", "swimsuit", "glasses", "digital", "quill kedo", "penxobh", "quill bejf", "quill scil", "big breasts 152k", "152k", "hentai", "hentaiera", "quill oeby", "c102"],
+      "artists": ["quill birm", "quill exxx", "quill sngm", "quill pjal", "quill idfq", "penaccn", "quill scil", "Fixture note yeroofj.", "Fixture note ewnrxcg.", "quill bejf 38"],
+      "groups": ["pencyey", "quill hpoi", "penaccn", "c102", "digital", "quill bejf", "english"],
+      "parodies": ["quill oeby", "quill rrsu", "quill reop", "comic sample journal 2023-09", "c102", "english", "penblhd"],
+      "characters": ["penzugh", "quill exhi", "quill kedo", "big breasts"]
+    }
+  }
+}

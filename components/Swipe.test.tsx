@@ -17,7 +17,8 @@ import type { Item } from "../lib/data";
 const USER = "user-a";
 
 const item = (hashtag: number): Item => ({
-  hashtag, source: "nhentai", sourceId: String(hashtag), titleName: `title ${hashtag}`, alterName: "", imageLink: "", pages: 20 + hashtag,
+  hashtag, source: "nhentai", sourceId: String(hashtag), url: `https://nhentai.net/g/${hashtag}/`,
+  titleName: `title ${hashtag}`, alterName: "", imageLink: "", pages: 20 + hashtag,
   uploadedAt: 300, addedAt: 40, readCount: 0, lastReadAt: null,
   tags: ["tag one"], artists: ["someone"], groups: [], parodies: [], characters: [],
 });
@@ -29,9 +30,14 @@ function deck(...hashtags: number[]) {
 
 // The card on top, by its accessible name.
 const onTop = (hashtag: number) => screen.findByRole("group", { name: new RegExp(`^title ${hashtag} —`) });
-const card = () => screen.getByRole("group", { name: /tap to open on nhentai/ });
+const card = () => screen.getByRole("group", { name: /tap to open on nhentai\.net/ });
 const nameField = () => screen.getByLabelText(/custom name/) as HTMLInputElement;
-const trashList = () => JSON.parse(localStorage.getItem(trashKey(USER)) ?? "[]") as { hashtag: number }[];
+const trashList = () => JSON.parse(localStorage.getItem(trashKey(USER)) ?? "[]") as { hashtag: number; url?: string }[];
+// What the cover <img> asks for, relative to this origin (next/image makes it absolute).
+const imgSrc = (img: Element) => {
+  const u = new URL(img.getAttribute("src")!, window.location.href);
+  return u.origin === window.location.origin ? `${u.pathname}${u.search}` : u.toString();
+};
 
 let opened: string[] = [];
 
@@ -94,6 +100,8 @@ describe("SwipeDeck", () => {
     fireEvent.click(screen.getByRole("button", { name: "delete list" }));
     await onTop(2);
     expect(trashList().map((e) => e.hashtag)).toEqual([1]);
+    // The entry keeps the title's page: its origin is the cover's Referer.
+    expect(trashList()[0]).toMatchObject({ label: "#1", url: "https://nhentai.net/g/1/" });
     expect(deleteTitlesAction).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: /deletion list, 1 title/ })).toBeTruthy();
   });
@@ -134,14 +142,52 @@ describe("SwipeDeck", () => {
   it("opens a title from another site on that site", async () => {
     vi.mocked(getSwipeDeckAction).mockResolvedValue([1_000_000_001]);
     vi.mocked(getSwipeCardsAction).mockImplementation(async () => [
-      { ...item(1), hashtag: 1_000_000_001, source: "hitomi", sourceId: "1234567" },
+      { ...item(1), hashtag: 1_000_000_001, source: "hitomi", sourceId: "1234567", url: "https://hitomi.la/galleries/1234567.html" },
     ]);
     render(<SwipeDeck userId={USER} />);
-    const hitomiCard = await screen.findByRole("group", { name: /tap to open on Hitomi/ });
+    const hitomiCard = await screen.findByRole("group", { name: /tap to open on hitomi\.la/ });
     expect(screen.getByText(/hitomi 1234567 ·/)).toBeTruthy();
     fireEvent.pointerDown(hitomiCard, { pointerId: 1, clientX: 200, clientY: 300 });
     fireEvent.pointerUp(hitomiCard, { pointerId: 1, clientX: 201, clientY: 301 });
     expect(opened).toEqual(["https://hitomi.la/galleries/1234567.html"]);
+  });
+
+  it("opens a title from any site at the page it was saved from", async () => {
+    // No address is rebuilt for a site without a legacy key: the stored page is it.
+    const page = "https://www.somesite.org/gallery/42/";
+    vi.mocked(getSwipeDeckAction).mockResolvedValue([1_000_000_002]);
+    vi.mocked(getSwipeCardsAction).mockImplementation(async () => [
+      { ...item(1), hashtag: 1_000_000_002, source: "somesite.org", sourceId: "42", url: page },
+    ]);
+    render(<SwipeDeck userId={USER} />);
+    const siteCard = await screen.findByRole("group", { name: /tap to open on somesite\.org/ });
+    expect(screen.getByText(/somesite 42 ·/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "open somesite 42 on somesite.org" })).toBeTruthy();
+    fireEvent.pointerDown(siteCard, { pointerId: 1, clientX: 200, clientY: 300 });
+    fireEvent.pointerUp(siteCard, { pointerId: 1, clientX: 201, clientY: 301 });
+    expect(opened).toEqual([page]);
+    expect(updateAlterNameAction).not.toHaveBeenCalled();
+  });
+
+  it("loads covers through the proxy with the title's origin as Referer, on the card and in the list", async () => {
+    const cover = "https://cdn.somesite-img.net/42/cover.jpg";
+    const proxied = `/api/cover?src=${encodeURIComponent(cover)}&ref=${encodeURIComponent("https://www.somesite.org")}`;
+    vi.mocked(getSwipeDeckAction).mockResolvedValue([1_000_000_002, 2]);
+    vi.mocked(getSwipeCardsAction).mockImplementation(async (hs: number[]) => hs.map((h) => h === 2 ? item(2) : {
+      ...item(1), hashtag: 1_000_000_002, source: "somesite.org", sourceId: "42",
+      url: "https://www.somesite.org/gallery/42/", titleName: "title 42", imageLink: cover,
+    }));
+    render(<SwipeDeck userId={USER} />);
+    const top = await onTop(42);
+    expect([...top.querySelectorAll("img")].map(imgSrc)).toContain(proxied);
+
+    // Sent to the list, the entry still knows where its cover is shown from.
+    fireEvent.click(screen.getByRole("button", { name: "delete list" }));
+    await onTop(2);
+    expect(trashList()).toEqual([expect.objectContaining({ hashtag: 1_000_000_002, url: "https://www.somesite.org/gallery/42/" })]);
+    fireEvent.click(screen.getByRole("button", { name: /deletion list, 1 title/ }));
+    await screen.findByRole("button", { name: "restore title 42" });
+    expect([...document.querySelectorAll("img")].map(imgSrc)).toContain(proxied);
   });
 
   it("reads a drag: left to the list, up to nothing", async () => {
@@ -201,6 +247,18 @@ describe("SwipeDeck", () => {
     fireEvent.click(await screen.findByRole("button", { name: "restore seven" }));
     expect(trashList()).toEqual([]);
     await waitFor(() => expect(screen.getByText("2 without a name")).toBeTruthy());
+  });
+
+  it("still shows the cover of an entry saved before entries kept their page", async () => {
+    const cover = "https://i.nhentai.net/galleries/7/cover.jpg";
+    localStorage.setItem(trashKey(USER), JSON.stringify([{ hashtag: 7, titleName: "seven", imageLink: cover, pages: 7 }]));
+    deck(1);
+    render(<SwipeDeck userId={USER} />);
+    await onTop(1);
+    fireEvent.click(screen.getByRole("button", { name: /deletion list, 1 title/ }));
+    await screen.findByRole("button", { name: "restore seven" });
+    // No page, so no Referer hint — but the cover is still asked for.
+    expect([...document.querySelectorAll("img")].map(imgSrc)).toContain(`/api/cover?src=${encodeURIComponent(cover)}`);
   });
 
   it("says so when every title has a name", async () => {

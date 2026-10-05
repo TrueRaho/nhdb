@@ -1,0 +1,25 @@
+{
+  "url": "https://9hentai.to/g/831153/",
+  "description": "9hentai.to gallery page (/g/<id>/), an nhentai-clone built as a Vue 2 SPA (Vue CLI bundles, bootstrap-vue navbar, scoped data-v-* attributes on every element, <!----> v-if placeholders, vue-lazyload lazy=\"loaded\"/\"loading\" attributes with a /img/loading.gif src on images not yet in view), captured as the DOM after JS ran. Metadata is present TWICE: (1) vue-meta tags in the head: og:image = the cover, and three JSON-LD blocks - a WebSite with SearchAction, a BreadcrumbList (Home > Doujinshi > Quill Siwx > title), and a schema.org Book with name (full bracketed title), alternateName (Japanese), image (= cover) and thumbnailUrl (page 1 preview, NOT the cover), numberOfPages 26, inLanguage, datePublished '2024-02-10T15:41:07+00:00' and dateModified (later), author = [Person 'Quill Vjtw', Organization 'Quill Ejwu' (the circle, not an artist)], translator Organization 'PenOvba' (scanlator, not a group), character Persons, about = the parody, genre = exactly the tags, keywords = a comma string mixing tags with parody/characters/artist/circle/language/category and SEO words, publisher Organization '9Hentai' (the site, not a group), aggregateRating and interactionStatistic; (2) the nhentai-like info block div#info: h1.title (full bracketed title), h2.alt-title, section#tags of div.tag-container rows labelled with SINGULAR names and a colon in span.tag-type ('Parody:', 'Character:', 'Tag:', 'Artist:', 'Group:', 'Language:', 'Category:'), each entity a.tag > span.name + span.count ('112,503'). Every entity link is the same opaque /t/<numeric id>/ shape, so the kind comes only from the row label (or the JSON-LD role), never from the URL. The DOM shows the page count as '26 pages' and the date only as RELATIVE 'Uploaded 8 months ago' - the concrete day comes from JSON-LD datePublished. Noise: navbar index links and a Language dropdown, search, exoclick ad iframes, 12 preview thumbnails (6 loaded, 6 placeholder), 'Show all (26)', a 'More Like This' grid of six cards with their own cover.jpg images (three loaded) on the same CDN path shape, bracketed titles by other circles/artists (one by the SAME circle about PenOche), and per-card tag links using the same a.tag /t/<id>/ markup; a Disqus iframe; footer 'Popular tags:' links. Unsure of: whether 9hentai emits JSON-LD at all (this is the most plausible shape for a vue-meta SPA), the real labels (singular vs plural), class names, the CDN host (cdn.9hentai.to/images/<id>/cover.jpg, preview/<n>t.jpg), and whether tag links are /t/<id>/ or carry a type. All names and ids are invented.",
+  "rendered": true,
+  "expect": {
+    "gallery": true,
+    "source_id": "831153",
+    "title_name": "Morning Ledger Unskchd",
+    "pages": 26,
+    "uploaded_at": "2024-02-10",
+    "image_link": "https://cdn.9hentai.to/images/831153/cover.jpg",
+    "tags": ["big breasts", "milf", "sole female", "sole male", "nakadashi", "paizuri", "stockings", "blowjob", "x-ray"],
+    "artists": ["quill vjtw"],
+    "groups": ["quill ejwu"],
+    "parodies": ["quill siwx"],
+    "characters": ["quill dwyo", "quill hqpu"],
+    "not": {
+      "tags": ["english", "translated", "japanese", "chinese", "doujinshi", "manga", "hentai", "read hentai online", "free doujin", "quill siwx", "quill dwyo", "quill hqpu", "quill vjtw", "quill ejwu", "penovba", "netorare", "glasses", "femdom", "ahegao", "anal", "dark skin", "gyaru", "swimsuit", "tanlines", "mind control", "harem", "mind break", "futanari", "full color", "big breasts 112,503", "112,503", "graphicnovel"],
+      "artists": ["quill ejwu", "penovba", "9hentai", "penoqdz", "quill qsex", "quill ibbq", "quill aimh", "quill edhm", "quill vjtw 27"],
+      "groups": ["penovba", "9hentai", "quill anjk", "quill ordu", "quill kitm", "quill igqs", "quill vjtw", "english"],
+      "parodies": ["penlccs", "quill arsc", "doujinshi", "english", "penswek", "home"],
+      "characters": ["quill siwx", "quill vjtw", "english", "big breasts"]
+    }
+  }
+}

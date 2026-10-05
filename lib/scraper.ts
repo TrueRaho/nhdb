@@ -1,21 +1,25 @@
-// Title scraper — two layers, any supported site:
+// Title scraper — two layers, any gallery site:
 //   1. impit  — a TLS/HTTP2-impersonating HTTP client that passes Cloudflare's
 //      fingerprint gate without a browser (fast, ~200ms, no process launch).
-//   2. Playwright — a real (stealth) browser kept as a WARM session and only
-//      used as a fallback when impit gets challenged/blocked, for the sites
-//      whose title page is HTML behind Cloudflare.
+//   2. Playwright — a real (stealth) browser kept as a WARM session, used when
+//      impit is challenged/blocked or when the page's HTML holds no title until
+//      its JavaScript runs (client-rendered sites).
 //
-// What to fetch and how to read it is per site (lib/scrapers/*): the input is
-// first reduced to a (site, id) pair by lib/sources.ts, and the request is
-// rebuilt from that pair — the address the user pasted is never fetched.
+// Nothing here knows a site. The input is reduced to a (site, id, page) ref by
+// lib/sources.ts, the page is read by the site-agnostic lib/scrapers/extract.ts,
+// and the reading may say "follow" (a content warning's "View Gallery", a
+// reader page's link back to its gallery) — at most MAX_HOPS times, and only to
+// the same site. Every address is checked to resolve to public addresses before
+// it is fetched: the scraper fetches what users paste.
 //
 // Both impit and playwright-extra are imported lazily so Vercel (proxy mode)
 // never loads their native binaries when scrapeTitle is not actually called.
 
 import { parseScrapePayload, scrapedRef, type ScrapeResult } from "./scrape-payload";
-import { parseTitleRef, refKey, refLabel, SOURCES, toTitleRef, type TitleRef } from "./sources";
-import { looksLikeChallenge, ScrapeError, type SiteAdapter, type SiteRequest } from "./scrapers/common";
-import { ADAPTERS } from "./scrapers";
+import { galleryIdOf, isSameSite, parseTitleRef, parseWebUrl, refFromUrl, refKey, refLabel, siteName, type TitleRef } from "./sources";
+import { looksLikeChallenge, looksLikeHtml, ScrapeError } from "./scrapers/common";
+import { readPage, type PageReading } from "./scrapers/extract";
+import { assertPublicHostname, UnsafeUrlError } from "./net-address";
 
 export { ScrapeError, looksLikeChallenge };
 export type { ScrapeEntity, ScrapeResult } from "./scrape-payload";
@@ -33,30 +37,48 @@ const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
   "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
-// Where a response finally came from, once redirects were followed. A title
-// page that bounces to another host is not read — whatever is there, it is
-// not the title that was asked for.
-function onFetchHosts(finalUrl: string, site: SiteAdapter): boolean {
-  try {
-    return site.fetchHosts.includes(new URL(finalUrl).hostname.toLowerCase());
-  } catch {
-    return false;
+// Pages bigger than this are not a gallery's.
+const MAX_HTML = 5 * 1024 * 1024;
+// Content warning → gallery, reader page → gallery: two is the most a real
+// title needs; more is a loop.
+const MAX_HOPS = 2;
+
+function describe(ref: TitleRef): string {
+  return `${refLabel(ref)} on ${siteName(ref.source)}`;
+}
+
+// Where a response finally came from, once redirects were followed. A page
+// that bounced to another site is not read — whatever is there, it is not the
+// title that was asked for. A gallery the site replaced answers with a
+// permanent redirect to its successor (IMHentai: /gallery/1200000/ → 301 →
+// /gallery/1146802/); reading it would file the successor under the id asked
+// for, so the user is pointed at it instead.
+function assertLanded(finalUrl: string, ref: TitleRef): void {
+  const url = parseWebUrl(finalUrl);
+  if (!url || !isSameSite(url.hostname, new URL(ref.url).hostname)) {
+    throw new ScrapeError(`${describe(ref)} redirected off the site — not a title page`, "NOT_FOUND");
+  }
+  const landed = galleryIdOf(url);
+  if (landed && landed !== ref.id) {
+    const other = refFromUrl(url.toString());
+    throw new ScrapeError(
+      `${describe(ref)} now redirects to ${other ? refLabel(other) : url.pathname} — add that one instead`,
+      "NOT_FOUND",
+    );
   }
 }
 
-function describe(ref: TitleRef): string {
-  return `${refLabel(ref)} on ${SOURCES[ref.source].name}`;
-}
-
-// A gallery the site replaced answers with a permanent redirect to its
-// successor (IMHentai: /gallery/1200000/ → 301 → /gallery/1146802/). The parse
-// would file the successor's metadata under the id that was asked for, and a
-// later add of the successor would then be a second row for one title — so
-// the user is pointed at it instead.
-function assertSameTitle(finalUrl: string, ref: TitleRef): void {
-  const landed = parseTitleRef(finalUrl);
-  if (landed && landed.source === ref.source && landed.id !== ref.id) {
-    throw new ScrapeError(`${describe(ref)} now redirects to ${refLabel(landed)} — add that one instead`, "NOT_FOUND");
+// Every fetch is of an address a user typed, or a link on a page they named.
+// A site that does not resolve (a dead mirror) is a verdict about the title —
+// NOT_FOUND; one that resolves into a private network is refused as input.
+async function assertFetchable(raw: string): Promise<void> {
+  const url = parseWebUrl(raw);
+  if (!url) throw new ScrapeError(`not a web address: ${raw.slice(0, 120)}`, "BAD_INPUT");
+  try {
+    await assertPublicHostname(url.hostname);
+  } catch (e) {
+    const message = e instanceof UnsafeUrlError ? e.message : `cannot reach ${url.hostname}`;
+    throw new ScrapeError(message, /could not resolve/i.test(message) ? "NOT_FOUND" : "BAD_INPUT");
   }
 }
 
@@ -85,14 +107,15 @@ async function getImpit(): Promise<ImpitInstance> {
   return _impit;
 }
 
-// Returns the site's answer, or null to signal "fall back to browser".
+// The page as impit sees it, or null to signal "fall back to the browser"
+// (challenged, blocked, or an error status the browser might get past).
 // Throws ScrapeError only for a genuine 404 (which the browser would also hit)
-// or a redirect off the site.
-async function fetchViaImpit(site: SiteAdapter, req: SiteRequest, ref: TitleRef): Promise<string | null> {
+// or a redirect off the site / to another title.
+async function fetchViaImpit(url: string, ref: TitleRef): Promise<{ html: string; url: string } | null> {
   let res: Awaited<ReturnType<ImpitInstance["fetch"]>>;
   try {
     const impit = await getImpit();
-    res = await impit.fetch(req.url, { method: req.method ?? "GET", headers: req.headers, body: req.body });
+    res = await impit.fetch(url, { headers: { "Accept-Language": "en-US,en;q=0.9" } });
   } catch (e) {
     console.warn(`[scraper] impit request failed for ${describe(ref)}, falling back:`, e instanceof Error ? e.message : e);
     return null;
@@ -101,16 +124,14 @@ async function fetchViaImpit(site: SiteAdapter, req: SiteRequest, ref: TitleRef)
   if (res.status === 404 || res.status === 410) {
     throw new ScrapeError(`Title ${describe(ref)} not found (${res.status})`, "NOT_FOUND");
   }
-  if (!onFetchHosts(res.url || req.url, site)) {
-    throw new ScrapeError(`${describe(ref)} redirected off the site — not a title page`, "NOT_FOUND");
-  }
-  assertSameTitle(res.url || req.url, ref);
+  const finalUrl = res.url || url;
+  assertLanded(finalUrl, ref);
 
   const body = await res.text().catch(() => "");
-  if (res.status !== 200 || looksLikeChallenge(body) || !site.isComplete(body)) {
+  if (res.status !== 200 || body.length > MAX_HTML || looksLikeChallenge(body) || !looksLikeHtml(body)) {
     return null;
   }
-  return body;
+  return { html: body, url: finalUrl };
 }
 
 // ---------------------------------------------------------------------------
@@ -241,7 +262,7 @@ export async function closeScraper(): Promise<void> {
   }
 }
 
-async function fetchViaBrowser(site: SiteAdapter, url: string, ref: TitleRef): Promise<string> {
+async function fetchViaBrowser(url: string, ref: TitleRef): Promise<{ html: string; url: string }> {
   // Disarm any pending idle-close FIRST: a scrape starting just before the
   // timer fires must not have closeScraper() pull the browser out from under
   // its page.goto. The counter keeps a concurrent scrape's `finally` from
@@ -281,27 +302,17 @@ async function fetchViaBrowser(site: SiteAdapter, url: string, ref: TitleRef): P
     if (response && (response.status() === 404 || response.status() === 410)) {
       throw new ScrapeError(`Title ${describe(ref)} not found (${response.status()})`, "NOT_FOUND");
     }
-    if (!onFetchHosts(page.url(), site)) {
-      throw new ScrapeError(`${describe(ref)} redirected off the site — not a title page`, "NOT_FOUND");
-    }
-    assertSameTitle(page.url(), ref);
+    assertLanded(page.url(), ref);
 
+    // No site-specific "ready" selector: let the page's own scripts finish
+    // building it (client-rendered galleries fill in after load), then read.
+    await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => {});
     const title = await page.title();
     if (title.includes("Just a moment") || title.includes("Attention Required")) {
       throw new ScrapeError("Cloudflare challenge detected", "CLOUDFLARE");
     }
-
-    try {
-      await page.waitForSelector(site.browserReady!, { timeout: 10_000 });
-    } catch {
-      const bodyText = await page.locator("body").innerText().catch(() => "");
-      if (title.includes("404") || bodyText.includes("Page not found") || bodyText.includes("404")) {
-        throw new ScrapeError(`Title ${describe(ref)} not found (404)`, "NOT_FOUND");
-      }
-      throw new ScrapeError(`${site.browserReady} not found — page did not load`, "TIMEOUT");
-    }
-
-    return await page.content();
+    assertLanded(page.url(), ref);
+    return { html: await page.content(), url: page.url() };
   } catch (e) {
     if (e instanceof ScrapeError) throw e;
     // A raw Playwright failure usually means the browser died mid-scrape —
@@ -323,18 +334,25 @@ async function fetchViaBrowser(site: SiteAdapter, url: string, ref: TitleRef): P
 // Orchestrator
 // ---------------------------------------------------------------------------
 
-// The parser's output goes through the same gate the app's write boundary
-// uses, so a site whose markup drifted fails here — at the scraper, with the
-// reason — rather than as a confusing 400 when the user hits save.
-function checked(scraped: ScrapeResult, ref: TitleRef): ScrapeResult {
+// The reading goes through the same gate the app's write boundary uses, so a
+// page the extractor misread fails here — at the scraper, with the reason —
+// rather than as a confusing 400 when the user hits save.
+function checked(reading: Extract<PageReading, { kind: "gallery" }>, ref: TitleRef, pageUrl: string): ScrapeResult {
+  // A legacy site's title keeps its canonical address; any other site's is
+  // the page the title was found on (a followed gallery link, not the warning
+  // page or the reader), tidied the same way the pasted one was.
+  const landed = refFromUrl(pageUrl);
+  const candidate = {
+    source: ref.source,
+    source_id: ref.id,
+    url: landed && refKey(landed) === refKey(ref) ? landed.url : ref.url,
+    ...reading.title,
+  };
   let clean: ScrapeResult;
   try {
-    clean = parseScrapePayload(scraped);
+    clean = parseScrapePayload(candidate);
   } catch (e) {
-    throw new ScrapeError(
-      `parsed an unusable title for ${describe(ref)} — markup drift? ${e instanceof Error ? e.message : e}`,
-      "TIMEOUT",
-    );
+    throw new ScrapeError(`read an unusable title from ${describe(ref)}: ${e instanceof Error ? e.message : e}`, "TIMEOUT");
   }
   if (refKey(scrapedRef(clean)) !== refKey(ref)) {
     throw new ScrapeError(`${describe(ref)} answered with a different title`, "TIMEOUT");
@@ -342,35 +360,56 @@ function checked(scraped: ScrapeResult, ref: TitleRef): ScrapeResult {
   return clean;
 }
 
+type Fetcher = (url: string, ref: TitleRef) => Promise<{ html: string; url: string } | null>;
+
+// Fetch, read, and follow what the reading points at, with one fetcher.
+// Returns the title, or why the last page was not one (null when the fetcher
+// itself gave up, i.e. impit was challenged).
+async function readWith(fetchPage: Fetcher, ref: TitleRef): Promise<ScrapeResult | { reason: string } | null> {
+  let url = ref.url;
+  for (let hop = 0; hop <= MAX_HOPS; hop++) {
+    await assertFetchable(url);
+    const page = await fetchPage(url, ref);
+    if (!page) return null;
+    const reading = readPage(page.html, page.url);
+    if (reading.kind === "gallery") return checked(reading, ref, page.url);
+    if (reading.kind === "none") return { reason: reading.reason };
+    const next = parseWebUrl(reading.url);
+    if (!next || !isSameSite(next.hostname, new URL(ref.url).hostname)) return { reason: "its link leads off the site" };
+    console.warn(`[scraper] ${describe(ref)}: ${reading.why}`);
+    url = next.toString();
+  }
+  return { reason: "it kept redirecting between pages" };
+}
+
 export async function scrapeTitle(input: string | TitleRef): Promise<ScrapeOutcome> {
-  const ref = typeof input === "string" ? parseTitleRef(input) : toTitleRef(input.source, input.id);
-  if (!ref) {
-    const shown = typeof input === "string" ? input : refKey(input);
-    throw new ScrapeError(`Not a title link from a supported site: "${shown.slice(0, 200)}"`, "BAD_INPUT");
-  }
-  const site = ADAPTERS[ref.source];
-  const req = site.request(ref.id);
-
-  // Layer 1: cheap impersonated fetch. Returns null when challenged/blocked
-  // (a genuine 404 is thrown here and must NOT trigger the browser fallback).
-  const viaImpit = await fetchViaImpit(site, req, ref);
-  if (viaImpit !== null) return { scraped: checked(site.parse(viaImpit, ref.id), ref), via: "impit" };
-
-  // JSON endpoints have no page for a browser to render — impit was the only way.
-  if (!site.browserReady) {
-    throw new ScrapeError(`${SOURCES[ref.source].name} did not answer for ${refLabel(ref)}`, "TIMEOUT");
+  const ref = typeof input === "string" ? parseTitleRef(input) : refFromUrl(input.url);
+  if (!ref || (typeof input !== "string" && refKey(ref) !== refKey(input))) {
+    const shown = typeof input === "string" ? input : input.url;
+    throw new ScrapeError(`Not a link to a title: "${shown.slice(0, 200)}"`, "BAD_INPUT");
   }
 
-  // Layer 2: a real browser solves whatever impit couldn't get past.
-  console.warn(`[scraper] impit layer did not pass for ${describe(ref)}, using Playwright fallback`);
+  // Layer 1: cheap impersonated fetch. null = challenged/blocked; a genuine
+  // 404 is thrown here and must NOT trigger the browser fallback.
+  const viaImpit = await readWith(fetchViaImpit, ref);
+  if (viaImpit && "title_name" in viaImpit) return { scraped: viaImpit, via: "impit" };
+
+  // Layer 2: a real browser — past a challenge, or to let a client-rendered
+  // page build itself. A page impit read and found not to be a title gets the
+  // same chance: its title may only exist once its scripts have run.
+  console.warn(`[scraper] ${describe(ref)}: ${viaImpit ? viaImpit.reason : "impit did not get through"}, using the browser`);
+  let viaBrowser: ScrapeResult | { reason: string } | null;
   try {
-    const html = await fetchViaBrowser(site, req.url, ref);
-    return { scraped: checked(site.parse(html, ref.id), ref), via: "fallback" };
+    viaBrowser = await readWith(fetchViaBrowser, ref);
   } catch (e) {
     // Both layers failed — make the message say so for the user.
-    if (e instanceof ScrapeError && e.code !== "NOT_FOUND") {
+    if (e instanceof ScrapeError && e.code !== "NOT_FOUND" && e.code !== "BAD_INPUT") {
+      if (viaImpit) throw new ScrapeError(`${describe(ref)} is not a title page: ${viaImpit.reason}`, "NOT_FOUND");
       throw new ScrapeError(`impit was blocked and the browser fallback also failed: ${e.message}`, e.code);
     }
     throw e;
   }
+  if (viaBrowser && "title_name" in viaBrowser) return { scraped: viaBrowser, via: "fallback" };
+  const reason = viaBrowser?.reason ?? viaImpit?.reason ?? "no title found";
+  throw new ScrapeError(`${describe(ref)} is not a title page: ${reason}`, "NOT_FOUND");
 }

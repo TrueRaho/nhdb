@@ -6,7 +6,8 @@ const { lookup } = vi.hoisted(() => ({
 }));
 vi.mock("node:dns/promises", () => ({ lookup }));
 
-import { assertReachableHost, isPublicAddress, normalizeScraperUrl, UnsafeUrlError } from "./net-guard";
+import { assertPublicHostname, assertReachableHost, isPublicAddress, normalizeScraperUrl, UnsafeUrlError } from "./net-guard";
+import * as netAddress from "./net-address";
 
 beforeEach(() => {
   vi.stubEnv("NODE_ENV", "production");
@@ -127,5 +128,60 @@ describe("assertReachableHost", () => {
 
   it("rejects localhost in production", async () => {
     await expect(assertReachableHost("https://localhost:3333")).rejects.toThrow(UnsafeUrlError);
+  });
+});
+
+describe("assertPublicHostname", () => {
+  it("passes a name whose every address is public", async () => {
+    lookup.mockResolvedValue([{ address: "93.184.216.34" }, { address: "2606:4700::1" }]);
+    await expect(assertPublicHostname("t.nhentai.net")).resolves.toBeUndefined();
+    expect(lookup).toHaveBeenCalledWith("t.nhentai.net", { all: true });
+  });
+
+  it("judges an address literal itself, without asking DNS", async () => {
+    await expect(assertPublicHostname("93.184.216.34")).resolves.toBeUndefined();
+    await expect(assertPublicHostname("2606:4700:4700::1111")).resolves.toBeUndefined();
+    await expect(assertPublicHostname("::1")).rejects.toThrow(UnsafeUrlError);
+    await expect(assertPublicHostname("::ffff:169.254.169.254")).rejects.toThrow(UnsafeUrlError);
+    expect(lookup).not.toHaveBeenCalled();
+  });
+
+  it("refuses a name with any private address, an unresolvable one, and a private literal", async () => {
+    lookup.mockResolvedValue([{ address: "93.184.216.34" }, { address: "::ffff:169.254.169.254" }]);
+    await expect(assertPublicHostname("t.nhentai.net")).rejects.toThrow(UnsafeUrlError);
+    lookup.mockRejectedValue(new Error("ENOTFOUND"));
+    await expect(assertPublicHostname("nope.invalid")).rejects.toThrow(UnsafeUrlError);
+    await expect(assertPublicHostname("169.254.169.254")).rejects.toThrow(UnsafeUrlError);
+  });
+});
+
+// The address rules moved to lib/net-address.ts so the scraper — plain Node on
+// a user's own machine — and the cover proxy can share them; net-guard keeps
+// re-exporting them for the scraper-host checks.
+describe("lib/net-address", () => {
+  it("is what net-guard re-exports, so one error class serves every caller", async () => {
+    expect(isPublicAddress).toBe(netAddress.isPublicAddress);
+    expect(assertPublicHostname).toBe(netAddress.assertPublicHostname);
+    expect(UnsafeUrlError).toBe(netAddress.UnsafeUrlError);
+    // /api/scrape catches net-guard's UnsafeUrlError; the throw comes from net-address.
+    lookup.mockResolvedValue([{ address: "10.0.0.1" }]);
+    const thrown = await netAddress.assertPublicHostname("rebind.example.com").catch((e: unknown) => e);
+    expect(thrown).toBeInstanceOf(UnsafeUrlError);
+    expect((thrown as Error).name).toBe("UnsafeUrlError");
+  });
+
+  it("loads without server-only, which net-guard still requires", async () => {
+    // The scraper imports it outside Next; a server-only import there would
+    // break `pnpm scraper`. (server-only is mocked for the rest of this file.)
+    vi.resetModules();
+    vi.doUnmock("server-only");
+    try {
+      const fresh = await import("./net-address");
+      expect(typeof fresh.assertPublicHostname).toBe("function");
+      await expect(import("./net-guard")).rejects.toThrow(/server-only/);
+    } finally {
+      vi.doMock("server-only", () => ({}));
+      vi.resetModules();
+    }
   });
 });

@@ -98,7 +98,9 @@ describe("classifyGesture", () => {
 });
 
 describe("the deletion list", () => {
-  const e = (hashtag: number): TrashEntry => ({ hashtag, label: `#${hashtag}`, titleName: `t${hashtag}`, imageLink: "", pages: 10 });
+  const e = (hashtag: number): TrashEntry => ({
+    hashtag, label: `#${hashtag}`, titleName: `t${hashtag}`, imageLink: "", url: `https://nhentai.net/g/${hashtag}/`, pages: 10,
+  });
 
   it("keeps well-formed entries and drops the rest", () => {
     const raw = JSON.stringify([
@@ -111,7 +113,27 @@ describe("the deletion list", () => {
       "x",
     ]);
     // An entry saved before multi-site support has no label; it reads as "#<hashtag>".
-    expect(parseTrash(raw)).toEqual([e(1), { hashtag: 2, label: "#2", titleName: "#2", imageLink: "", pages: 0 }]);
+    expect(parseTrash(raw)).toEqual([e(1), { hashtag: 2, label: "#2", titleName: "#2", imageLink: "", url: "", pages: 0 }]);
+  });
+
+  it("keeps a stored page address, and reads an older list's missing one as empty", () => {
+    const page = "https://myreadingmanga.info/some-title-english/";
+    const raw = JSON.stringify([
+      { ...e(1_000_000_001), label: "myreadingmanga some-title-english", url: page },
+      { hashtag: 3, label: "#3", titleName: "t3", imageLink: "https://t.nhentai.net/galleries/1/cover.jpg", pages: 1 },
+      { ...e(4), url: 42 },
+      { ...e(5), url: null },
+    ]);
+    expect(parseTrash(raw).map((x) => x.url)).toEqual([page, "", "", ""]);
+    // The rest of an older entry is untouched by the missing address.
+    expect(parseTrash(raw)[1]).toEqual({
+      hashtag: 3, label: "#3", titleName: "t3", imageLink: "https://t.nhentai.net/galleries/1/cover.jpg", url: "", pages: 1,
+    });
+  });
+
+  it("survives a save and a reload unchanged", () => {
+    const list = [e(1), { ...e(1_000_000_002), label: "3hentai 612345", url: "https://3hentai.net/d/612345" }];
+    expect(parseTrash(JSON.stringify(list))).toEqual(list);
   });
 
   it("keeps a stored site label", () => {

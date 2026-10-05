@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { dbTitleToItem, scrapedToItem, type DbTitle } from "./mappers";
 import { coverSeed, itemLabel, itemUrl } from "./data";
+import type { ScrapeResult } from "./scrape-payload";
 
 // DbTitle is the full Prisma payload type; tests only exercise the fields the
 // mapper reads, so the fixture is built loose and cast once here.
@@ -9,6 +10,7 @@ function row(overrides: Record<string, unknown> = {}): DbTitle {
     hashtag: 177013,
     source: "nhentai",
     sourceId: "177013",
+    url: "https://nhentai.net/g/177013/",
     titleName: "PenXjbs",
     alterName: null,
     imageLink: "https://t.nhentai.net/x/cover.jpg",
@@ -71,31 +73,77 @@ describe("dbTitleToItem", () => {
     expect(dbTitleToItem(row({ uploadedAt: null })).uploadedAt).toBeNull();
   });
 
-  it("carries where the title comes from", () => {
-    const item = dbTitleToItem(row({ hashtag: 1_000_000_007, source: "hitomi", sourceId: "1234567" }));
-    expect(item).toMatchObject({ hashtag: 1_000_000_007, source: "hitomi", sourceId: "1234567" });
-    expect(itemLabel(item)).toBe("hitomi 1234567");
-    expect(itemUrl(item)).toBe("https://hitomi.la/galleries/1234567.html");
+  it("carries where the title comes from, and the page it is read at", () => {
+    const item = dbTitleToItem(row({
+      hashtag: 1_000_000_007,
+      source: "myreadingmanga.info",
+      sourceId: "some-title-english",
+      url: "https://myreadingmanga.info/some-title-english/",
+    }));
+    expect(item).toMatchObject({
+      hashtag: 1_000_000_007,
+      source: "myreadingmanga.info",
+      sourceId: "some-title-english",
+      url: "https://myreadingmanga.info/some-title-english/",
+    });
+    expect(itemLabel(item)).toBe("myreadingmanga some-title-english");
+    expect(itemUrl(item)).toBe("https://myreadingmanga.info/some-title-english/");
+    expect(dbTitleToItem(row()).url).toBe("https://nhentai.net/g/177013/");
+  });
+
+  it("rebuilds the page of a legacy row saved before titles kept their address", () => {
+    const hitomi = dbTitleToItem(row({ hashtag: 1_000_000_007, source: "hitomi", sourceId: "1234567", url: null }));
+    expect(hitomi).toMatchObject({ source: "hitomi", sourceId: "1234567" });
+    expect(itemLabel(hitomi)).toBe("hitomi 1234567");
+    expect(itemUrl(hitomi)).toBe("https://hitomi.la/galleries/1234567.html");
+    expect(dbTitleToItem(row({ url: null })).url).toBe("https://nhentai.net/g/177013/");
+    expect(dbTitleToItem(row({ source: "ehentai", sourceId: "899557/edd545586a", url: null })).url)
+      .toBe("https://e-hentai.org/g/899557/edd545586a/");
+    // A stored address wins over the rebuilt one.
+    expect(dbTitleToItem(row({ source: "hitomi", sourceId: "1234567", url: "https://hitomi.la/doujinshi/x-1234567.html" })).url)
+      .toBe("https://hitomi.la/doujinshi/x-1234567.html");
+  });
+
+  it("still links a row of another site that lost its address to that site", () => {
+    expect(dbTitleToItem(row({ source: "3hentai.net", sourceId: "612345", url: null })).url).toBe("https://3hentai.net/");
+    expect(dbTitleToItem(row({ source: "3hentai.net", sourceId: "612345", url: "" })).url).toBe("https://3hentai.net/");
+  });
+
+  it("never hands the client a source it cannot render", () => {
+    expect(dbTitleToItem(row({ source: "Not A Site" })).source).toBe("nhentai");
+    expect(dbTitleToItem(row({ source: "3hentai.net", sourceId: "612345" })).source).toBe("3hentai.net");
   });
 });
 
 describe("scrapedToItem", () => {
-  const scraped = {
-    source: "hentaifox" as const,
-    source_id: "98765",
+  const scraped: ScrapeResult = {
+    source: "3hentai.net",
+    source_id: "612345",
+    url: "https://3hentai.net/d/612345",
     title_name: "T",
     image_link: "",
     pages: 3,
     uploaded_at: null,
-    tags: [{ name: "a", link: "https://hentaifox.com/tag/a/", total_works: 0 }],
+    tags: [{ name: "a", link: "https://3hentai.net/tags/a", total_works: 0 }],
     artists: [], groups: [], characters: [], parodies: [],
   };
 
   it("has no key yet for another site's title, and keeps nhentai's", () => {
     expect(scrapedToItem(scraped).hashtag).toBe(0);
-    expect(scrapedToItem({ ...scraped, source: "nhentai", source_id: "177013" }).hashtag).toBe(177013);
+    expect(scrapedToItem({ ...scraped, source: "nhentai", source_id: "177013", url: "https://nhentai.net/g/177013/" }).hashtag)
+      .toBe(177013);
+    // An nhentai mirror is another site: no key until the save hands one out.
+    expect(scrapedToItem({ ...scraped, source: "nhentai.xxx", source_id: "830956", url: "https://nhentai.xxx/g/830956/" }).hashtag)
+      .toBe(0);
     expect(scrapedToItem(scraped).uploadedAt).toBeNull();
     expect(scrapedToItem(scraped).tags).toEqual(["a"]);
+  });
+
+  it("links the preview to the page it was scraped from", () => {
+    const item = scrapedToItem(scraped);
+    expect(item).toMatchObject({ source: "3hentai.net", sourceId: "612345", url: "https://3hentai.net/d/612345" });
+    expect(itemUrl(item)).toBe("https://3hentai.net/d/612345");
+    expect(itemLabel(item)).toBe("3hentai 612345");
   });
 
   it("paints the same cover art before and after the first save", () => {
@@ -104,5 +152,22 @@ describe("scrapedToItem", () => {
     expect(coverSeed(preview)).toBe(coverSeed(saved));
     // nhentai keeps the seed every existing cover was drawn from.
     expect(coverSeed({ hashtag: 177013, source: "nhentai", sourceId: "177013" })).toBe(177013);
+  });
+
+  it("previews and saves one title the same way", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-16T12:00:00Z"));
+    try {
+      const preview = scrapedToItem({ ...scraped, uploaded_at: "2026-08-10" });
+      const saved = dbTitleToItem(row({
+        hashtag: 1_000_000_009, source: scraped.source, sourceId: scraped.source_id, url: scraped.url,
+        uploadedAt: new Date("2026-08-10T00:00:00Z"),
+      }));
+      expect(preview.url).toBe(saved.url);
+      expect(preview.uploadedAt).toBe(saved.uploadedAt);
+      expect(coverSeed(preview)).toBe(coverSeed(saved));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

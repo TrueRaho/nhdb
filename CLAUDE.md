@@ -7,8 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 nhdb is a personal multi-user web app that catalogs a doujin collection. It
-scrapes title metadata from nhentai, E-Hentai, Hitomi, HentaiFox, IMHentai,
-Pururin and Hentai2Read, stores it in Neon Postgres via Prisma, and serves a
+scrapes title metadata from any gallery site (no per-site code — see "Title
+sources"), stores it in Neon Postgres via Prisma, and serves a
 filterable/sortable gallery plus reading stats. Next.js 16 App Router,
 React 19, Tailwind v4, pnpm.
 
@@ -112,15 +112,31 @@ Three things here are load-bearing and easy to undo:
   kept secret is carried over by URL so a reorder preserves it while repointing a
   row at another machine does not.
 
-### Title sources (migration `9_title_sources`)
+### Title sources (migrations `9_title_sources`, `9a_any_site_titles`)
 
-A title comes from one of seven sites. `lib/sources.ts` is the registry and the
-**allow-list**: per site, the gallery-page URL patterns, the canonical id
-(`normalizeId` — nhentai/Hitomi/HentaiFox/IMHentai/Pururin a number, E-Hentai
-`gid/token`, Hentai2Read a slug), the reader URL rebuilt from the id, and the
-image/link hosts a stored title may point at. It is client-safe; the paste box,
-`?add=`, `/add/<link>`, `/api/scrape` and the scraper host all parse through it.
-The string form of a title is its ref, `source:id` (`refKey`).
+A title comes from **any gallery site**. There is no site list and no per-site
+code — the user asked for exactly that, so do not add one back ("support site
+X" means a better generic rule plus a fixture, never an `if (host === …)`).
+
+**Identity** (`lib/sources.ts`, client-safe; the paste box, `?add=`,
+`/add/<link>`, `/api/scrape` and the scraper host all parse through it) is
+`(source, id)`: `source` is the site's host name without `www.`/`m.`
+(`siteKey`), and `id` is what `galleryIdOf` finds in the address — a gallery
+word followed by an id (`/g/177013`, `/gallery/42/`, `/view/…`,
+`/galleries/1234567.html`, `/manga/<slug>/`), a hex token after a number joins
+it (`899557/edd545586a`), an `?id=` query, a long number, a slug ending in one,
+a lone slug. Listing words as the first segment (`/tag/`, `/search`,
+`/artist/`…) mean "not a title". The string form is `source:id` (`refKey`;
+`parseRefKey` reverses it). A `TitleRef` also carries the page `url` — the
+address is stored (`titles.url`, migration 9a) because nothing can rebuild it.
+
+**Seven legacy keys.** Rows saved before 9a carry `nhentai`, `ehentai`,
+`hitomi`, `hentaifox`, `imhentai`, `pururin`, `hentai2read`; `siteKey` maps
+those sites' hosts back to them so a new scrape lands on the same row, and
+`galleryIdOf` produces exactly their old ids (lib/sources.test.ts pins it).
+`LEGACY` also holds their canonical page templates (a pasted reader page
+becomes the title page; `legacyUrl`/`titleUrl` cover rows without `url`). It is
+a naming table for old rows, not a gate.
 
 **`hashtag` is still the key everywhere** (joins, read log, cache tags, swipe,
 URLs) — only its meaning split: an nhentai title's hashtag IS its gallery id
@@ -134,27 +150,53 @@ ties the halves together. Consequences worth knowing:
   is 0 in `scrapedToItem`). Client code that needs identity before a save uses
   `itemKey`/refs, never the hashtag; the key a title is filed under is the one
   `upsertScrapedTitle` returns, never anything in the payload.
-- Show a title with `itemLabel` ("#177013" stays as it was; "hitomi 1234567"),
-  link it with `itemUrl`, seed procedural art with `coverSeed` (nhentai keeps its
-  hashtag seed; others seed from the ref so preview and saved match).
-- The site list is **not** a DB constraint — adding a site is an entry in
-  `SOURCES`, an adapter in `lib/scrapers/`, its cover host in `next.config.ts`
-  (a test keeps that list equal to `SOURCES[*].imageHosts`), no migration.
+- Jobs and quick add **scrape by `ref.url`** and key by `refKey(ref)`; a key
+  cannot be turned back into an address for a non-legacy site.
+- Show a title with `itemLabel` ("#177013" stays as it was; "hentaifox 42"),
+  name its site with `siteName` (the host), link it with `itemUrl` (= `item.url`),
+  seed procedural art with `coverSeed` (nhentai keeps its hashtag seed; others
+  seed from the ref so preview and saved match).
+- **Covers go through `/api/cover`**, never straight from a CDN: render
+  `coverSrc(imageLink, item.url)` with `unoptimized`. Some CDNs (Hitomi's) serve
+  only requests whose Referer is the gallery's site, which the browser cannot
+  send and the image optimizer will not forward, so the route fetches with the
+  title page's origin as Referer (`lib/cover-proxy.ts`). With covers on any CDN
+  there is no host allow-list: the SSRF defence is public-address DNS checks on
+  every hop, web addresses only (no IP literals, credentials, ports), byte
+  sniffing and a size cap — SECURITY.md. It reads the session cookie, which is
+  why the optimizer is off (`images.unoptimized`, no `remotePatterns`).
+  `NhCover` falls back to procedural art when a load fails.
 
-**Only titles get stored** — three independent gates, see SECURITY.md: the
-input allow-list; the scraper fetching only the address rebuilt from the id
-(and refusing off-host redirects and pages without title markup); and the write
-boundary `lib/scrape-payload.ts` (`parseScrapePayload`), which re-derives every
-payload — known source, canonical id, cover on the site's image hosts, entity
-links on the site, bounded strings/counts. `/api/scrape` runs it on a host's
-answer too and refuses an answer about a different title. It also reads the
-legacy nhentai-only shape (`hashtag`, no `source`) older hosts send.
+**Reading a page** is `lib/scrapers/extract.ts` `readPage` — heuristics only:
+the `<h1>` the document's `<title>` names, the info block around it (noise
+containers — sidebar, related, comments, menus, tag clouds — excluded), what a
+link is from namespace > row label > path words, count badges, `a | b`
+aliases, format words, the doujin title convention, labeled page/date rows,
+reader links, marked/lazy/CSS covers. It answers `gallery`, `follow` (content
+warning, age gate, reader → gallery) or `none` (listing, 404, login wall,
+article). **Measure changes against the corpus** (`lib/scrapers/fixtures/`,
+run by `lib/scrapers/corpus.test.ts`): a tweak that fixes one site and breaks
+another is not a fix. The corpus includes reconstructed and trimmed live pages, with credentials
+and tracking removed. A failing live page becomes a new sanitised fixture;
+cleanup must preserve its complete `readPage` result.
+
+**Only title-shaped records of real pages get stored** — three independent
+gates, see SECURITY.md: the address must look like one title's; the page must
+read as one (and every fetch — pasted or followed, at most two hops, same site
+— resolves to public addresses only); and the write boundary
+`lib/scrape-payload.ts` (`parseScrapePayload`) re-derives every payload — a
+site key, the stored `url` on that site naming the payload's id, a web-address
+cover, entity links on the site (others dropped to ""), bounded strings/counts.
+`/api/scrape` runs it on a host's answer too and refuses an answer about a
+different title. It also reads the older shapes hosts send: nhentai-only
+(`hashtag`, no `source`) and seven-site (legacy key, no `url`).
 
 Entities are **shared across sites by name**: the boundary folds names to
 lowercase NFKC (nhentai's vocabulary already was), so "Big Breasts" from Pururin
 and "female:big breasts" from E-Hentai are nhentai's "big breasts". Two
 consequences in `batchUpsertEntities`: a stored link is whichever site wrote it
-last (links are write-only), and `total_works` is upserted as
+last (links are write-only — and since 9a not unique: two spellings of one name
+may share a link), and `total_works` is upserted as
 `COALESCE(NULLIF(new, 0), current)` because only some sites print counts — a 0
 means "this site did not say" and must not clobber nhentai's real count.
 
@@ -304,47 +346,50 @@ work by that artist, so a stored table would need a recompute on the write path
 that the serialized-write contract already constrains. The result is cached,
 and `queryTitles` only pays the computation when `ghostTags` is set.
 
-### Entity naming rules (migration `5_split_aliases_and_normalize_links`)
+### Entity naming rules (migrations `5_split_aliases_and_normalize_links`, `9a`)
 
 nhentai keeps every alias of one entity on a single tag page, separated by
 `" | "` — `pensgfi | pencbfj`, `penvxcz | quill cuoi`. **All five
-categories are split the same way** (`splitAliases` in `lib/scraper.ts`), so a
-title lists each name separately and a half that also exists on its own stops
-being a duplicate row.
+categories are split the same way**, for every site (`cleanName` in
+`lib/scrapers/extract.ts`), so a title lists each name separately and a half
+that also exists on its own stops being a duplicate row. (`" / "` is different:
+it separates one name's English and Japanese spellings, and the first is kept.)
 
-This is the nhentai adapter's rule (`lib/scrapers/nhentai.ts`); the other sites
-list aliases as separate entities already. Know what it costs before "fixing"
-it: the separator does **not** mean the same thing everywhere. For artists and groups the halves really are separate
+Know what the split costs before "fixing" it: the separator does **not** mean
+the same thing everywhere. For artists and groups the halves really are separate
 credits. For parodies it carries one work's Japanese and English titles, so
 `penvxcz | quill cuoi` deliberately becomes two parody rows for one
 franchise. Uniform tables were chosen over nhentai's semantics on purpose — do
 not "restore" per-category behaviour without asking.
 
-Entity `*_link` columns are stored **absolute** (`https://nhentai.net/...`);
-`absoluteLink` resolves the markup's relative hrefs before writing. A split
-half's link is *derived* from its name (nhentai's slug rule: lowercase, runs of
-non-alphanumerics → one dash), because the combined page's href says nothing
-about either half. `total_works` is carried over to both halves rather than
-zeroed — it is write-only data, and a zero would clobber a real count on the
-next re-scrape's upsert.
+Entity `*_link` columns are stored **absolute** (`absoluteUrl` resolves the
+markup's relative hrefs) and may be `""` (a row with no link, a link that left
+the site, or one longer than the column). Both halves of a split name keep the
+combined page's link — since 9a links are not unique, so nothing needs to be
+derived. `total_works` is carried over to both halves rather than zeroed — it
+is write-only data, and a zero would clobber a real count on the next
+re-scrape's upsert.
 
 ### Two-layer scraper, hosted off Vercel
 
-`lib/scraper.ts` is the orchestrator; what to fetch and how to read it is one
-adapter per site in `lib/scrapers/` (`ADAPTERS`). It scrapes in two layers:
+`lib/scraper.ts` is the orchestrator: it fetches `ref.url`, hands the HTML to
+the site-agnostic `readPage` (`lib/scrapers/extract.ts`), follows what the
+reading points at (≤ 2 hops, same site), and checks every address with
+`assertPublicHostname` (`lib/net-address.ts` — deliberately not `server-only`,
+the scraper host is plain Node) before fetching it. Two layers:
 
 1. **impit** — TLS/HTTP2-impersonating HTTP client that passes Cloudflare's
-   fingerprint gate without a browser (~200 ms). Fast path, and the only path
-   for the JSON sources (E-Hentai's `gdata` API, Hitomi's gallery script).
+   fingerprint gate without a browser (~200 ms). Fast path.
 2. **Playwright** (playwright-extra + stealth) — a warm singleton browser used
-   *only* when impit is challenged on an HTML title page (`browserReady`). The
-   response reports `via: "impit" | "fallback"`.
+   when impit is challenged **or** the page it got did not read as a title
+   (client-rendered sites like Hitomi have no title until their scripts run);
+   it waits for network idle instead of a site-specific selector. The response
+   reports `via: "impit" | "fallback"`.
 
-Every parse is passed through `parseScrapePayload` before it leaves the scraper
-(`checked`), so markup drift fails at the scraper with its reason. Only
-nhentai's adapter is battle-tested against the live site; the others are built
-from reference implementations and pinned by fixtures (`lib/scrapers/sites.test.ts`)
-— see SCRAPER.md "Verification status".
+Every reading is passed through `parseScrapePayload` before it leaves the
+scraper (`checked`), so a misread fails at the scraper with its reason. Only
+nhentai has run against a live site for long; the generic reader is measured
+against the fixture corpus — see SCRAPER.md "Verification status".
 
 Both are lazily imported so proxy-mode Vercel never loads their native binaries;
 they're also listed in `serverExternalPackages` in `next.config.ts`.
@@ -404,9 +449,18 @@ Neon's PgBouncer pooler, so migrations need the direct connection.
 **Naming trap**: prisma replays migrations in *lexicographic* directory order,
 and the existing dirs are integer-prefixed (`0_`–`9_`). `10_` sorts before
 `2_`, and a timestamp prefix (`2026…`) sorts before `3_` — either would replay
-out of order on a fresh database. `9_` was the last single-digit slot: before
-the next migration, rename+re-baseline (renames desync `_prisma_migrations`, so
-that is a deliberate maintenance task, not a drive-by fix).
+out of order on a fresh database. After `9_` the slots are `9a_`, `9b_`, …
+(`'_' < 'a'`, so `9a_` sorts right after `9_`; prisma/migration.test.ts reads
+`/^\d+[a-z]?_/`) — 26 more without renaming anything. Past `9z_`,
+rename+re-baseline (renames desync `_prisma_migrations`, so that is a
+deliberate maintenance task, not a drive-by fix).
+
+**Expand-only, because previews may migrate production.** `build` runs
+`prisma migrate deploy`, and a preview deployment may point at the production
+database, so a migration can be live while the previous code still serves.
+Write migrations that the previous code survives (widen, relax, add nullable
+columns, backfill); do a destructive step in a later migration once nothing
+reads the old shape. 9a is the model.
 
 **Concurrency contract**: the stat triggers (migration 3) recompute
 `tags.title_count` with `COUNT(*)` under READ COMMITTED — concurrent writing

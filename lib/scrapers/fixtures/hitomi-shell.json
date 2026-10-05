@@ -1,0 +1,8 @@
+{
+  "url": "https://hitomi.la/galleries/8367076.html",
+  "description": "hitomi.la gallery URL as served BEFORE any JavaScript ran (what a plain HTTP fetch gets): the static gallery template only. It has the full site chrome (navbar with format words and index links, 18-language dropdown, search box, ad slots, footer), the generic <title>Hitomi.la</title> and site meta description, a cover column whose only image is a loading.gif placeholder and whose two <h1> elements are the 'Read Online' / 'Download' buttons, an EMPTY h1#gallery-brand and h2#artists, the gallery-info table with its row labels (Group, Type, Language, Series, Characters, Tags) but empty cells, an empty span.date, an empty thumbnail list and an empty related section; the data arrives later from ltn.gold-usergeneratedcontent.net/galleries/<id>.js, which an inline script injects. The URL does carry a numeric gallery id, but nothing on the page names a title, an entity or a cover, so it must be REFUSED as not a gallery: the extractor must not invent one from the 'Read Online' heading, the <title>, the logo, or the row labels. Unsure of: the exact template (whether the cells are present-but-empty or created by JS, whether a loading.gif sits in the cover, and how the inline loader finds the id); all of it is reconstructed from the rendered layout.",
+  "rendered": false,
+  "expect": {
+    "gallery": false
+  }
+}

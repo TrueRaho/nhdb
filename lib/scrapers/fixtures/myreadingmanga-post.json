@@ -1,0 +1,23 @@
+{
+  "url": "https://myreadingmanga.info/trial-ledger-aduzfwr/",
+  "description": "myreadingmanga.info post page as served: WordPress + Genesis child theme (site-container > site-inner > content-sidebar-wrap > main.content > article.entry[itemscope CreativeWork]), Yoast SEO head (og:image, article:published_time/modified_time, a JSON-LD @graph whose Article has datePublished 2021-08-17, dateModified 2023-02-11, author 'PenVcwx' = the uploader, keywords and articleSection), WP Rocket lazy-load. The gallery is a blog post: h1.entry-title '[Quill Euwz (Quill Kzhc)] Morning Ledger Oirnbri &#8211; Peneinj dj [Eng]' — MRM writes the parody as an unbracketed ' – Series dj' tail before the language tag, so the clean name needs that tail dropped too, and the circle/artist exist ONLY in the title bracket (and, unmarked, among the post tags). Header p.entry-meta: time.entry-time datetime + 'by PenVcwx' (uploader, /author/penvcwx/) + comment count. Entry content: an Ad Inserter code-block with a 728x90 partner banner img BEFORE the first page; a blurb naming the scanlators; 'Chapter 1 of 3'; six page images img.img-myreadingmanga whose src is an inline SVG placeholder and real URL in data-lazy-src, each followed by a <noscript> copy; wp_link_pages 'Pages: 1 2 3' (post sub-pages, NOT a page count — the page count is not stated anywhere); a YARPP 'Related posts' thumbnail block INSIDE entry-content with other posts' covers and bracketed '[Circle (Artist)]' titles. Entry footer: 'Filed Under:' the WP category (= the fandom, /category/peneinj/), 'Tagged With:' /tag/ links that mix characters (Quill Lagc, Quill Dkbz), the artist and circle names, and real content tags; then Genesis entry-terms spans 'Genre:' /genre/yaoi/, 'Pairing:' /pairing/, 'Language:' /lang/english/, 'Status:' /status/completed/, 'Scanlation:' /group/quill-zktv/ (a scanlator under a /group/ path — must not become a group). Noise: genesis nav menu with /genre/, /category/ and /lang/ links, a header search form, adjacent prev/next post links with other titles, a comment list (dates, a commenter naming another artist, a /tag/omegaverse/ link inside a comment), the comment form, a sidebar with a 300x250 ad, Recent Posts titles, a Tags cloud (tag-cloud-link, aria-label counts) and a Categories list with counts, footer. Characters cannot be told from tags here, so no character expectation is set. Unsure of: whether MRM's category base is /category/ or a custom one, which taxonomies MRM shows and where (entry header vs footer) and their labels, whether the scanlator taxonomy is really /group/, the exact WP Rocket / Ad Inserter / YARPP markup, the image file naming; titles, names, ids and slugs are invented.",
+  "rendered": false,
+  "expect": {
+    "gallery": true,
+    "source_id": "trial-ledger-aduzfwr",
+    "title_name": "Morning Ledger Oirnbri",
+    "uploaded_at": "2021-08-17",
+    "image_link": "https://myreadingmanga.info/wp-content/uploads/2021/08/quill-euwz-morning-ledger-oirnbri-001.jpg",
+    "tags": ["yaoi", "anal", "kissing", "romance", "uncensored"],
+    "artists": ["quill kzhc"],
+    "groups": ["quill euwz"],
+    "parodies": ["peneinj"],
+    "not": {
+      "tags": ["english", "eng", "japanese", "chinese", "completed", "peneinj", "peneinj dj", "quill zktv", "penvcwx", "bdsm", "blowjob", "mpreg", "omegaverse", "rape", "sex toys", "tentacles", "threesome", "bara", "shota", "manhwa", "original work", "quill yrsw", "quill kedo", "quill tjft", "quill expq", "language", "popular"],
+      "artists": ["penvcwx", "quill euwz", "quill zktv", "quill ffdb", "penvils", "quill tjeb", "quill wvyb", "quill uydd", "quill zepp", "quill twsw", "quill zteo", "Fixture note lshwqbk.", "Fixture note dzuzfhb.", "fixture note ocgklqs."],
+      "groups": ["quill zktv", "penvcwx", "quill kzhc", "quill xbnu", "quill lbvp", "quill tjeb", "pengbac", "quill gynb", "quill ifpe", "quill sglv", "quill srjw"],
+      "parodies": ["peneinj dj", "quill tjft", "quill expq", "quill yrsw", "quill kedo", "original work", "yaoi", "english"],
+      "characters": ["english", "yaoi", "peneinj"]
+    }
+  }
+}
