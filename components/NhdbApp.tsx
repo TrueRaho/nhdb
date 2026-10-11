@@ -19,7 +19,7 @@ const NhdbDesktop = dynamic(() => import("./Desktop").then((m) => ({ default: m.
 
 import { ScrapeJobsProvider, useScrapeJobs } from "./ScrapeJobsProvider";
 import { ADD_PARAM, readAddParam } from "../lib/sources";
-import { itemKey } from "../lib/data";
+import { scrapeInputOf } from "../lib/data";
 
 // Handles `/?add=177013,895243` (or encoded gallery links from any supported
 // site) — the entry point for the iOS share-sheet shortcut and the
@@ -285,7 +285,7 @@ export default function NhdbApp({
     const res = await fetch("/api/scrape", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ input: itemKey(detailItem), persist: false }),
+      body: JSON.stringify({ input: scrapeInputOf(detailItem), persist: false }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: res.statusText }));

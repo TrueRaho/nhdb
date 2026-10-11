@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { dbTitleToItem, scrapedToItem, type DbTitle } from "./mappers";
-import { coverSeed, itemLabel, itemUrl } from "./data";
+import { coverSeed, itemLabel, itemUrl, scrapeInputOf } from "./data";
+import { parseTitleRef } from "./sources";
 import type { ScrapeResult } from "./scrape-payload";
 
 // DbTitle is the full Prisma payload type; tests only exercise the fields the
@@ -171,3 +172,18 @@ describe("scrapedToItem", () => {
     }
   });
 });
+
+describe("scrapeInputOf", () => {
+  // The detail modal's re-scrape sends this to /api/scrape, which reads it
+  // with parseTitleRef — so it must parse back to the same title, any site.
+  it.each([
+    ["nhentai", "177013", "https://nhentai.net/g/177013/"],
+    ["3hentai.net", "612345", "https://3hentai.net/d/612345"],
+    ["hentaixcomic.com", "morning-ledger-pzngxsq", "https://hentaixcomic.com/manga/morning-ledger-pzngxsq/"],
+    ["simply-hentai.com", "quill-rrsu/morning-ledger-celutsx", "https://simply-hentai.com/quill-rrsu/morning-ledger-celutsx"],
+  ])("re-scrapes a %s title as itself", (source, sourceId, url) => {
+    const item = dbTitleToItem(row({ hashtag: 1_000_000_001, source, sourceId, url }));
+    expect(parseTitleRef(scrapeInputOf(item))).toMatchObject({ source, id: sourceId });
+  });
+});
+

@@ -107,24 +107,47 @@ async function getImpit(): Promise<ImpitInstance> {
   return _impit;
 }
 
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+const MAX_REDIRECTS = 5;
+
 // The page as impit sees it, or null to signal "fall back to the browser"
 // (challenged, blocked, or an error status the browser might get past).
 // Throws ScrapeError only for a genuine 404 (which the browser would also hit)
-// or a redirect off the site / to another title.
+// or a redirect off the site / to another title / into a private network.
+//
+// Redirects are followed BY HAND: impit would follow them itself, and the
+// request would reach wherever the Location points — 127.0.0.1, the router —
+// before anything looked at it. Each hop is checked like the first address:
+// on the site, the same title, resolving to public addresses only.
 async function fetchViaImpit(url: string, ref: TitleRef): Promise<{ html: string; url: string } | null> {
   let res: Awaited<ReturnType<ImpitInstance["fetch"]>>;
-  try {
-    const impit = await getImpit();
-    res = await impit.fetch(url, { headers: { "Accept-Language": "en-US,en;q=0.9" } });
-  } catch (e) {
-    console.warn(`[scraper] impit request failed for ${describe(ref)}, falling back:`, e instanceof Error ? e.message : e);
-    return null;
+  let current = url;
+  for (let hop = 0; ; hop++) {
+    try {
+      const impit = await getImpit();
+      res = await impit.fetch(current, { headers: { "Accept-Language": "en-US,en;q=0.9" }, redirect: "manual" });
+    } catch (e) {
+      console.warn(`[scraper] impit request failed for ${describe(ref)}, falling back:`, e instanceof Error ? e.message : e);
+      return null;
+    }
+    if (!REDIRECT_STATUSES.has(res.status)) break;
+    const location = res.headers.get("location");
+    if (!location || hop >= MAX_REDIRECTS) return null;
+    let next: string;
+    try {
+      next = new URL(location, current).toString();
+    } catch {
+      throw new ScrapeError(`${describe(ref)} redirected to an unusable address`, "NOT_FOUND");
+    }
+    assertLanded(next, ref);
+    await assertFetchable(next);
+    current = next;
   }
 
   if (res.status === 404 || res.status === 410) {
     throw new ScrapeError(`Title ${describe(ref)} not found (${res.status})`, "NOT_FOUND");
   }
-  const finalUrl = res.url || url;
+  const finalUrl = current;
   assertLanded(finalUrl, ref);
 
   const body = await res.text().catch(() => "");

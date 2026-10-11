@@ -6,7 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // The network, faked: each test says what "the site" answers, what its host
 // name resolves to, and whether a browser is available. No request leaves the
 // process and no Chromium is launched.
-//   impit              → fetchMock(url, init) answers { status, url, text() }
+//   impit              → fetchMock(url, init) answers { status, headers, text() };
+//                        a redirect is a 3xx with a Location, which the
+//                        scraper must follow itself (it asks for "manual")
 //   node:dns/promises  → lookup(host) answers the addresses (public by default)
 //   playwright-extra   → launch() rejects (no browser) unless a test installs
 //                        the fake browser, whose pages answer from browserServe
@@ -34,16 +36,18 @@ vi.mock("./scrapers/extract", async (importOriginal) => {
 import { closeScraper, looksLikeChallenge, scrapeTitle, ScrapeError } from "./scraper";
 import { readPage } from "./scrapers/extract";
 
-function answer(body: string, { status = 200, url }: { status?: number; url?: string } = {}) {
-  return { status, url: url ?? "", text: async () => body };
+function answer(body: string, { status = 200, url, location }: { status?: number; url?: string; location?: string } = {}) {
+  return { status, url: url ?? "", headers: new Headers(location ? { location } : {}), text: async () => body };
 }
+const redirect = (location: string, status = 302) => answer("", { status, location });
 
 /** Serve these pages by address; anything else is a 404. */
-function site(pages: Record<string, string | { body: string; status?: number; url?: string }>) {
+function site(pages: Record<string, string | { body: string; status?: number } | { redirect: string }>) {
   fetchMock.mockImplementation(async (url: string) => {
     const page = pages[url];
     if (page === undefined) return answer("", { status: 404, url });
-    return typeof page === "string" ? answer(page, { url }) : answer(page.body, { status: page.status, url: page.url ?? url });
+    if (typeof page === "string") return answer(page, { url });
+    return "redirect" in page ? redirect(page.redirect) : answer(page.body, { status: page.status, url });
   });
 }
 
@@ -236,22 +240,47 @@ describe("scrapeTitle: public addresses only", () => {
 });
 
 describe("scrapeTitle: where the page landed", () => {
-  it("does not read a page that redirected off the site", async () => {
-    fetchMock.mockResolvedValue(answer(HENTAIFOX, { url: "https://ads.example/landing" }));
+  it("asks impit not to follow redirects — the scraper follows them itself", async () => {
+    site({ "https://hentaifox.com/gallery/42/": HENTAIFOX });
+    await scrapeTitle("hentaifox:42");
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ redirect: "manual" });
+  });
+
+  it("does not follow a redirect off the site", async () => {
+    site({ "https://hentaifox.com/gallery/42/": { redirect: "https://ads.example/landing" } });
     await expect(scrapeTitle("hentaifox:42")).rejects.toMatchObject({
       code: "NOT_FOUND",
       message: expect.stringMatching(/redirected off the site/),
     });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("never sends a request to where a redirect into a private network points", async () => {
+    // An IP literal is not a site's address at all.
+    for (const to of ["http://127.0.0.1:8899/admin/reboot", "http://169.254.169.254/latest/meta-data/", "http://[::1]/"]) {
+      fetchMock.mockReset();
+      site({ [`${SITE}/gallery/12345/`]: { redirect: to } });
+      await expect(scrapeTitle(`${SITE}/gallery/12345/`)).rejects.toMatchObject({ code: "NOT_FOUND" });
+      expect(fetchMock.mock.calls.map((c) => c[0])).toEqual([`${SITE}/gallery/12345/`]);
+    }
+    // A name on the same site that resolves privately passes the site check,
+    // and is refused by the address check before it is fetched.
+    lookup.mockImplementation(async (host) => [{ address: host === "router.doujin-site.com" ? "192.168.1.1" : "93.184.216.34" }]);
+    fetchMock.mockReset();
+    site({ [`${SITE}/gallery/12345/`]: { redirect: "http://router.doujin-site.com/gallery/12345/" } });
+    await expect(scrapeTitle(`${SITE}/gallery/12345/`)).rejects.toMatchObject({ code: "BAD_INPUT" });
+    expect(fetchMock.mock.calls.map((c) => c[0])).toEqual([`${SITE}/gallery/12345/`]);
+    expect(launch).not.toHaveBeenCalled();
   });
 
   it("does not file a successor gallery under the id that redirected to it", async () => {
     // IMHentai answers a replaced gallery with a 301 to its successor.
-    fetchMock.mockResolvedValue(answer(HENTAIFOX, { url: "https://hentaifox.com/gallery/43/" }));
+    site({ "https://hentaifox.com/gallery/42/": { redirect: "https://hentaifox.com/gallery/43/" } });
     await expect(scrapeTitle("hentaifox:42")).rejects.toMatchObject({
       code: "NOT_FOUND",
       message: expect.stringMatching(/now redirects to hentaifox 43 — add that one instead/),
     });
-    fetchMock.mockResolvedValue(answer(HENTAIFOX, { url: `${SITE}/gallery/12346/` }));
+    site({ [`${SITE}/gallery/12345/`]: { redirect: "/gallery/12346/" } });
     await expect(scrapeTitle(`${SITE}/gallery/12345/`)).rejects.toMatchObject({
       code: "NOT_FOUND",
       message: expect.stringMatching(/now redirects to doujin-site 12346/),
@@ -259,14 +288,26 @@ describe("scrapeTitle: where the page landed", () => {
   });
 
   it("reads the site's own canonical form of the same title", async () => {
-    fetchMock.mockResolvedValue(answer(HENTAIFOX, { url: "https://hentaifox.com/gallery/42" }));
+    site({
+      "https://hentaifox.com/gallery/42/": { redirect: "https://hentaifox.com/gallery/42" },
+      "https://hentaifox.com/gallery/42": HENTAIFOX,
+    });
     await expect(scrapeTitle("hentaifox:42")).resolves.toMatchObject({ scraped: { source_id: "42" } });
     // A redirect to the site's mobile host is the same site and the same id;
     // the title keeps the address it was read at.
-    fetchMock.mockResolvedValue(answer(HENTAIFOX, { url: "https://m.doujin-site.com/gallery/12345/" }));
+    site({
+      [`${SITE}/gallery/12345/`]: { redirect: "https://m.doujin-site.com/gallery/12345/" },
+      "https://m.doujin-site.com/gallery/12345/": HENTAIFOX,
+    });
     await expect(scrapeTitle(`${SITE}/gallery/12345/`)).resolves.toMatchObject({
       scraped: { source: "doujin-site.com", source_id: "12345", url: "https://m.doujin-site.com/gallery/12345/" },
     });
+  });
+
+  it("gives up on an endless redirect chain without reading anything", async () => {
+    fetchMock.mockImplementation(async (url: string) => redirect(`${url.replace(/\?.*/, "")}?n=${Math.random()}`));
+    await expect(scrapeTitle(`${SITE}/gallery/12345/`)).rejects.toMatchObject({ code: "TIMEOUT" });
+    expect(fetchMock.mock.calls.length).toBeLessThanOrEqual(6);
   });
 
   it("maps a 404 or 410 to NOT_FOUND without opening a browser", async () => {

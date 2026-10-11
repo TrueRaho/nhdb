@@ -1062,3 +1062,17 @@ describe("readPage: following", () => {
     expect(readPage(html, GALLERY).kind).toBe("gallery");
   });
 });
+
+describe("readPage: hostile titles", () => {
+  // A separator regex with \s+ on both sides backtracks over a run of spaces
+  // from every start position: a page with a quarter of a million spaces in
+  // its og:title held the scraper host's event loop for minutes.
+  it("reads a page whose declared title is one huge run of whitespace in linear time", () => {
+    const spaces = " ".repeat(250_000);
+    const html = `<html><head><meta property="og:title" content="a${spaces}b"><title>x${" -".repeat(50_000)}y</title></head>
+      <body><h1>Some Title${" - x".repeat(5_000)} dj</h1></body></html>`;
+    const started = performance.now();
+    readPage(html, "https://site.example/g/123/");
+    expect(performance.now() - started).toBeLessThan(3_000);
+  });
+});

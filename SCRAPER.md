@@ -65,9 +65,13 @@ What the scraper guarantees, whatever the site:
 - **Same title only.** A redirect to another site, or to another id on the same
   site (IMHentai answers a replaced gallery with a 301 to its successor), is not
   read: the user is told which title it now redirects to.
-- **Public addresses only.** Every address — the pasted one and every followed
-  link — must resolve to public IPs (`lib/net-address.ts`) before it is
-  fetched, so the scraper host cannot be pointed at its own network.
+- **Public addresses only.** Every address — the pasted one, every followed
+  link and every redirect hop — must resolve to public IPs
+  (`lib/net-address.ts`) before it is fetched, so the scraper host cannot be
+  pointed at its own network. impit therefore runs with `redirect: "manual"`
+  and the scraper follows Location headers itself (at most five), each one
+  checked first. The browser layer cannot do that — Playwright never routes a
+  redirect hop — which SECURITY.md lists as a known gap.
 
 Titles keep their bracketed lead/tail out of the name the way nhentai's
 `.pretty` title does: `(C92) [Circle (Artist)] Title (Parody) [English]` is

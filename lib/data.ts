@@ -44,6 +44,13 @@ export const itemUrl = (item: Pick<Item, "url">): string => item.url;
 export const itemKey = (item: Sourced): string => refKey(itemRef(item));
 
 /**
+ * What /api/scrape is asked for to re-scrape a saved title: its page address.
+ * A key ("3hentai.net:612345") names a title, but only the seven legacy sites'
+ * keys can be turned back into an address — the rest would be refused.
+ */
+export const scrapeInputOf = (item: Sourced & Pick<Item, "url">): string => item.url || itemKey(item);
+
+/**
  * Seed for the procedural cover art. nhentai titles keep their hashtag seed
  * (so every existing cover looks as it did); other sites seed from the ref,
  * which — unlike their hashtag — is the same before and after the first save.

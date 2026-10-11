@@ -127,7 +127,8 @@ const LISTING_WORDS = new Set([
 ]);
 
 // Query parameters that carry a title's id on sites without clean paths. The
-// last two are WordPress's, and only ever numbers.
+// last two are WordPress's: only ever numbers, and an id only on an address
+// with no path ("/?p=123") — on "/some-title/?p=2" the p is a page number.
 const ID_PARAMS = ["id", "gid", "g", "gallery", "galleryid", "gallery_id", "manga_id", "mid", "v", "post", "p"];
 const NUMERIC_ONLY_PARAMS = new Set(["post", "p"]);
 
@@ -154,15 +155,24 @@ function segments(url: URL): string[] {
 
 const SLUG = /^[a-z0-9][a-z0-9_.-]{0,119}$/;
 
-// One path segment as an id: a number, a slug that ends in a long number
-// ("some-title-english-1234567" → the number; a short tail like "-2" is part of
-// the name), a letter-prefixed number ("s12345"), or — where slugs name titles
-// — the slug itself.
-function idOfSegment(seg: string, slugOk: boolean): string | null {
+// The id a slug carries at its end: "some-title-english-1234567" → the number.
+// A short tail ("-2") is part of the name, and so is a year: "summer-story-2019" and "morningledgerspmefad-2019" are two titles, never one id "2019". An
+// underscore tail counts only after a gallery word ("/albums/some-title_456789/"):
+// a lone underscore slug is a name ("/morningledgerhhxtbzk_2019/", "/sister_1234/").
+function tailId(seg: string, underscore: boolean): string | null {
+  const tail = seg.match(underscore ? /[-_](\d{4,12})$/ : /-(\d{4,12})$/);
+  if (!tail || /^(?:19|20)\d\d$/.test(tail[1])) return null;
+  return number(tail[1]);
+}
+
+// One path segment as an id: a number, a slug that ends in an id (tailId), a
+// letter-prefixed number ("s12345"), or — where slugs name titles — the slug
+// itself.
+function idOfSegment(seg: string, slugOk: boolean, afterGalleryWord = false): string | null {
   const n = number(seg);
   if (n) return n;
-  const tail = seg.match(/[-_](\d{4,12})$/);
-  if (tail) return number(tail[1]);
+  const tail = tailId(seg, afterGalleryWord);
+  if (tail) return tail;
   if (/^[a-z]\d{3,12}$/.test(seg)) return seg;
   // A gallery word on its own ("/manga/", "/hentai/") names a section, not a title.
   return slugOk && SLUG.test(seg) && !LISTING_WORDS.has(seg) && !GALLERY_WORDS.has(seg) ? seg : null;
@@ -178,22 +188,29 @@ function idOfSegment(seg: string, slugOk: boolean): string | null {
  *   4. a lone slug, optionally followed by a chapter number:
  *      "/morningledgerjoregra/" and "/morningledgerjoregra/1/" → "morningledgerjoregra".
  */
+// A token after a gallery's number is part of its id: E-Hentai's is 10 hex
+// characters, which can happen to be all digits ("899557/0123456789"); any
+// other length must show a letter, so "/view/1200000/3/" stays a page number.
+const isToken = (seg: string | undefined): seg is string =>
+  !!seg && (/^[0-9a-f]{10}$/.test(seg) || (/^[0-9a-f]{6,40}$/.test(seg) && /[a-f]/.test(seg)));
+
 export function galleryIdOf(url: URL): string | null {
-  const segs = segments(url);
+  let segs = segments(url);
+  // "/index.php?p=123" is the site's front script, i.e. no path at all.
+  if (segs.length === 1 && segs[0] === "index") segs = [];
   if (segs.length > 0 && LISTING_WORDS.has(segs[0])) return null;
 
   for (let i = 0; i < segs.length - 1; i++) {
     if (!GALLERY_WORDS.has(segs[i])) continue;
-    const id = idOfSegment(segs[i + 1], true);
+    const id = idOfSegment(segs[i + 1], true, true);
     if (!id) continue;
     const token = segs[i + 2];
-    if (/^\d+$/.test(id) && token && /^[0-9a-f]{6,40}$/.test(token) && /[a-f]/.test(token)) {
-      return `${id}/${token}`;
-    }
+    if (/^\d+$/.test(id) && isToken(token)) return `${id}/${token}`;
     return id.length <= MAX_ID ? id : null;
   }
 
   for (const key of ID_PARAMS) {
+    if (NUMERIC_ONLY_PARAMS.has(key) && segs.length > 0) continue;
     const v = url.searchParams.get(key);
     if (!v) continue;
     const n = number(v);
@@ -209,8 +226,8 @@ export function galleryIdOf(url: URL): string | null {
       const n = number(seg);
       if (n) return n;
     }
-    const tail = seg.match(/[-_](\d{4,12})$/);
-    if (tail) return number(tail[1]);
+    const tail = tailId(seg, false);
+    if (tail) return tail;
   }
 
   // A blog files a post under its date: "/2024/05/<slug>/" names the slug.

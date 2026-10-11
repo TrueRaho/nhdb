@@ -62,6 +62,8 @@ describe("galleryIdOf — the seven legacy sites keep their old ids", () => {
     ["https://e-hentai.org/g/899557/EDD545586A/?p=1", "ehentai", "899557/edd545586a", "https://e-hentai.org/g/899557/edd545586a/"],
     ["https://e-hentai.org/mpv/899557/edd545586a/", "ehentai", "899557/edd545586a", "https://e-hentai.org/g/899557/edd545586a/"],
     ["https://e-hentai.org/lofi/g/899557/edd545586a/", "ehentai", "899557/edd545586a", "https://e-hentai.org/g/899557/edd545586a/"],
+    // ~1% of tokens are all digits, and are tokens all the same.
+    ["https://e-hentai.org/g/899557/0123456789/", "ehentai", "899557/0123456789", "https://e-hentai.org/g/899557/0123456789/"],
     // Hitomi: /galleries/, /reader/ and the slugged type pages all end in the id.
     ["https://hitomi.la/galleries/1234567.html", "hitomi", "1234567", "https://hitomi.la/galleries/1234567.html"],
     ["https://hitomi.la/reader/1234567.html#1", "hitomi", "1234567", "https://hitomi.la/galleries/1234567.html"],
@@ -85,6 +87,9 @@ describe("galleryIdOf — the seven legacy sites keep their old ids", () => {
     ["https://hentai2read.com/trial_note_book/", "hentai2read", "trial_note_book", "https://hentai2read.com/trial_note_book/"],
     ["https://hentai2read.com/trial_note_book/1/", "hentai2read", "trial_note_book", "https://hentai2read.com/trial_note_book/"],
     ["hentai2read.com/Trial_Note_Book", "hentai2read", "trial_note_book", "https://hentai2read.com/trial_note_book/"],
+    // A slug that ends in a number is still the whole slug.
+    ["https://hentai2read.com/morningledgerhhxtbzk_2019/", "hentai2read", "morningledgerhhxtbzk_2019", "https://hentai2read.com/morningledgerhhxtbzk_2019/"],
+    ["https://hentai2read.com/sister_1234/2/", "hentai2read", "sister_1234", "https://hentai2read.com/sister_1234/"],
   ])("%s", (input, source, id, url) => {
     expect(parseTitleRef(input)).toEqual({ source, id, url });
     expect(refFromUrl(/^https?:/.test(input) ? input : `https://${input}`)).toEqual({ source, id, url });
@@ -150,6 +155,7 @@ describe("galleryIdOf — any other site, by the shape of its address", () => {
     // a hex token right after a number is part of the id (E-Hentai's mirrors)...
     ["https://exhentai.org/g/899557/edd545586a/", "899557/edd545586a"],
     ["https://example.org/g/899557/abcdef", "899557/abcdef"],
+    ["https://example.org/g/899557/0123456789", "899557/0123456789"],
     // ...but a page number, or something too short to be a token, is not
     ["https://example.org/g/899557/1234567", "899557"],
     ["https://example.org/g/899557/abcde", "899557"],
@@ -161,6 +167,13 @@ describe("galleryIdOf — any other site, by the shape of its address", () => {
     // a long number anywhere, or a slug ending in one
     ["https://example.com/12345/some-slug", "12345"],
     ["https://example.com/some-title-123456/", "123456"],
+    // ...but a year, or an underscore tail outside a gallery word, is part of the name
+    ["https://hentaixcomic.com/manga/summer-story-2019/", "summer-story-2019"],
+    ["https://example.org/some-title-2021/", "some-title-2021"],
+    ["https://example.org/some_title_1234/", "some_title_1234"],
+    // a WordPress ?p= is the post only on the front script, elsewhere it is a page
+    ["https://blog.example.org/index.php?p=123", "123"],
+    ["https://example.com/some-title-slug/?p=2", "some-title-slug"],
     // a blog post filed under its date names the post, not the date
     ["https://blog.example.org/2024/05/some-post-title/", "some-post-title"],
     ["https://blog.example.org/2024/05/12/some-post-title/", "some-post-title"],
@@ -170,6 +183,19 @@ describe("galleryIdOf — any other site, by the shape of its address", () => {
     ["https://example.org/some-title/3/", "some-title"],
   ])("%s → %s", (input, id) => {
     expect(idOf(input)).toBe(id);
+  });
+
+  it("never gives two titles one id because their slugs end alike", () => {
+    // An upsert on a shared (source, id) would overwrite one title with the other.
+    const pairs = [
+      ["https://hentaixcomic.com/manga/summer-story-2019/", "https://hentaixcomic.com/manga/morningledgerspmefad-2019/"],
+      ["https://myreadingmanga.info/circle-summer-vacation-2021/", "https://myreadingmanga.info/other-circle-winter-story-2021/"],
+      ["https://somesite.com/some-title-slug/?p=2", "https://somesite.com/another-title/?p=2"],
+    ];
+    for (const [a, b] of pairs) {
+      expect(idOf(a)).not.toBeNull();
+      expect(idOf(a)).not.toBe(idOf(b));
+    }
   });
 
   it("files a title under its site's host, read at the address that was pasted", () => {

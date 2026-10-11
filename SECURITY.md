@@ -111,8 +111,13 @@ gates — each refuses on its own, and none trusts the one before it:
    article — is refused as `NOT_FOUND` rather than stored. A redirect to
    another site or to another title's id is not read. Every address the
    scraper fetches, including links it follows (a content warning's "View
-   Gallery"), must resolve to public addresses only (`lib/net-address.ts`) and
-   stay on the title's site; followed links are capped at two.
+   Gallery") and every hop of a server redirect, must resolve to public
+   addresses only (`lib/net-address.ts`) and stay on the title's site; followed
+   links are capped at two. The fast layer (impit) is asked not to follow
+   redirects (`redirect: "manual"`) and the scraper follows them itself, at
+   most five, checking each Location before it is requested — left to impit,
+   a `302 Location: http://127.0.0.1:…` was requested before anything looked
+   at it. The browser layer is the exception, see Known gaps.
 3. **The write boundary re-derives the payload** (`lib/scrape-payload.ts`),
    because a commit's payload comes back from the browser and a host's answer
    comes from a machine the user controls. Unknown keys are dropped; the source
@@ -285,6 +290,17 @@ politeness to the tunnel, not abuse. It is not a throttle.
   answering with an image of at most 4 MB, so the exposure is bandwidth, not
   access. Sign-up is open, so this is abuse a determined account could commit;
   if it happens, a per-user budget like the scrape budget is the fix.
+
+- **The browser layer cannot check a redirect before following it.** Playwright
+  routes only the first request of a redirect chain (verified: the route
+  handler never sees the hop), so a site that answers impit with a page and
+  Chromium with a `302` into the scraper host's own network makes the browser
+  send that one GET. Nothing comes back from it: the landed page is refused
+  when it is off the site or another title, Chromium's local-network-access
+  rules block public→private subresources, and the reach is the user's own
+  scraper host, driven by a link they chose to add. Closing it needs a
+  filtering proxy in front of Chromium (one that resolves and checks every
+  CONNECT target), which is the fix if this ever matters.
 
 - **No explicit Origin check on `POST /api/scrape`.** Route Handlers get none
   from Next.js, unlike Server Actions. Session cookies are `SameSite=Lax`, so a

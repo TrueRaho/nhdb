@@ -277,7 +277,7 @@ const asList = (v: unknown): string[] =>
 function declared($: CheerioAPI): Declared {
   const work = jsonLd($).find((o) => /book|comic|creativework|article|imagegallery|mediagallery|webpage|product/i.test(String(o["@type"] ?? "")) && asText(o.name ?? o.headline));
   return {
-    title: decodeEntities(asText(work?.name ?? work?.headline) || meta($, "og:title", "twitter:title")),
+    title: cleanText(decodeEntities(asText(work?.name ?? work?.headline) || meta($, "og:title", "twitter:title"))).slice(0, MAX_TITLE_TEXT),
     image: asText(work?.image ?? work?.thumbnailUrl) || meta($, "og:image", "og:image:url", "twitter:image", "twitter:image:src") ||
       ($('[itemprop="image"]').attr("content") ?? $('[itemprop="image"]').attr("src") ?? ""),
     date: concreteDay(asText(work?.datePublished ?? work?.uploadDate ?? work?.dateCreated)) ??
@@ -333,10 +333,19 @@ function siteWords(pageUrl: URL, siteName: string): string[] {
   return [siteName, host, host.split(".")[0]].map((w) => w.toLowerCase()).filter((w) => w.length >= 3);
 }
 
+// The longest title text any rule here looks at. A stored title is at most 255
+// characters once its bracket groups are gone; a heading or og:title longer
+// than this is not a title, and the title regexes below must never see a
+// megabyte of text (several are quadratic on a long enough run).
+const MAX_TITLE_TEXT = 1000;
+
 // "Title - Site", "Title | Site Name", "Site » Title" → the part that is not the site.
 function stripSiteName(raw: string, site: string[]): string {
-  const parts = raw.split(/\s+[-|–—»·:]\s+/).map((p) => p.trim()).filter(Boolean);
-  if (parts.length < 2) return raw.trim();
+  // Whitespace is collapsed first so the separator is one fixed " x " shape:
+  // \s+ on both sides backtracks over a long run of spaces from every start.
+  const text = cleanText(raw).slice(0, MAX_TITLE_TEXT);
+  const parts = text.split(/ [-|–—»·:] /).map((p) => p.trim()).filter(Boolean);
+  if (parts.length < 2) return text;
   const kept = parts.filter((p) => !site.some((w) => p.toLowerCase().includes(w)));
   return (kept.length ? kept : parts).sort((a, b) => b.length - a.length)[0];
 }
@@ -970,7 +979,7 @@ function read($: CheerioAPI, url: URL, decl: Declared): PageReading {
   const headingCounts = !!heading && (tagOf(heading) === "h1" || attrOf(heading, "itemprop") === "name" ||
     (fold(headingText).length >= 4 && fold(docTitle).includes(fold(headingText))));
   const declaredText = stripSiteName(decl.title, site) || stripSiteName(textOf($, $("title")), site);
-  const rawTitle = cleanText((headingCounts ? headingText : declaredText || headingText) || declaredText);
+  const rawTitle = cleanText((headingCounts ? headingText : declaredText || headingText) || declaredText).slice(0, MAX_TITLE_TEXT);
   const bodyText = textOf($, $("body"));
 
   if (!rawTitle || NOT_A_TITLE.test(rawTitle)) {

@@ -126,7 +126,12 @@ word followed by an id (`/g/177013`, `/gallery/42/`, `/view/…`,
 `/galleries/1234567.html`, `/manga/<slug>/`), a hex token after a number joins
 it (`899557/edd545586a`), an `?id=` query, a long number, a slug ending in one,
 a lone slug. Listing words as the first segment (`/tag/`, `/search`,
-`/artist/`…) mean "not a title". The string form is `source:id` (`refKey`;
+`/artist/`…) mean "not a title". **A wrong id is a data-loss bug, not a cosmetic
+one**: two titles sharing `(source, id)` overwrite each other on upsert. So a
+slug's number tail is not an id when it is a year (`summer-story-2019`), an
+underscore tail counts only after a gallery word (Luscious `_456789`, never
+hentai2read's `sister_1234`), and WordPress `?p=` counts only with no path
+(elsewhere it is a page number) — lib/sources.test.ts pins colliding pairs. The string form is `source:id` (`refKey`;
 `parseRefKey` reverses it). A `TitleRef` also carries the page `url` — the
 address is stored (`titles.url`, migration 9a) because nothing can rebuild it.
 
