@@ -1,12 +1,29 @@
 import { describe, expect, it } from "vitest";
 import {
   ADD_PARAM, COVER_PATH, coverSrc, galleryIdOf, isLegacySource, isSameSite, isSourceKey, legacyUrl, MAX_URL,
-  parseInputs, parseRefKey, parseTitleRef, parseWebUrl, readAddParam, refFromUrl, refKey, refLabel, siteHost,
+  parseInputs, parseRefKey, parseTitleRef, parseWebUrl, quickAddInput, quickAddPath, readAddParam, refFromUrl,
+  refKey, refLabel, siteHost,
   siteKey, siteName, titleUrl, toTitleKey, urlsIn, type TitleKey, type TitleRef,
 } from "./sources";
 
+describe("R3.8: calendar archive tails versus reader numbers", () => {
+  it.each(["https://blog.example/archive/2024/05", "https://blog.example/archives/2024/05/"])("refuses date-shaped archive %s", (raw) => {
+    expect(galleryIdOf(new URL(raw))).toBeNull();
+  });
+  it("keeps a reader's chapter and page after its title slug", () => {
+    expect(galleryIdOf(new URL("https://hentai2read.com/trial_note_book/1/5/"))).toBe("trial_note_book");
+  });
+});
+
 const nh = (...ids: number[]): TitleRef[] =>
   ids.map((id) => ({ source: "nhentai", id: String(id), url: `https://nhentai.net/g/${id}/` }));
+
+it("skips oversized dotted paste fragments without repeatedly scanning their suffixes", () => {
+  const text = `${"a.".repeat(30_000)} https://nhentai.net/g/177013/`;
+  const start = performance.now();
+  expect(parseInputs(text)).toEqual(nh(177013));
+  expect(performance.now() - start).toBeLessThan(500);
+});
 
 const ref = (source: string, id: string, url: string): TitleRef => ({ source, id, url });
 
@@ -83,9 +100,16 @@ describe("galleryIdOf — the seven legacy sites keep their old ids", () => {
     ["https://pururin.me/gallery/67890/some-title", "pururin", "67890", "https://pururin.me/gallery/67890/x"],
     ["https://pururin.to/gallery/88048/morningledgerotxrlkr-2", "pururin", "88048", "https://pururin.me/gallery/88048/x"],
     ["https://pururin.me/read/67890/01/some-title", "pururin", "67890", "https://pururin.me/gallery/67890/x"],
+    // A one-word slug spelt in hex letters is a word, not a token glued to the id.
+    ["https://pururin.me/gallery/86334/facade", "pururin", "86334", "https://pururin.me/gallery/86334/x"],
+    ["https://pururin.to/gallery/86334/decade/", "pururin", "86334", "https://pururin.me/gallery/86334/x"],
+    ["https://pururin.me/gallery/86334/beaded", "pururin", "86334", "https://pururin.me/gallery/86334/x"],
     // Hentai2Read: the slug, lowercased; a chapter page belongs to its title.
     ["https://hentai2read.com/trial_note_book/", "hentai2read", "trial_note_book", "https://hentai2read.com/trial_note_book/"],
     ["https://hentai2read.com/trial_note_book/1/", "hentai2read", "trial_note_book", "https://hentai2read.com/trial_note_book/"],
+    // …and so does a page of a chapter.
+    ["https://hentai2read.com/trial_note_book/1/5/", "hentai2read", "trial_note_book", "https://hentai2read.com/trial_note_book/"],
+    ["https://hentai2read.com/trial_note_book/12/34", "hentai2read", "trial_note_book", "https://hentai2read.com/trial_note_book/"],
     ["hentai2read.com/Trial_Note_Book", "hentai2read", "trial_note_book", "https://hentai2read.com/trial_note_book/"],
     // A slug that ends in a number is still the whole slug.
     ["https://hentai2read.com/morningledgerhhxtbzk_2019/", "hentai2read", "morningledgerhhxtbzk_2019", "https://hentai2read.com/morningledgerhhxtbzk_2019/"],
@@ -154,11 +178,15 @@ describe("galleryIdOf — any other site, by the shape of its address", () => {
     ["https://hentaihere.com/m/S12345/1/1/", "s12345"],
     // a hex token right after a number is part of the id (E-Hentai's mirrors)...
     ["https://exhentai.org/g/899557/edd545586a/", "899557/edd545586a"],
-    ["https://example.org/g/899557/abcdef", "899557/abcdef"],
+    ["https://example.org/g/899557/a1b2c3", "899557/a1b2c3"],
     ["https://example.org/g/899557/0123456789", "899557/0123456789"],
-    // ...but a page number, or something too short to be a token, is not
+    ["https://example.org/g/899557/abcdefabcd", "899557/abcdefabcd"],
+    // ...but a page number, something too short to be a token, or a word spelt
+    // in hex letters (a slug: "/gallery/86334/facade") is not
     ["https://example.org/g/899557/1234567", "899557"],
     ["https://example.org/g/899557/abcde", "899557"],
+    ["https://example.org/g/899557/abcdef", "899557"],
+    ["https://example.org/gallery/86334/facade", "86334"],
     // an id query parameter
     ["https://site.example.org/view.php?id=123", "123"],
     ["https://site.example.org/view.php?id=007", "7"],
@@ -736,6 +764,71 @@ describe("readAddParam", () => {
   });
 });
 
+describe("quickAddInput / quickAddPath — /add/<link>", () => {
+  it.each(["%20", "%2F", "%3F", "%23"])("R3.9: preserves the raw URL's own %s separator", (escape) => {
+    const segments = ["https%3A", "site.example", `Some${escape}Title-123456`];
+    expect(quickAddInput(segments)).toBe(`https://site.example/Some${escape}Title-123456`);
+    expect(parseTitleRef(quickAddInput(segments))).toMatchObject({ source: "site.example", id: "123456" });
+  });
+
+  it("R3.9: gives encoded-space title slugs distinct identities", () => {
+    const refs = ["Love%20Story", "Love%20Hina", "Love-Story", "Love%2520Story"].map((slug) => parseTitleRef(quickAddInput(["https%3A", "site.example", "manga", slug])));
+    expect(refs.map((ref) => ref?.id)).toEqual(["love%20story", "love%20hina", "love-story", "love%2520story"]);
+    expect(new Set(refs.map((ref) => refKey(ref!))).size).toBe(4);
+  });
+  // What Next 16 hands the page, observed on a dev server: segments stay
+  // percent-encoded, "//" is merged into one, a trailing "/" is redirected
+  // away (308), and the query goes to searchParams.
+  //   /add/https:/site.example/view.php?id=7 → ["https%3A", "site.example", "view.php"], { id: "7" }
+  //   /add/https://blog.example/?p=123       → ["https%3A", "blog.example"], { p: "123" }
+  //   /add/https%3A%2F%2Fnhentai.net%2Fg%2F177013%2F → ["https%3A%2F%2Fnhentai.net%2Fg%2F177013%2F"], {}
+  it("puts back the query a raw link left on the /add page", () => {
+    const segments = ["https%3A", "site.example", "view.php"];
+    // What the page used to read: the path alone, which is no title.
+    expect(parseTitleRef(segments.map(decodeURIComponent).join("/"))).toBeNull();
+    expect(quickAddInput(segments, { id: "7" })).toBe("https://site.example/view.php?id=7");
+    expect(parseTitleRef(quickAddInput(segments, { id: "7" }))).toMatchObject({ source: "site.example", id: "7" });
+    expect(parseTitleRef(quickAddInput(["https%3A", "blog.example"], { p: "123" })))
+      .toMatchObject({ source: "blog.example", id: "123" });
+    expect(parseTitleRef(quickAddInput(["https%3A", "g.example", "gallery.php"], { gid: "42", page: "3" })))
+      .toMatchObject({ source: "g.example", id: "42" });
+  });
+
+  it("reads the links it always read", () => {
+    expect(quickAddInput(["https%3A%2F%2Fnhentai.net%2Fg%2F177013%2F"])).toBe("https://nhentai.net/g/177013/");
+    expect(quickAddInput(["https%3A", "hitomi.la", "galleries", "1234567.html"])).toBe("https://hitomi.la/galleries/1234567.html");
+    expect(quickAddInput(["https:", "hitomi.la", "galleries", "1234567.html"])).toBe("https://hitomi.la/galleries/1234567.html");
+    expect(quickAddInput(["177013"])).toBe("177013");
+    expect(quickAddInput(["100%25"])).toBe("100%");
+    expect(quickAddInput(["100%"])).toBe("100%"); // a malformed escape is kept, not a 500
+  });
+
+  it("joins a query to the one an encoded link already has", () => {
+    expect(quickAddInput(["https%3A%2F%2Fsite.example%2Fview.php%3Fid%3D7"])).toBe("https://site.example/view.php?id=7");
+    expect(quickAddInput(["https%3A%2F%2Fsite.example%2Fview.php"], { id: "7" })).toBe("https://site.example/view.php?id=7");
+    expect(quickAddInput(["https%3A%2F%2Fsite.example%2Fview.php%3Fa%3D1"], { id: "7" }))
+      .toBe("https://site.example/view.php?a=1&id=7");
+  });
+
+  it("gives an id no query, so a tracking tag cannot spoil it", () => {
+    expect(quickAddInput(["177013"], { utm_source: "share" })).toBe("177013");
+    expect(parseTitleRef(quickAddInput(["177013"], { utm_source: "share" }))).toMatchObject({ source: "nhentai", id: "177013" });
+  });
+
+  it("keeps every value of a repeated parameter", () => {
+    expect(quickAddInput(["https%3A", "x.example", "v"], { a: ["1", "2"], b: undefined })).toBe("https://x.example/v?a=1&a=2");
+  });
+
+  it("comes back to the same link after signing in, escaped once", () => {
+    expect(quickAddPath(["177013"])).toBe("/add/177013");
+    expect(quickAddPath(["https%3A", "site.example", "view.php"], { id: "7" })).toBe("/add/https%3A/site.example/view.php?id=7");
+    // Encoding Next's already-encoded segment again gave "https%253A%252F…",
+    // which reads back as "https%3A%2F…" — no link at all.
+    expect(quickAddPath(["https%3A%2F%2Fnhentai.net%2Fg%2F177013%2F"])).toBe("/add/https%3A%2F%2Fnhentai.net%2Fg%2F177013%2F");
+    expect(parseTitleRef(decodeURIComponent("https%253A%252F%252Fnhentai.net%252Fg%252F177013%252F"))).toBeNull();
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Keys, labels, addresses
 // ---------------------------------------------------------------------------
@@ -758,7 +851,7 @@ describe("refKey / parseRefKey", () => {
   });
 
   it("is what reads a host key back — parseTitleRef only rebuilds legacy keys", () => {
-    // findExistingTitlesAction tries parseTitleRef, then parseRefKey.
+    // findExistingTitlesAction tries parseRefKey, then parseTitleRef.
     expect(parseTitleRef("3hentai.net:612345")).toBeNull();
     expect(parseTitleRef("exhentai.org:899557/edd545586a")).toBeNull();
     expect(parseRefKey("3hentai.net:612345")).toEqual({ source: "3hentai.net", id: "612345" });

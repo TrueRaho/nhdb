@@ -1,0 +1,5 @@
+{
+  "url": "https://doujin-site.com/gallery/12345/",
+  "description": "R3.4 a logo must not turn weak title-convention metadata into a gallery",
+  "expect": { "gallery": false, "source_id": "12345" }
+}

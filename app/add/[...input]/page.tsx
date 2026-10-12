@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import { requireUserIdOrRedirect } from "@/lib/session";
 import type { Metadata } from "next";
-import { parseTitleRef } from "@/lib/sources";
+import { parseTitleRef, quickAddInput, quickAddPath, type PageQuery } from "@/lib/sources";
 import { QuickAdd } from "@/components/QuickAdd";
 
 // The share-sheet target: one title, one screen, opened straight from a phone.
@@ -15,40 +15,33 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-export default function QuickAddPage({ params }: { params: Promise<{ input: string[] }> }) {
+type Props = { params: Promise<{ input: string[] }>; searchParams: Promise<PageQuery> };
+
+export default function QuickAddPage({ params, searchParams }: Props) {
   // params is dynamic, so under cacheComponents it must resolve inside a
   // Suspense boundary — which is what makes the shell prerendered and instant.
   return (
     <Suspense fallback={<Shell note="opening…" />}>
-      <Resolved params={params} />
+      <Resolved params={params} searchParams={searchParams} />
     </Suspense>
   );
 }
 
-async function Resolved({ params }: { params: Promise<{ input: string[] }> }) {
-  const { input } = await params;
-  await requireUserIdOrRedirect(`/add/${input.map(encodeURIComponent).join("/")}`);
+async function Resolved({ params, searchParams }: Props) {
+  const [{ input }, query] = await Promise.all([params, searchParams]);
+  await requireUserIdOrRedirect(quickAddPath(input, query));
   // Catch-all on purpose. A share-sheet shortcut may hand over the gallery URL
   // percent-encoded ("/add/https%3A%2F%2Fnhentai.net%2Fg%2F177013%2F", one
-  // segment) or raw ("/add/https:/hitomi.la/galleries/1234567.html", several)
-  // depending on whether its URL-encode step escapes slashes. Rejoining the
-  // segments makes both spellings — and a plain "/add/177013" — land on the
-  // same title, so the shortcut cannot be built wrong. Only a link that looks
-  // like one title's gets past this line (lib/sources.ts).
-  const raw = input.map(safeDecode).join("/");
+  // segment) or raw ("/add/https://site.example/view.php?id=7", several, its
+  // query on this page) depending on whether its URL-encode step escapes
+  // slashes. quickAddInput puts the link back together, so both spellings —
+  // and a plain "/add/177013" — land on the same title and the shortcut cannot
+  // be built wrong. Only a link that looks like one title's gets past this
+  // line (lib/sources.ts).
+  const raw = quickAddInput(input, query);
   const ref = parseTitleRef(raw);
   if (!ref) return <Shell note={`not a link to a title: ${raw}`} error />;
   return <QuickAdd titleRef={ref} />;
-}
-
-// decodeURIComponent throws on a malformed escape ("%"), which would turn a
-// typo in the address bar into a 500.
-function safeDecode(raw: string): string {
-  try {
-    return decodeURIComponent(raw);
-  } catch {
-    return raw;
-  }
 }
 
 function Shell({ note, error }: { note: string; error?: boolean }) {

@@ -209,6 +209,14 @@ means "this site did not say" and must not clobber nhentai's real count.
 never fabricated. `Item.uploadedAt` is `number | null`; the upload-date sort puts
 nulls last.
 
+The title row follows the same rule as `total_works` (`lib/title-upsert.ts`): a
+re-scrape writes `pages`, `uploaded_at` and `image_link` as
+`COALESCE(NULLIF(new, 0 / ''), current)` (the date: `COALESCE(new, current)`).
+The reader stores 0 / null / "" when a page does not show a value, and the page
+read now may show less than the one read before — Hitomi's gallery page has no
+page count, which the old adapter read from the gallery script, so a plain
+overwrite zeroed it. A first save still stores what it has.
+
 ### Caching contract (the part that's easy to break)
 
 Read functions in `lib/titles.ts` are cached with `"use cache"` +
@@ -390,6 +398,10 @@ the scraper host is plain Node) before fetching it. Two layers:
    (client-rendered sites like Hitomi have no title until their scripts run);
    it waits for network idle instead of a site-specific selector. The response
    reports `via: "impit" | "fallback"`.
+   Its HTTP(S) traffic, including redirects, passes through a loopback-only
+   HTTP/CONNECT proxy (`lib/scraper-proxy.ts`) which checks all DNS answers and
+   connects to the checked IP. Keep the proxy lifetime tied to the warm browser
+   and force loopback through it; Playwright routes alone cannot guard redirects.
 
 Every reading is passed through `parseScrapePayload` before it leaves the
 scraper (`checked`), so a misread fails at the scraper with its reason. Only

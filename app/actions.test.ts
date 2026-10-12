@@ -180,6 +180,22 @@ describe("add flow actions", () => {
     ]);
   });
 
+  it("reads a key as a key even when its id holds something address-shaped", async () => {
+    // "/<series>/<title>" ids keep the series slug, and a slug may hold a dot:
+    // read as a link, "vol.2-special/some-title-x" is a page on the host
+    // "vol.2-special" — another site, another title, never found.
+    vi.mocked(titles.getTitlesByRefs).mockResolvedValue([]);
+    await actions.findExistingTitlesAction([
+      "manga.example.com:vol.2-special/some-title-x",
+      "manga.example.com:a.b/c",
+    ]);
+    const [, refs] = vi.mocked(titles.getTitlesByRefs).mock.calls[0];
+    expect(refs).toEqual([
+      { source: "manga.example.com", id: "vol.2-special/some-title-x" },
+      { source: "manga.example.com", id: "a.b/c" },
+    ]);
+  });
+
   it("does not look up keys that no title could have been saved under", async () => {
     vi.mocked(titles.getTitlesByRefs).mockResolvedValue([]);
     expect(await actions.findExistingTitlesAction([

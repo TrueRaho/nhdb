@@ -112,12 +112,18 @@ gates — each refuses on its own, and none trusts the one before it:
    another site or to another title's id is not read. Every address the
    scraper fetches, including links it follows (a content warning's "View
    Gallery") and every hop of a server redirect, must resolve to public
-   addresses only (`lib/net-address.ts`) and stay on the title's site; followed
-   links are capped at two. The fast layer (impit) is asked not to follow
+   addresses only (`lib/net-address.ts`). Followed links stay on the title's
+   site and are capped at two. The fast layer (impit) is asked not to follow
    redirects (`redirect: "manual"`) and the scraper follows them itself, at
    most five, checking each Location before it is requested — left to impit,
    a `302 Location: http://127.0.0.1:…` was requested before anything looked
-   at it. The browser layer is the exception, see Known gaps.
+   at it. Chromium's HTTP(S) traffic goes through an ephemeral loopback proxy
+   (`lib/scraper-proxy.ts`): absolute-form HTTP and CONNECT on web ports,
+   all DNS answers must be public before connecting, and the connection uses
+   the checked IP without another lookup. Loopback bypass is disabled, so
+   redirects also pass through the gate. HTTPS stays end-to-end (Host/SNI are
+   preserved). The browser may contact another public site during a redirect;
+   the final page still has to belong to the requested site/title to be read.
 3. **The write boundary re-derives the payload** (`lib/scrape-payload.ts`),
    because a commit's payload comes back from the browser and a host's answer
    comes from a machine the user controls. Unknown keys are dropped; the source
@@ -284,23 +290,18 @@ politeness to the tunnel, not abuse. It is not a throttle.
 
 ## Known gaps
 
+- **The browser gateway covers HTTP(S), not every browser protocol.** Chromium
+  launches with `--force-webrtc-ip-handling-policy=disable_non_proxied_udp` to
+  disable WebRTC UDP outside the proxy (checked with a local STUN listener).
+  Other non-HTTP protocols are outside this gateway; the proxy and launch flags
+  are not a process/network sandbox.
+
 - **A signed-in user can fetch any public image through `/api/cover`**, with any
   Referer they name. Titles come from any site, so there is no list of image
   hosts to restrict it to; what it can reach is public web servers on 80/443
   answering with an image of at most 4 MB, so the exposure is bandwidth, not
   access. Sign-up is open, so this is abuse a determined account could commit;
   if it happens, a per-user budget like the scrape budget is the fix.
-
-- **The browser layer cannot check a redirect before following it.** Playwright
-  routes only the first request of a redirect chain (verified: the route
-  handler never sees the hop), so a site that answers impit with a page and
-  Chromium with a `302` into the scraper host's own network makes the browser
-  send that one GET. Nothing comes back from it: the landed page is refused
-  when it is off the site or another title, Chromium's local-network-access
-  rules block public→private subresources, and the reach is the user's own
-  scraper host, driven by a link they chose to add. Closing it needs a
-  filtering proxy in front of Chromium (one that resolves and checks every
-  CONNECT target), which is the fix if this ever matters.
 
 - **No explicit Origin check on `POST /api/scrape`.** Route Handlers get none
   from Next.js, unlike Server Actions. Session cookies are `SameSite=Lax`, so a

@@ -1,0 +1,8 @@
+{
+  "url": "https://doujin-site.com/gallery/12345/",
+  "description": "R3.5 explicit Tags distinguish publication formats from genre-like words",
+  "expect": {
+    "gallery": true, "source_id": "12345", "title_name": "Some Title", "pages": 24,
+    "tags": ["big breasts", "webtoon"], "not": { "tags": ["doujinshi", "manga", "hentai"] }
+  }
+}

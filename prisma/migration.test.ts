@@ -1,5 +1,7 @@
 // Optional real-PostgreSQL integration checks. Never uses DATABASE_URL or .env.
-// NHDB_TEST_DATABASE_URL must explicitly point to a disposable local database.
+// NHDB_TEST_DATABASE_URL must explicitly point to Neon's schema-only "tests"
+// branch, database nhdb_test, or a disposable local nhdb_test/nhdb_test_*.
+// Never production. Every test builds and drops only its own nhdb_test_* schema.
 // Set PG_BIN_DIR if PostgreSQL's psql is not on PATH.
 import { execFileSync } from "node:child_process";
 import { readFileSync, readdirSync } from "node:fs";
@@ -7,6 +9,10 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { isLegacySource, isSourceKey, legacyUrl, MAX_URL, siteKey, titleUrl } from "../lib/sources";
 import { claimStatements, COLLECTION_TABLES } from "../scripts/lib/claim";
+import type { Prisma } from "../lib/generated/prisma/client";
+import type { ScrapeResult } from "../lib/scrape-payload";
+import { titleUpsertSql } from "../lib/title-upsert";
+import { AUDIT_TITLES_SQL, auditTitleIds, parseAuditTitles } from "../scripts/lib/audit-title-ids";
 
 const databaseUrl = process.env.NHDB_TEST_DATABASE_URL;
 const psql = process.env.PG_BIN_DIR ? join(process.env.PG_BIN_DIR, "psql") : "psql";
@@ -18,6 +24,55 @@ function query(sql: string) {
     encoding: "utf8",
     stdio: ["pipe", "pipe", "pipe"],
   }).trim();
+}
+
+function assertDisposable(raw: string) {
+  const url = new URL(raw);
+  const local = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+  const neon = /^[a-z0-9.-]+\.neon\.tech$/i.test(url.hostname) && url.pathname === "/nhdb_test";
+  const authority = raw.match(/^postgres(?:ql)?:\/\/([^/?#]*)/i)?.[1] ?? "";
+  const safeAuthority = authority && (authority.match(/@/g)?.length ?? 0) <= 1 &&
+    !/[\s\\]/.test(authority) && !/%(?:2f|5c|40|3f|23)/i.test(authority);
+  const safeQuery = [...url.searchParams.keys()].every((key) => ["sslmode", "channel_binding"].includes(key));
+  if (!(neon || local && /^\/nhdb_test(?:_[a-z0-9_]+)?$/i.test(url.pathname)) ||
+      !["postgres:", "postgresql:"].includes(url.protocol) || !safeAuthority || !safeQuery || url.hash) {
+    throw new Error("NHDB_TEST_DATABASE_URL must point to local nhdb_test/nhdb_test_* or Neon tests/nhdb_test; only sslmode/channel_binding query options are allowed.");
+  }
+}
+
+describe("DB integration target guard", () => {
+  it.each(["postgresql://nhdb_test@127.0.0.1:55432/nhdb_test", "postgresql://localhost/nhdb_test_audit", "postgres://[::1]/nhdb_test",
+    "postgresql://u:p@ep-x.c-2.eu-west-2.aws.neon.tech/nhdb_test?sslmode=require&channel_binding=require",
+    "postgresql://localhost/nhdb_test?sslmode=disable",
+  ])("accepts an approved disposable target: %s", (raw) => {
+    expect(() => assertDisposable(raw)).not.toThrow();
+  });
+  it.each([
+    "postgresql://cloud.example/nhdb_test",
+    "postgresql://127.0.0.1/nhdb_test?host=cloud.example",
+    "postgresql://127.0.0.1/production",
+    "postgresql://ep-x.neon.tech/neondb",
+    "postgresql://ep-x.neon.tech/nhdb_test_other",
+    "postgresql://ep-x.neon.tech.evil.example/nhdb_test",
+    "postgresql://evil.example@ep-x.neon.tech@127.0.0.1/nhdb_test",
+    "postgresql://u%40evil:p@ep-x.neon.tech/nhdb_test",
+    "postgresql://ep-x.neon.tech/nhdb_test#fragment",
+    ...["host=evil", "hostaddr=1.2.3.4", "dbname=neondb", "options=x", "service=x", "port=5432", "user=other", "password=x"].map((query) => `postgresql://ep-x.neon.tech/nhdb_test?${query}`),
+  ])("refuses a cloud or non-disposable test target before psql: %s", (raw) => {
+    expect(() => assertDisposable(raw)).toThrow();
+  });
+});
+
+// A statement the app binds, with its values written in as SQL literals for
+// psql. Test parameters only — never an arbitrary value.
+function withLiterals(q: Prisma.Sql): string {
+  return q.text.replace(/\$(\d+)/g, (_, index: string) => {
+    const v = q.values[Number(index) - 1];
+    if (v === null) return "NULL";
+    if (typeof v === "number") return String(v);
+    if (typeof v === "string") return `'${v.replaceAll("'", "''")}'`;
+    throw new Error(`no literal for ${typeof v}`);
+  });
 }
 
 function claimSql(owner: string) {
@@ -70,20 +125,37 @@ function addOtherUser() {
     SELECT 'other', 101, id_tag FROM tags WHERE user_id = 'other';`);
 }
 
-describe.skipIf(!databaseUrl)("multi-user PostgreSQL migration", () => {
+// Neon "tests" pays a TLS round trip per psql call and replays migrations per
+// test: seconds rather than milliseconds. Local disposable databases work too.
+const DB_TIMEOUT = 120_000;
+
+describe.skipIf(!databaseUrl)("multi-user PostgreSQL migration", { timeout: DB_TIMEOUT }, () => {
   beforeEach(() => {
-    const url = new URL(databaseUrl!);
-    if (!["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)) {
-      throw new Error("NHDB_TEST_DATABASE_URL must point to a disposable LOCAL PostgreSQL instance.");
-    }
+    assertDisposable(databaseUrl!);
     // Replay in deploy order, seeding the single-user rows 6 has to adopt just
     // before it, then carry on through every later migration.
     migrate({ "6_multi_user": SINGLE_USER_ROWS });
-  });
+  }, DB_TIMEOUT);
 
   afterEach(() => {
     if (schema) query(`DROP SCHEMA "${schema}" CASCADE;`);
     schema = "";
+  }, DB_TIMEOUT);
+
+  it("audits only the verified collection using a read-only parameterised query", () => {
+    query(`INSERT INTO titles (user_id, hashtag, source, source_id, url, title_name, image_link, pages, created_at)
+      VALUES ('audit-owner', 1000000001, 'manga.example', '2019', 'https://manga.example/summer-story-2019/', 'old id', '', 1, '2026-10-05 01:00:00'),
+             ('audit-owner', 1000000002, 'manga.example', 'summer-story-2019', 'https://manga.example/summer-story-2019/', 'existing', '', 1, '2026-10-04'),
+             ('other-owner', 1000000001, 'manga.example', '2019', 'https://manga.example/summer-story-2019/', 'other', '', 1, '2026-10-05');`);
+    expect(query(`SELECT pg_typeof(t.created_at)::text FROM (${AUDIT_TITLES_SQL.replace("$1", "'audit-owner'")}) t LIMIT 1`)).toBe("text");
+    const rows = query(`BEGIN READ ONLY;
+      PREPARE audit(text) AS SELECT COALESCE(json_agg(t), '[]'::json) FROM (${AUDIT_TITLES_SQL}) t;
+      EXECUTE audit('audit-owner'); COMMIT;`);
+    const report = auditTitleIds(parseAuditTitles(JSON.parse(rows)));
+    expect(report).toMatchObject({ scanned: 2, in_window: 1, mismatches: [{ user_id: "audit-owner", hashtag: 1000000001, current_id: "summer-story-2019", collides_with: [1000000002] }] });
+    expect(report.mismatches[0].created_at).toBe("2026-10-05T01:00:00.000Z");
+    expect(query("SELECT source_id FROM titles WHERE user_id = 'audit-owner' AND hashtag = 1000000001")).toBe("2019");
+    expect(() => query("BEGIN READ ONLY; UPDATE titles SET title_name = 'must not write'; COMMIT;")).toThrow(/read-only transaction/);
   });
 
   it("backfills every table without leaving a default owner", () => {
@@ -219,18 +291,14 @@ describe.skipIf(!databaseUrl)("multi-user PostgreSQL migration", () => {
     const row = (hashtag: string | number, source: string, id: string, url: string | null, image = "") =>
       `('u', ${hashtag}, ${lit(source)}, ${lit(id)}, ${lit(url)}, 't', ${lit(image)}, 1, NULL)`;
 
-    // The statement upsertScrapedTitle runs from 9a on — it writes `url` —
-    // for a non-nhentai title, with literals for its parameters.
-    const upsertNow = (source: string, id: string, url: string, title = "t") => query(`
-      INSERT INTO titles (user_id, hashtag, source, source_id, url, title_name, image_link, pages, uploaded_at)
-      VALUES ('u', COALESCE(
-          (SELECT hashtag FROM titles WHERE user_id = 'u' AND source = ${lit(source)} AND source_id = ${lit(id)}),
-          nextval('titles_foreign_hashtag_seq')),
-        ${lit(source)}, ${lit(id)}, ${lit(url)}, ${lit(title)}, '', 3, NULL::date)
-      ON CONFLICT (user_id, source, source_id) DO UPDATE SET
-        url = EXCLUDED.url, title_name = EXCLUDED.title_name, image_link = EXCLUDED.image_link,
-        pages = EXCLUDED.pages, uploaded_at = EXCLUDED.uploaded_at
-      RETURNING hashtag`);
+    // The statement upsertScrapedTitle runs (lib/title-upsert.ts), for user 'u'.
+    const save = (title: Partial<ScrapeResult> & Pick<ScrapeResult, "source" | "source_id" | "url">) =>
+      query(withLiterals(titleUpsertSql("u", {
+        title_name: "t", image_link: "", pages: 3, uploaded_at: null,
+        tags: [], artists: [], groups: [], characters: [], parodies: [], ...title,
+      })));
+    const upsertNow = (source: string, id: string, url: string, title = "t") =>
+      save({ source, source_id: id, url, title_name: title });
 
     // The same statement as the previous (migration 9) app version ran it: it
     // knows nothing of `url`, and may still be serving while 9a is applied.
@@ -384,6 +452,32 @@ describe.skipIf(!databaseUrl)("multi-user PostgreSQL migration", () => {
       }
       expect(query(`SELECT count(*) FROM pg_indexes WHERE schemaname = '${schema}' AND indexname LIKE '%link_key'`))
         .toBe("0");
+    });
+
+    it("keeps what a re-scrape's page no longer shows: pages, upload date, cover", () => {
+      // The reader stores 0 pages, no date and no cover when a page does not
+      // show them, and the page read now may show less than the one read
+      // before: Hitomi's page has no count — the old adapter read it from the
+      // gallery's script — and nhentai's mirrors print no date.
+      const cover = "https://tn.example-cdn.net/77.webp";
+      const hitomi = { source: "hitomi", source_id: "77", url: "https://hitomi.la/galleries/77.html" };
+      const key = save({ ...hitomi, title_name: "one", image_link: cover, pages: 24, uploaded_at: "2020-01-02" });
+      expect(save({ ...hitomi, title_name: "two", image_link: "", pages: 0, uploaded_at: null })).toBe(key);
+      const stored = () => query("SELECT title_name, pages, uploaded_at, image_link FROM titles WHERE source = 'hitomi'");
+      expect(stored()).toBe(`two|24|2020-01-02|${cover}`);
+      // What the page does show replaces what was stored.
+      save({ ...hitomi, title_name: "three", image_link: `${cover}?v=2`, pages: 30, uploaded_at: "2021-03-04" });
+      expect(stored()).toBe(`three|30|2021-03-04|${cover}?v=2`);
+      // The same for an nhentai title, whose key is its gallery id.
+      const nh = { source: "nhentai", source_id: "177013", url: "https://nhentai.net/g/177013/" };
+      expect(save({ ...nh, pages: 225, uploaded_at: "2016-06-23", image_link: cover })).toBe("177013");
+      expect(save({ ...nh, pages: 0, uploaded_at: null, image_link: "" })).toBe("177013");
+      expect(query("SELECT pages, uploaded_at, image_link FROM titles WHERE source = 'nhentai' AND hashtag = 177013"))
+        .toBe(`225|2016-06-23|${cover}`);
+      // A first save stores what it has: nothing is invented for a new title.
+      save({ source: "hentaifox", source_id: "42", url: "https://hentaifox.com/gallery/42/", pages: 0 });
+      expect(query("SELECT pages, coalesce(uploaded_at::text, 'NULL'), image_link FROM titles WHERE source = 'hentaifox'"))
+        .toBe("0|NULL|");
     });
 
     it("still takes the previous version's writes, which leave url unset", () => {

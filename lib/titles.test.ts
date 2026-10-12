@@ -421,6 +421,12 @@ describe("collection ownership", () => {
     expect(title.values.slice(0, 5)).toEqual([USER, 42, "nhentai", "42", `${NH}/g/42/`]);
     // A re-scrape refreshes the address along with the rest of the scrape.
     expect(title.strings.join("?")).toMatch(/DO UPDATE SET[\s\S]*\burl = EXCLUDED\.url/);
+    // …and keeps what its page no longer shows (run for real in prisma/migration.test.ts).
+    for (const kept of [
+      "image_link = COALESCE(NULLIF(EXCLUDED.image_link, ''), titles.image_link)",
+      "pages = COALESCE(NULLIF(EXCLUDED.pages, 0), titles.pages)",
+      "uploaded_at = COALESCE(EXCLUDED.uploaded_at, titles.uploaded_at)",
+    ]) expect(title.strings.join("?")).toContain(kept);
     for (const model of [db.titleArtist, db.titleGroup, db.titleCharacter, db.titleParody, db.titleTag]) {
       expect(model.deleteMany).toHaveBeenCalledWith({ where: { userId: USER, hashtag: 42 } });
       expect(model.createMany).toHaveBeenCalledWith({

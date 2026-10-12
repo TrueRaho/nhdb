@@ -31,8 +31,10 @@ share. Two steps:
      the words of its path (`/tag/x`, `/artist/x`, `/series/x`, `/circle/x`,
      `/character/x`). Count badges are stripped, `a | b` aliases split,
      `English / 日本語` names take the first half, `Series dj.` is the series,
-     languages are skipped, and format words (doujinshi, manga, artist cg…) in
-     a Category/Type row are not tags;
+     languages and pure publication words (doujinshi, manga, hentai, artist cg…)
+     are skipped. Genre-like words (webtoon, mature, smut…) remain tags with an
+     explicit Tags/namespace signal, while Category/Type and ambiguous
+     Genre/Content taxonomies treat them as formats;
    - **the title convention** — `(Event) [Circle (Artist)] Title (Parody)
      [English]` names the circle, artist and parody, used when the page lists
      none of them;
@@ -70,8 +72,11 @@ What the scraper guarantees, whatever the site:
   (`lib/net-address.ts`) before it is fetched, so the scraper host cannot be
   pointed at its own network. impit therefore runs with `redirect: "manual"`
   and the scraper follows Location headers itself (at most five), each one
-  checked first. The browser layer cannot do that — Playwright never routes a
-  redirect hop — which SECURITY.md lists as a known gap.
+  checked first. Chromium sends HTTP(S), including redirect hops, through a
+  temporary loopback HTTP/CONNECT proxy (`lib/scraper-proxy.ts`). It checks all
+  DNS answers, connects to the checked IP, and accepts only web ports; loopback
+  bypass is disabled. HTTPS remains end-to-end. The proxy closes with the warm
+  browser, including launch/setup failures and crashes.
 
 Titles keep their bracketed lead/tail out of the name the way nhentai's
 `.pretty` title does: `(C92) [Circle (Artist)] Title (Parody) [English]` is
@@ -88,6 +93,26 @@ from how those sites are built, not downloaded (the build machine cannot reach
 them), so a live page can still differ. When a site reads wrong: save its HTML
 as a new fixture with the expectation you want, and make the generic rule that
 fixes it pass without breaking the others — never add a site-specific branch.
+
+**Known limit: profiles at a bare-slug address.** Artist, tag and series pages
+under `/artist/…`, `/tag/…`, `/series/…` are refused by the address alone. A
+profile served at a single-slug address (`/some-fandom/`) has to be told from a
+work by its page, and a profile that shows an image, a "top artist" link and a
+few tags beside its works' cards can still read as a title.
+Only a link the user pastes reaches this case.
+
+**Resource bounds.** Both fetched HTML and the browser's rendered document are
+capped at 5 MiB of text before extraction. DOM nesting deeper than 256 is refused
+with a reason before recursive Cheerio helpers run. Wide blocks avoid Cheerio's
+quadratic selector preparation; nested JSON-LD credits are read iteratively.
+These bounds are generic, with regression tests alongside the extractor.
+
+The proxy's socket/Chromium checks are opt-in: `pnpm test:browser-proxy`
+requires an installed Playwright Chromium and local sockets. An existing
+compatible executable can be supplied with `NHDB_TEST_CHROMIUM_PATH`.
+These tests use temporary local HTTP/TLS servers and injected DNS/dial fixtures;
+they contact neither public sites nor a database. The normal suite covers the
+address gate and browser/proxy lifecycle without launching a browser.
 
 **Client-rendered sites** (Hitomi builds its gallery page in the browser) have
 no title in their HTML; the impit layer reads nothing and the browser layer

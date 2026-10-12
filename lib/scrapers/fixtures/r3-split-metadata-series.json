@@ -1,0 +1,20 @@
+{
+  "url": "https://doujin-site.com/gallery/12345/",
+  "description": "R3.2 split own metadata with adjacent series",
+  "expect": {
+    "gallery": true,
+    "title_name": "Some Title",
+    "source_id": "12345",
+    "pages": 24,
+    "tags": [
+      "a",
+      "b"
+    ],
+    "parodies": [
+      "penzluc"
+    ],
+    "artists": [
+      "foo"
+    ]
+  }
+}

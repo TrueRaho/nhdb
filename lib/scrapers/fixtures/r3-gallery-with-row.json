@@ -1,0 +1,18 @@
+{
+  "url": "https://doujin-site.com/gallery/12345/",
+  "description": "R3.3 own gallery metadata beside unnamed recommendations",
+  "expect": {
+    "gallery": true,
+    "source_id": "12345",
+    "title_name": "Some Title",
+    "pages": 24,
+    "artists": [
+      "foo"
+    ],
+    "tags": [
+      "a",
+      "b"
+    ],
+    "image_link": "https://cdn.doujin-site.com/12345/cover.jpg"
+  }
+}

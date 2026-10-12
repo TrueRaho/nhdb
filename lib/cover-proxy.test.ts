@@ -269,4 +269,22 @@ describe("fetchCover — the answer", () => {
     await vi.advanceTimersByTimeAsync(10_000);
     expect(await pending).toMatchObject({ ok: false, status: 504, reason: "upstream timed out" });
   });
+
+  it("keeps the timeout active while reading a slowly streamed body", async () => {
+    vi.useFakeTimers();
+    let aborted = false;
+    fetchMock.mockImplementation(async (_, init) => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(JPEG);
+        init?.signal?.addEventListener("abort", () => {
+          aborted = true;
+          controller.error(new DOMException("aborted", "AbortError"));
+        });
+      },
+    })));
+    const pending = fetchCover(NH);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(await pending).toMatchObject({ ok: false, status: 504, reason: "upstream timed out" });
+    expect(aborted).toBe(true);
+  });
 });

@@ -99,3 +99,21 @@ For `pnpm rescrape`, set `NHDB_SESSION_COOKIE` to the Cookie header from a
 signed-in browser request. The command resolves the verified account from that
 session and only reads/re-scrapes its collection. `--all`, `--list`, and
 `--limit=N` are supported. `APP_URL` defaults to http://localhost:3000.
+
+To audit IDs saved under older URL rules without changing data:
+
+```sh
+pnpm audit:ids --from-json=export.json
+pnpm audit:ids --database --since=2026-10-05
+```
+
+The JSON snapshot is an array with `user_id`, `hashtag`, `source`, `source_id`,
+`url`, `title_name` and `created_at`. Offline mode does not load environment
+files or contact the app/database. Database mode requires the same verified
+`NHDB_SESSION_COOKIE`, `APP_URL` and `DATABASE_URL` as rescrape, reads only that
+account's collection, and uses a read-only transaction. The cutoff is inclusive
+and interpreted in UTC (default: 2026-10-05). Older rows are read to detect
+collisions. The JSON report lists ID mismatches, their current source/ID and
+colliding hashtags within the same account; missing/unrecognised URLs appear
+separately. There is no repair mode and no scraping. Rows already overwritten
+by an old ID collision cannot be recovered by this audit.

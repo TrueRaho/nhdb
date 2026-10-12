@@ -124,11 +124,16 @@ const MAX_LOOKUP = 200;
 // Which of these titles (`source:id` keys, or anything parseTitleRef reads)
 // are already in the collection? Uncached read — the add flow uses it to skip
 // re-scraping known titles. Anything that does not parse is simply not looked up.
+//
+// A key is read as a key first: parseTitleRef hunts for an address anywhere in
+// its input, and an id may hold one ("manga.example.com:vol.2-special/x" would
+// be a page on the host "vol.2-special"). A link never parses as a key — its
+// "https" is no site's name.
 export async function findExistingTitlesAction(refs: string[]): Promise<Item[]> {
   const userId = await requireUserId();
   const parsed = new Map<string, TitleKey>();
   for (const raw of Array.isArray(refs) ? refs.slice(0, MAX_LOOKUP) : []) {
-    const key = typeof raw === "string" ? (parseTitleRef(raw) ?? parseRefKey(raw)) : null;
+    const key = typeof raw === "string" ? (parseRefKey(raw) ?? parseTitleRef(raw)) : null;
     if (key) parsed.set(refKey(key), { source: key.source, id: key.id });
   }
   if (parsed.size === 0) return [];

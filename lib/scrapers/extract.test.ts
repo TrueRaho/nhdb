@@ -3,6 +3,8 @@ import { parseScrapePayload } from "../scrape-payload";
 import { refFromUrl } from "../sources";
 import { absoluteUrl, clip, decodeEntities, EntityBag, isoDay, isoDayFromUnix, parseCount, prettyTitle } from "./common";
 import { concreteDay, readPage, type ExtractedTitle, type PageReading } from "./extract";
+import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 
 // readPage reads ANY gallery page from conventions, not per-site selectors.
 // These pages are small and hand-written (or trimmed from the markup the old
@@ -803,10 +805,21 @@ describe("readPage: what a link is", () => {
     ]);
   });
 
-  it("does not take the title's own name as an entity", () => {
-    const html = page({ title: "Original", rows: `<li><a href="/parody/original/">Original</a> <a href="/tag/x/">x</a></li>` });
+  it("does not take the title's own name as a tag", () => {
+    const html = page({ title: "Original", rows: `<li><a href="/tag/original/">Original</a> <a href="/tag/x/">x</a></li>` });
     const r = gallery(html, GALLERY);
     expect(r.parodies).toEqual([]);
+    expect(names(r.tags)).toEqual(["x"]);
+  });
+
+  it("keeps an artist or character whose name matches the pretty title", () => {
+    const html = page({
+      title: "[Pixiv] PenKqga (8968049)",
+      rows: `<li>Artists: <a href="/artist/penkqga/">PenKqga</a></li><li>Characters: <a href="/character/penkqga/">PenKqga</a></li><li>Tags: <a href="/tag/x/">x</a></li>`,
+    });
+    const r = gallery(html, GALLERY);
+    expect(names(r.artists)).toEqual(["penkqga"]);
+    expect(names(r.characters)).toEqual(["penkqga"]);
     expect(names(r.tags)).toEqual(["x"]);
   });
 });
@@ -836,6 +849,23 @@ describe("readPage: noise", () => {
     const extra = `<div class="related"><a href="/gallery/2/"><div class="cover"><img src="https://cdn.doujin-site.com/2/cover.jpg"></div></a></div>`;
     const r = gallery(page({ rows: `<li>Tags: <a href="/tag/real/">real</a></li>`, extra }), GALLERY);
     expect(r.image_link).toBe("");
+  });
+
+  it("does not treat an h1 or own title heading starting with an OTHERS_HEADING keyword as noise", () => {
+    const html = `<html><head><title>Morning Ledger Gqihnsh [English]</title></head><body>
+      <div id="info">
+        <h1 class="title">Morning Ledger Gqihnsh [English]</h1>
+        <ul>
+          <li>Artist: <a href="/artist/penhesc/">PenHesc</a></li>
+          <li>Tags: <a href="/tag/romance/">romance</a></li>
+        </ul>
+      </div>
+      <div class="box"><h2>Popular</h2><a href="/tag/noise/">noise tag</a></div>
+    </body></html>`;
+    const r = gallery(html, `${SITE}/g/838034/`);
+    expect(r.title_name).toBe("Morning Ledger Gqihnsh");
+    expect(names(r.artists)).toEqual(["penhesc"]);
+    expect(names(r.tags)).toEqual(["romance"]);
   });
 });
 
@@ -920,6 +950,11 @@ describe("readPage: the page count and the date", () => {
 });
 
 describe("readPage: the doujin title convention", () => {
+  it.each(["Complete", "COMIC PenDpol 2018-05", "Part 1", "Ch. 1-3", "Censored", "8968049"])("does not invent a parody from release metadata (%s)", (note) => {
+    const r = gallery(page({ title: `[Artist] Some Title (${note}) [English]` }), GALLERY);
+    expect(r.parodies).toEqual([]);
+  });
+
   it("names the circle, artist and parody when the page lists none of them", () => {
     const r = gallery(page({
       title: "(C92) [Quill Rycm (Quill Tjgk)] Morning Ledger Fqkgbiq (Quill Rfns) [English] [Scanlator]",
@@ -963,6 +998,198 @@ describe("readPage: the doujin title convention", () => {
 });
 
 describe("readPage: what is not a gallery", () => {
+  it("keeps publication-like words when the page explicitly calls them tags", () => {
+    const links = ["webtoon", "mature", "smut"].map((name) => `<a href="/tag/${name}/">${name}</a>`).join(" ");
+    expect(names(gallery(page({ rows: `<li>Tags: ${links}</li>` }), GALLERY).tags)).toEqual(["webtoon", "mature", "smut"]);
+    expect(gallery(page({ rows: `<li>Category: ${links}</li>` }), GALLERY).tags).toEqual([]);
+  });
+
+  it.each(["avatar", "lazy", "icon", "default", "pixel"])("accepts a cover with %s in the work's filename", (word) => {
+    const url = `${SITE}/images/my-${word}-adventure-cover.jpg`;
+    expect(gallery(page({ cover: `<div class="cover"><img src="${url}"></div>` }), GALLERY).image_link).toBe(url);
+    expect(gallery(page({ head: `<meta property="og:image" content="${url}">` }), GALLERY).image_link).toBe(url);
+  });
+
+  it("R3.5: drops publication words from explicit Tags but keeps genre-like tags", () => {
+    const html = readFileSync(new URL("./fixtures/r3-publication-tags.html", import.meta.url), "utf8");
+    expect(names(gallery(html, GALLERY).tags)).toEqual(["big breasts", "webtoon"]);
+  });
+
+  it.each([
+    "site-logo.png", "logo-dark.svg", "default-og-image.jpg", "og-default.png",
+    "placeholder-cover.jpg", "cover-placeholder.png", "header-banner.jpg",
+    "share-image-default.png", "thumbnail-default.jpg", "apple-touch-icon.png",
+    "logo.png", "loading.gif", "default-200x300.jpg", "avatar.jpg", "favicon-32x32.png", "icon-192.png",
+  ])("R3.4: rejects placeholder %s as img, og:image and CSS cover", (filename) => {
+    const url = `${SITE}/images/${filename}`;
+    expect(gallery(page({ cover: `<div class="cover"><img src="${url}"></div>` }), GALLERY).image_link).toBe("");
+    expect(gallery(page({ head: `<meta property="og:image" content="${url}">` }), GALLERY).image_link).toBe("");
+    expect(gallery(page({ cover: `<div class="cover" style="background-image:url('${url}')"></div>` }), GALLERY).image_link).toBe("");
+  });
+
+  it("R3.4: refuses a weak credit post whose og:image is a site logo", () => {
+    const html = readFileSync(new URL("./fixtures/r3-placeholder-credit-post.html", import.meta.url), "utf8");
+    expect(readPage(html, GALLERY).kind).toBe("none");
+  });
+
+  it.each(["The Girlfriend Who Doesn't Exist", "My Limiter Has Been Removed"])("keeps an error-like phrase inside a real title (%s)", (title) => {
+    expect(gallery(page({ title }), GALLERY).title_name).toBe(title);
+  });
+
+  it("does not absorb the credits and tags of a small neighboring works block", () => {
+    const html = `<html><body><main><section><h1>Some Title</h1><p>Pages: 24</p>
+      Artists: <a href="/artist/own/">Own Artist</a></section>
+      <section>${Array.from({ length: 2 }, (_, i) => `<div><a href="/gallery/${200 + i}/"><img src="/${i}.jpg">Other Work</a>
+        <a href="/artist/other-${i}/">Other Artist ${i}</a><a href="/tag/other-${i}/">Other Tag ${i}</a></div>`).join("")}</section>
+    </main></body></html>`;
+    const r = gallery(html, GALLERY);
+    expect(names(r.artists)).toEqual(["own artist"]);
+    expect(r.tags).toEqual([]);
+  });
+
+  it.each(["next", "series"])("R3.2: reads split metadata beside a %s link", (kind) => {
+    const html = readFileSync(new URL(`./fixtures/r3-split-metadata-${kind}.html`, import.meta.url), "utf8");
+    const r = gallery(html, GALLERY);
+    expect(names(r.tags)).toEqual(["a", "b"]);
+    expect(names(r.parodies)).toEqual(["penzluc"]);
+    expect(names(r.artists)).toEqual(["foo"]);
+    expect(r.pages).toBe(24);
+  });
+
+  it.each(["aside", "div"])("keeps a large %s sidebar out of the title entities", (tag) => {
+    const html = `<html><body><main><section><h1>Some Title</h1><p>Pages: 24</p></section>
+      <${tag} class="widget sidebar">${Array.from({ length: 100 }, (_, i) => `<a href="/tag/widget-${i}/">widget ${i}</a>`).join("")}</${tag}>
+    </main></body></html>`;
+    const r = gallery(html, GALLERY);
+    expect(r.tags).toEqual([]);
+  });
+
+  it("refuses a profile whose other works are outside its metadata block", () => {
+    const html = `<html><head><title>Some Fandom</title></head><body><main>
+      <section><h1>Some Fandom</h1><div>Series: <a href="/series/other/">Other Series</a></div></section>
+      <section>${Array.from({ length: 6 }, (_, i) => `<a href="/gallery/${200 + i}/"><img src="/${i}.jpg">Work ${i}</a>`).join("")}</section>
+    </main></body></html>`;
+    expect(readPage(html, `${SITE}/some-fandom/`).kind).toBe("none");
+  });
+
+  it.each([
+    ["empty header", ""],
+    ["aggregate totals", "<p>120 galleries · 3400 pages</p>"],
+    ["linked artist and circle", '<div>Artist: <a href="/artist/x/">X</a> Circle: <a href="/group/y/">Y</a></div>'],
+    ["Pages row", "<p>Pages: 3400</p>"],
+  ])("R4.1: refuses a slug profile with %s and eight other works", (_, header) => {
+    const cards = Array.from({ length: 8 }, (_, i) =>
+      `<div class="item"><a href="/gallery/20${i}/"><img src="/${i}.jpg"><span>Work number ${i} title</span></a> <span>24 pages</span></div>`).join("");
+    const html = `<html><head><title>Some Fandom - Doujin Site</title></head><body><main>
+      <section><h1>Some Fandom</h1>${header}<div>Series: <a href="/series/other/">Other Series</a></div></section>
+      <section>${cards}</section></main></body></html>`;
+    expect(refused(html, `${SITE}/some-fandom/`)).toMatch(/lists other titles/);
+  });
+
+  it.each(["gallery-list", "row"])("R3.3: reads a gallery beside an unlabeled %s listing", (kind) => {
+    const html = readFileSync(new URL(`./fixtures/r3-gallery-with-${kind}.html`, import.meta.url), "utf8");
+    const r = gallery(html, GALLERY);
+    expect(names(r.artists)).toEqual(["foo"]);
+    expect(names(r.tags)).toEqual(["a", "b"]);
+    expect(r.pages).toBe(24);
+  });
+
+  it("R4.1: reads a gallery with its cover and credits beside other works without a Pages row", () => {
+    const html = readFileSync(new URL("./fixtures/r3-gallery-with-row.html", import.meta.url), "utf8")
+      .replace("<li>Pages: 24</li>", "");
+    const r = gallery(html, GALLERY);
+    expect(names(r.artists)).toEqual(["foo"]);
+    expect(names(r.tags)).toEqual(["a", "b"]);
+    expect(r.image_link).toBe("https://cdn.doujin-site.com/12345/cover.jpg");
+    expect(r.pages).toBe(0);
+  });
+
+  it("R4.1: an og:image alone does not turn profile totals and credits into work evidence", () => {
+    const cards = Array.from({ length: 8 }, (_, i) =>
+      `<a href="/gallery/20${i}/"><img src="/${i}.jpg">Work number ${i} title</a>`).join("");
+    const html = `<html><head><title>Some Fandom</title><meta property="og:image" content="/fandom.jpg"></head><body><main>
+      <section><h1>Some Fandom</h1><p>Pages: 3400</p>
+        Artist: <a href="/artist/x/">X</a> Series: <a href="/series/other/">Other Series</a></section>
+      <section>${cards}</section></main></body></html>`;
+    expect(refused(html, `${SITE}/some-fandom/`)).toMatch(/lists other titles/);
+  });
+
+  it.each([SITE, "https://other-site.example"])("R4.1: checks ownership of reader links on %s beside other works", (readerSite) => {
+    const cards = Array.from({ length: 8 }, (_, i) =>
+      `<a href="/gallery/20${i}/"><img src="/${i}.jpg">Work number ${i} title</a>`).join("");
+    const html = `<html><head><title>Some Title</title></head><body><main>
+      <section><h1>Some Title</h1>Artist: <a href="/artist/x/">X</a></section>
+      <div><a href="${readerSite}/some-title/1/">1</a><a href="${readerSite}/some-title/24/">24</a></div>
+      <section>${cards}</section></main></body></html>`;
+    if (readerSite === SITE) expect(gallery(html, `${SITE}/some-title/`).pages).toBe(24);
+    else expect(refused(html, `${SITE}/some-title/`)).toMatch(/lists other titles/);
+  });
+
+  it.each(["profile-cover", "header-cover", "cover-banner", "banner-cover", "channel-cover"])(
+    "R5.1: refuses a profile with a %s banner and eight other works", (bannerClass) => {
+      const cards = Array.from({ length: 8 }, (_, i) =>
+        `<div class="item"><a href="/manga/other-work-${i}/"><img src="/${i}.jpg"><span>Other work number ${i}</span></a></div>`).join("");
+      const html = `<html><head><title>Some Artist</title></head><body><main><section>
+        <div class="${bannerClass}"><img src="https://cdn.doujin-site.com/banner/artist.jpg"></div>
+        <h1>Some Artist</h1><div>Artist: <a href="/artist/x/">X</a> Circle: <a href="/group/y/">Y</a></div>
+        </section><section>${cards}</section></main></body></html>`;
+      expect(refused(html, `${SITE}/some-artist/`)).toMatch(/lists other titles/);
+    },
+  );
+
+  const ogSlugGallery = (title = "Morning Ledger Sctoaea", authors = '<a href="/manga-author/foo/">Foo</a>', declaration = "") => {
+    const cards = Array.from({ length: 8 }, (_, i) =>
+      `<div class="item"><a href="/manga/other-work-${i}/"><img src="/${i}.jpg"><span>Other work number ${i}</span></a></div>`).join("");
+    return `<html><head><title>${title} - Site</title>${declaration}
+      <meta property="og:image" content="https://cdn.doujin-site.com/wp-content/uploads/morningledgerhyxbnae.jpg"></head>
+      <body><div class="post-title"><h1>${title}</h1></div>
+      <div class="summary"><div>Author(s): ${authors}</div>
+      <div>Genre(s): <a href="/manga-genre/big-breasts/">Big Breasts</a>, <a href="/manga-genre/vanilla/">Vanilla</a></div></div>
+      <div class="c-row">${cards}</div></body></html>`;
+  };
+
+  it("R5.2: reads a slug gallery with og:image and distinct author/genre metadata beside other works", () => {
+    const r = gallery(ogSlugGallery(), `${SITE}/manga/morning-ledger-sctoaea/`);
+    expect(names(r.artists)).toEqual(["foo"]);
+    expect(names(r.tags)).toEqual(["big breasts", "vanilla"]);
+    expect(r.image_link).toBe("https://cdn.doujin-site.com/wp-content/uploads/morningledgerhyxbnae.jpg");
+    expect(r.pages).toBe(0);
+  });
+
+  it("R5.2: keeps a profile headed with one of its own entity names as a listing", () => {
+    const html = ogSlugGallery("Foo", '<a href="/manga-author/foo/">Foo</a>, <a href="/manga-author/bar/">Bar</a>');
+    expect(refused(html, `${SITE}/some-artist/`)).toMatch(/lists other titles/);
+  });
+
+  it("R5.2: keeps a declared ProfilePage with distinct author/genre links as a listing", () => {
+    const html = ogSlugGallery("Some Artist", undefined, '<script type="application/ld+json">{"@type":"ProfilePage","name":"Some Artist"}</script>');
+    expect(refused(html, `${SITE}/some-artist/`)).toMatch(/lists other titles/);
+  });
+
+  it("R5.2: accepts work metadata when JSON-LD names its author as a Person", () => {
+    const html = ogSlugGallery(undefined, undefined, '<script type="application/ld+json">{"@type":"Person","name":"Foo"}</script>');
+    expect(names(gallery(html, `${SITE}/manga/morning-ledger-sctoaea/`).artists)).toEqual(["foo"]);
+  });
+
+  it("R5.2: keeps an explicitly marked profile with author/genre links as a listing", () => {
+    const html = ogSlugGallery("Some Artist").replace('class="post-title"', 'class="post-title profile-page"');
+    expect(refused(html, `${SITE}/some-artist/`)).toMatch(/lists other titles/);
+  });
+
+  it.each(["profile-cover", "header-cover", "cover-banner", "banner-cover", "channel-cover"])(
+    "R5.2: keeps a %s profile as a listing even with og:image and author/genre links", (bannerClass) => {
+      const html = ogSlugGallery("Some Artist").replace('<div class="summary">',
+        `<div class="summary"><div class="${bannerClass}"><img src="https://cdn.doujin-site.com/wp-content/uploads/morningledgerhyxbnae.jpg"></div>`);
+      expect(refused(html, `${SITE}/some-artist/`)).toMatch(/lists other titles/);
+    },
+  );
+
+  it.each(["Updated", "Video", "Quill Rfns"])("refuses a news article even with a parenthesized tail (%s)", (tail) => {
+    const html = readFileSync(new URL("./fixtures/animepulse-news-article.html", import.meta.url), "utf8")
+      .replaceAll("Quill Bbfy Manga Gets TV Anime Adaptation for January 2027", `Quill Bbfy Manga Gets TV Anime Adaptation for January 2027 (${tail})`);
+    expect(readPage(html, "https://animepulse.example/article/218843/quill-bbfy-manga-gets-tv-anime-adaptation").kind).toBe("none");
+  });
+
   const cards = (n: number) => Array.from({ length: n }, (_, i) =>
     `<div class="card"><a href="/gallery/${200 + i}/"><img src="https://cdn.doujin-site.com/${200 + i}/thumb.jpg">
       <div class="caption">[Circle ${i}] Another Title ${i} (Original) [English]</div></a></div>`).join("");
@@ -1014,6 +1241,14 @@ describe("readPage: what is not a gallery", () => {
 });
 
 describe("readPage: following", () => {
+  it("follows an age gate even when its head repeats the gallery cover and credit title", () => {
+    const html = `<html><head><meta property="og:image" content="${SITE}/cover.jpg">
+      <title>[Circle (Artist)] Some Title (Parody)</title></head><body>
+      <h1>[Circle (Artist)] Some Title (Parody)</h1><p>Are you over 18?</p>
+      <a href="/gallery/12345/?view=1">Enter</a></body></html>`;
+    expect(follows(html, GALLERY).url).toBe(`${GALLERY}?view=1`);
+  });
+
   it("follows a content warning's 'View Gallery' link", () => {
     const html = `<html><head><title>[Circle] Some Title - E-Hentai Galleries</title></head><body>
       <div id="nb"><a href="https://e-hentai.org/">Front Page</a></div>
@@ -1064,6 +1299,52 @@ describe("readPage: following", () => {
 });
 
 describe("readPage: hostile titles", () => {
+  it("avoids quadratic selector preparation for 20,000 siblings", () => {
+    const links = Array.from({ length: 20_000 }, (_, i) => `<a href="/tag/t-${i}/">tag ${i}</a>`).join("");
+    const html = `<html><body><main><h1>Some Title</h1><p>Pages:24</p>${links}</main></body></html>`;
+    const start = performance.now();
+    expect(readPage(html, GALLERY).kind).toBe("gallery");
+    expect(performance.now() - start).toBeLessThan(3000);
+  });
+
+  it("R3.2: bounds repeated scans of an ancestor shared by many work cards", () => {
+    const script = `
+      import { readPage } from './lib/scrapers/extract.ts';
+      const cards=Array.from({length:1000},(_,i)=>'<div><a href="/gallery/'+(20000+i)+'/"><img src="/cover'+i+'.jpg">Another work number '+i+'</a></div>').join('');
+      const html='<html><body><main><h1>Some Title</h1><p>Pages:24</p><section>'+cards+'</section></main></body></html>';
+      const start=performance.now();const result=readPage(html,'https://doujin-site.com/gallery/12345/');
+      console.log(JSON.stringify({kind:result.kind,ms:performance.now()-start}));
+    `;
+    // A deadline kills only this child if a future traversal becomes quadratic.
+    const result = JSON.parse(execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script], { encoding: "utf8", timeout: 4000 }));
+    expect(result.kind).toBe("gallery");
+    expect(result.ms).toBeLessThan(3000);
+  });
+
+  it("refuses an excessively deep DOM without overflowing the stack", () => {
+    const html = `<html><body>${"<div>".repeat(5000)}<h1>Some Title</h1><p>Pages:24</p>${"</div>".repeat(5000)}</body></html>`;
+    expect(refused(html, GALLERY)).toMatch(/depth/i);
+  });
+
+  it("reads deeply nested JSON-LD authors without a raw exception", () => {
+    const head = `<script type="application/ld+json">{"@type":"Book","name":"Some Title","author":${"[".repeat(5000)}"Own Artist"${"]".repeat(5000)}}</script>`;
+    expect(names(gallery(page({ head }), GALLERY).artists)).toEqual(["own artist"]);
+  });
+
+  it("keeps a work at the end of a broad JSON-LD graph without exceeding the argument limit", () => {
+    const head = `<script type="application/ld+json">${JSON.stringify({ "@graph": [
+      ...Array(150_000).fill(null), { "@type": "Book", name: "Some Title", image: `${SITE}/cover.jpg`, author: "Own Artist" },
+    ] })}</script>`;
+    expect(names(gallery(page({ head, pages: "" }), GALLERY).artists)).toEqual(["own artist"]);
+  });
+
+  it("reads a huge unterminated CSS background in bounded time", () => {
+    const html = page({ cover: `<div class="cover" style="background:url(${" ".repeat(100_000)}"></div>` });
+    const start = performance.now();
+    expect(gallery(html, GALLERY).image_link).toBe("");
+    expect(performance.now() - start).toBeLessThan(1500);
+  });
+
   // A separator regex with \s+ on both sides backtracks over a run of spaces
   // from every start position: a page with a quarter of a million spaces in
   // its og:title held the scraper host's event loop for minutes.

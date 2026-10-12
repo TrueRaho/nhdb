@@ -5,6 +5,7 @@ import { datasetTag, similarAnyTag, similarTag, statsTag, titleTag, titlesListTa
 import { MIN_SHARED_TITLES, rankAffinity, type AffinityRow, type TagAffinity } from "./affinity";
 import { inferGhostTags, type GhostSource, type GhostSourceKind, type GhostTag } from "./ghost";
 import { parseScrapePayload, type ScrapeEntity } from "./scrape-payload";
+import { titleUpsertSql } from "./title-upsert";
 import { parseTitleRef, refLabel, titleUrl, toTitleKey, type TitleKey } from "./sources";
 import { isHashtag } from "./utils";
 import { DELETE_BATCH } from "./swipe";
@@ -103,32 +104,9 @@ export async function upsertScrapedTitle(userId: string, payload: unknown) {
     const parodyIds = await batchUpsertParodies(tx, userId, s.parodies);
     const tagIds = await batchUpsertTags(tx, userId, s.tags);
 
-    // One statement, keyed by where the title comes from (migration 9). An
-    // nhentai title's hashtag is its gallery id; any other site's title keeps
-    // the key it was given on first save, or draws a new one from the
-    // sequence — COALESCE short-circuits, so a re-scrape burns no key. Being a
-    // single INSERT … ON CONFLICT, two saves of one new title cannot both
-    // allocate a row.
-    //
-    // alterName is user-managed (set manually via updateAlterName) — the
-    // scrape path never writes it, neither on create nor on re-scrape.
-    const key = s.source === "nhentai"
-      ? Prisma.sql`${Number(s.source_id)}`
-      : Prisma.sql`COALESCE(
-          (SELECT hashtag FROM titles WHERE user_id = ${userId} AND source = ${s.source} AND source_id = ${s.source_id}),
-          nextval('titles_foreign_hashtag_seq'))`;
-    const [{ hashtag }] = await tx.$queryRaw<{ hashtag: number }[]>(Prisma.sql`
-      INSERT INTO titles (user_id, hashtag, source, source_id, url, title_name, image_link, pages, uploaded_at)
-      VALUES (${userId}, ${key}, ${s.source}, ${s.source_id}, ${s.url}, ${s.title_name}, ${s.image_link}, ${s.pages},
-              ${s.uploaded_at}::date)
-      ON CONFLICT (user_id, source, source_id) DO UPDATE SET
-        url = EXCLUDED.url,
-        title_name = EXCLUDED.title_name,
-        image_link = EXCLUDED.image_link,
-        pages = EXCLUDED.pages,
-        uploaded_at = EXCLUDED.uploaded_at
-      RETURNING hashtag
-    `);
+    // One statement (lib/title-upsert.ts): the title's row, keyed by where it
+    // comes from, under the hashtag it already has or a new one.
+    const [{ hashtag }] = await tx.$queryRaw<{ hashtag: number }[]>(titleUpsertSql(userId, s));
 
     await tx.titleArtist.deleteMany({ where: { userId, hashtag } });
     await tx.titleGroup.deleteMany({ where: { userId, hashtag } });

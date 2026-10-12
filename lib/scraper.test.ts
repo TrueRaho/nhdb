@@ -12,11 +12,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 //   node:dns/promises  → lookup(host) answers the addresses (public by default)
 //   playwright-extra   → launch() rejects (no browser) unless a test installs
 //                        the fake browser, whose pages answer from browserServe
-const { fetchMock, lookup, launch, browserServe } = vi.hoisted(() => ({
+const { fetchMock, lookup, launch, browserServe, startProxy } = vi.hoisted(() => ({
   fetchMock: vi.fn(),
   lookup: vi.fn<(host: string, opts: unknown) => Promise<{ address: string }[]>>(),
   launch: vi.fn(),
   browserServe: vi.fn<(url: string) => { status?: number; html: string; url?: string }>(),
+  startProxy: vi.fn(),
 }));
 vi.mock("impit", () => ({
   Impit: class {
@@ -26,6 +27,7 @@ vi.mock("impit", () => ({
 vi.mock("node:dns/promises", () => ({ lookup }));
 vi.mock("playwright-extra", () => ({ chromium: { use: vi.fn(), launch } }));
 vi.mock("puppeteer-extra-plugin-stealth", () => ({ default: () => ({}) }));
+vi.mock("./scraper-proxy", () => ({ startScraperProxy: startProxy }));
 // The real reader, wrapped so one test can hand the orchestrator a reading the
 // write boundary must refuse.
 vi.mock("./scrapers/extract", async (importOriginal) => {
@@ -108,7 +110,66 @@ beforeEach(() => {
   launch.mockReset();
   launch.mockRejectedValue(new Error("browserType.launch: Executable doesn't exist"));
   browserServe.mockReset();
+  startProxy.mockReset();
+  startProxy.mockImplementation(async () => ({ server: "http://127.0.0.1:7777", close: vi.fn(async () => {}) }));
   vi.spyOn(console, "warn").mockImplementation(() => {});
+});
+
+describe("browser proxy lifecycle", () => {
+  const fallback = () => {
+    fetchMock.mockResolvedValue(answer("", { status: 503 }));
+    browserServe.mockReturnValue({ html: galleryPage() });
+  };
+  const proxy = async () => startProxy.mock.results[0].value;
+
+  it("launches with a proxy, reuses it, and closes it with the warm browser", async () => {
+    installBrowser(); fallback();
+    await scrapeTitle(`${SITE}/gallery/12345/`);
+    await scrapeTitle(`${SITE}/gallery/12345/`);
+    expect(startProxy).toHaveBeenCalledTimes(1);
+    expect(launch).toHaveBeenCalledWith(expect.objectContaining({
+      proxy: { server: "http://127.0.0.1:7777" },
+      args: expect.arrayContaining(["--proxy-bypass-list=<-loopback>", "--force-webrtc-ip-handling-policy=disable_non_proxied_udp"]),
+    }));
+    await closeScraper();
+    expect((await proxy()).close).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes a proxy when Chromium cannot launch", async () => {
+    fallback();
+    await expect(scrapeTitle(`${SITE}/gallery/12345/`)).rejects.toMatchObject({ code: "TIMEOUT" });
+    expect((await proxy()).close).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes both resources when context setup or page acquisition fails", async () => {
+    fallback();
+    for (const phase of ["context", "route", "page"]) {
+      startProxy.mockClear();
+      const close = vi.fn(async () => {});
+      launch.mockResolvedValue({ on: vi.fn(), close, newContext: async () => {
+        if (phase === "context") throw new Error("context failed");
+        return {
+          route: async () => { if (phase === "route") throw new Error("route failed"); },
+          newPage: async () => { throw new Error("page failed"); },
+        };
+      } });
+      await expect(scrapeTitle(`${SITE}/gallery/12345/`)).rejects.toMatchObject({ code: "TIMEOUT" });
+      expect(close).toHaveBeenCalledOnce();
+      expect((await proxy()).close).toHaveBeenCalledOnce();
+    }
+  });
+
+  it("closes the proxy on a crash and creates a new one for the next scrape", async () => {
+    installBrowser(); fallback();
+    await scrapeTitle(`${SITE}/gallery/12345/`);
+    const browser = await launch.mock.results[0].value;
+    const disconnect = browser.on.mock.calls.find(([event]: [string]) => event === "disconnected")[1];
+    disconnect();
+    await Promise.resolve();
+    expect((await proxy()).close).toHaveBeenCalledOnce();
+    await scrapeTitle(`${SITE}/gallery/12345/`);
+    expect(startProxy).toHaveBeenCalledTimes(2);
+  });
 });
 
 afterEach(async () => {
@@ -117,6 +178,21 @@ afterEach(async () => {
 });
 
 describe("scrapeTitle: what is fetched", () => {
+  it("refuses an oversized browser document before extraction", async () => {
+    fetchMock.mockResolvedValue(answer("", { status: 503 }));
+    installBrowser();
+    browserServe.mockReturnValue({ html: galleryPage() + " ".repeat(5 * 1024 * 1024) });
+    await expect(scrapeTitle(`${SITE}/gallery/12345/`)).rejects.toMatchObject({ name: "ScrapeError", code: "NOT_FOUND", message: expect.stringMatching(/size|large/i) });
+  });
+
+  it("returns a typed refusal for a pathological DOM in both layers", async () => {
+    const html = `<html><body>${"<div>".repeat(5000)}<h1>Some Title</h1><p>Pages:24</p>${"</div>".repeat(5000)}</body></html>`;
+    fetchMock.mockResolvedValue(answer(html));
+    installBrowser();
+    browserServe.mockReturnValue({ html });
+    await expect(scrapeTitle(`${SITE}/gallery/12345/`)).rejects.toMatchObject({ name: "ScrapeError", code: "NOT_FOUND", message: expect.stringMatching(/depth/) });
+  });
+
   it("fetches a legacy site's canonical page, not the pasted reader page", async () => {
     fetchMock.mockResolvedValue(answer(HENTAIFOX));
     const { scraped, via } = await scrapeTitle("https://nhentai.net/g/177013/5/?utm_source=x#top");

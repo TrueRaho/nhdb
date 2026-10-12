@@ -146,6 +146,10 @@ function segments(url: URL): string[] {
     let seg = s;
     try {
       seg = decodeURIComponent(s);
+      // Keep escaped separators (and a literal escaped percent) in an id.
+      // Decoding them into path/query syntax or replacing spaces by hyphens
+      // would merge distinct gallery addresses.
+      seg = seg.replace(/[ /?#%]/g, (c) => encodeURIComponent(c));
     } catch {
       // keep the raw segment
     }
@@ -153,7 +157,7 @@ function segments(url: URL): string[] {
   });
 }
 
-const SLUG = /^[a-z0-9][a-z0-9_.-]{0,119}$/;
+const SLUG = /^[a-z0-9](?:[a-z0-9_.-]|%(?:20|2f|3f|23|25)){0,119}$/;
 
 // The id a slug carries at its end: "some-title-english-1234567" → the number.
 // A short tail ("-2") is part of the name, and so is a year: "summer-story-2019" and "morningledgerspmefad-2019" are two titles, never one id "2019". An
@@ -185,14 +189,16 @@ function idOfSegment(seg: string, slugOk: boolean, afterGalleryWord = false): st
  *      token right after a number is part of the id), "/gallery/42/" → "42";
  *   2. an id query parameter: "view.php?id=123" → "123";
  *   3. a long number anywhere in the path: "/12345/some-slug" → "12345";
- *   4. a lone slug, optionally followed by a chapter number:
- *      "/morningledgerjoregra/" and "/morningledgerjoregra/1/" → "morningledgerjoregra".
+ *   4. a lone slug, optionally followed by chapter and page numbers (up to two):
+ *      "/morningledgerjoregra/" and "/morningledgerjoregra/1/5/" → "morningledgerjoregra".
  */
 // A token after a gallery's number is part of its id: E-Hentai's is 10 hex
 // characters, which can happen to be all digits ("899557/0123456789"); any
-// other length must show a letter, so "/view/1200000/3/" stays a page number.
+// other length must mix letters and digits, the way a random hex string does —
+// so "/view/1200000/3/" stays a page number and a slug that happens to be spelt
+// in hex letters ("/gallery/86334/facade", "decade", "beaded") stays a name.
 const isToken = (seg: string | undefined): seg is string =>
-  !!seg && (/^[0-9a-f]{10}$/.test(seg) || (/^[0-9a-f]{6,40}$/.test(seg) && /[a-f]/.test(seg)));
+  !!seg && (/^[0-9a-f]{10}$/.test(seg) || (/^[0-9a-f]{6,40}$/.test(seg) && /[a-f]/.test(seg) && /\d/.test(seg)));
 
 export function galleryIdOf(url: URL): string | null {
   let segs = segments(url);
@@ -232,8 +238,12 @@ export function galleryIdOf(url: URL): string | null {
 
   // A blog files a post under its date: "/2024/05/<slug>/" names the slug.
   const rest = /^(?:19|20)\d\d$/.test(segs[0] ?? "") ? segs.slice(segs.findIndex((s) => !/^\d{1,4}$/.test(s))) : segs;
+  // A reader's chapter and page numbers after the slug belong to the title:
+  // "/<slug>/", "/<slug>/<chapter>/", "/<slug>/<chapter>/<page>/".
   const [first, second] = rest;
-  if (first && (rest.length === 1 || (rest.length === 2 && /^\d{1,4}$/.test(second)))) {
+  const numbers = rest.slice(1);
+  const calendarTail = numbers.length === 2 && /^(?:19|20)\d\d$/.test(numbers[0]) && /^\d{1,2}$/.test(numbers[1]);
+  if (first && !calendarTail && numbers.length <= 2 && numbers.every((s) => /^\d{1,4}$/.test(s))) {
     const slug = idOfSegment(first, true);
     if (slug && slug.length >= 3 && slug.length <= MAX_ID) return slug;
   }
@@ -319,11 +329,17 @@ function legacyRefText(raw: string): TitleRef | null {
 const URLISH = /(?:https?:\/\/|\b(?:www\.)?(?=[a-z0-9-]+\.[a-z0-9.-]+\/))[^\s"'<>`]+/gi;
 export function urlsIn(text: string): string[] {
   const out: string[] = [];
-  for (const m of text.matchAll(URLISH)) {
-    for (const part of m[0].split(/(?=https?:\/\/)/i)) {
-      const trimmed = part.replace(/[)\].,;:!?'"»”’>]+$/, "");
-      if (!trimmed) continue;
-      out.push(/^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
+  // The schemeless-host lookahead rescans every dotted suffix on a failed
+  // match. Tokenize linearly first and never run it on an oversized address.
+  // Split glued schemes before the cap so long tab dumps keep all their URLs.
+  for (const token of text.matchAll(/[^\s"'<>`]+/g)) {
+    for (const part of token[0].split(/(?=https?:\/\/)/i)) {
+      if (part.length > MAX_URL) continue;
+      for (const m of part.matchAll(URLISH)) {
+        const trimmed = m[0].replace(/[)\].,;:!?'"»”’>]+$/, "");
+        if (!trimmed) continue;
+        out.push(/^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
+      }
     }
   }
   return out;
@@ -415,6 +431,61 @@ export const ADD_PARAM = "add";
 export function readAddParam(search: string): TitleRef[] {
   const raw = new URLSearchParams(search).getAll(ADD_PARAM).join(" ");
   return raw ? parseInputs(raw) : [];
+}
+
+/** A page's `searchParams`, as Next hands them over. */
+export type PageQuery = Readonly<Record<string, string | readonly string[] | undefined>>;
+
+// decodeURIComponent throws on a malformed escape ("%"), which would turn a
+// typo in the address bar into a 500.
+function safeDecode(raw: string): string {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
+function queryOf(query: PageQuery): string {
+  const out = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    for (const v of typeof value === "string" ? [value] : (value ?? [])) out.append(key, v);
+  }
+  return out.toString();
+}
+
+/**
+ * The link `/add/<link>` (app/add/[...input]) was handed, from the catch-all's
+ * segments and the page's query. A share-sheet shortcut sends the link
+ * percent-encoded ("/add/https%3A%2F%2Fnhentai.net%2Fg%2F177013%2F", one
+ * segment) or raw ("/add/https://site.example/view.php?id=7"), depending on
+ * whether its URL-encode step escapes slashes. Raw, the link arrives cut up:
+ * Next merges the scheme's "//" into one, drops a trailing "/", and the link's
+ * own query ("?id=7", the only id some sites have) lands in the /add page's
+ * query — which has none of its own. All three are put back. A bare id or
+ * `source:id` ref has no "/" and takes no query.
+ */
+export function quickAddInput(segments: readonly string[], query: PageQuery = {}): string {
+  const scheme = safeDecode(segments[0] ?? "");
+  // A split raw URL already carries its own path escapes. Decode the scheme
+  // that Next escaped, but keep %20/%2F/%3F/%23 in the URL's path intact.
+  // A single encoded URL (or bare id/key) still decodes fully, once.
+  const parts = segments.length > 1 && /^https?:$/i.test(scheme)
+    ? [scheme, ...segments.slice(1)] : segments.map(safeDecode);
+  const link = parts.join("/").replace(/^(https?:)\/(?!\/)/i, "$1//");
+  const search = queryOf(query);
+  if (!search || !link.includes("/")) return link;
+  return `${link}${link.includes("?") ? "&" : "?"}${search}`;
+}
+
+/**
+ * The `/add/<link>` address itself, to come back to after signing in. Next
+ * hands the segments over percent-encoded, so they are decoded before being
+ * encoded again — encoding them as given would escape the escapes.
+ */
+export function quickAddPath(segments: readonly string[], query: PageQuery = {}): string {
+  const search = queryOf(query);
+  return `/add/${segments.map((s) => encodeURIComponent(safeDecode(s))).join("/")}${search ? `?${search}` : ""}`;
 }
 
 // ---------------------------------------------------------------------------

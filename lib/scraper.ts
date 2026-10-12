@@ -20,6 +20,8 @@ import { galleryIdOf, isSameSite, parseTitleRef, parseWebUrl, refFromUrl, refKey
 import { looksLikeChallenge, looksLikeHtml, ScrapeError } from "./scrapers/common";
 import { readPage, type PageReading } from "./scrapers/extract";
 import { assertPublicHostname, UnsafeUrlError } from "./net-address";
+import { startScraperProxy, type ScraperProxy } from "./scraper-proxy";
+import { SCRAPER_BROWSER_NETWORK_ARGS } from "./scraper-browser-options";
 
 export { ScrapeError, looksLikeChallenge };
 export type { ScrapeEntity, ScrapeResult } from "./scrape-payload";
@@ -181,7 +183,8 @@ async function getChromium(): Promise<PlaywrightExtraChromium> {
 // scrape launches it; subsequent ones reuse it (no per-title launch). An idle
 // timer closes it after inactivity so long-running servers don't hold a browser
 // forever; callers can also close it explicitly via closeScraper().
-let _warm: Promise<{ browser: PWBrowser; context: PWBrowserContext }> | null = null;
+type WarmBrowser = { browser: PWBrowser; context: PWBrowserContext; proxy: ScraperProxy };
+let _warm: Promise<WarmBrowser> | null = null;
 
 const IDLE_MS = Number(process.env.SCRAPER_BROWSER_IDLE_MS ?? 60_000);
 let _idleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -199,7 +202,12 @@ function scheduleIdleClose(): void {
   }
 }
 
-async function launchWarm(): Promise<{ browser: PWBrowser; context: PWBrowserContext }> {
+async function closeWarm(warm: WarmBrowser): Promise<void> {
+  try { await warm.browser.close(); }
+  finally { await warm.proxy.close(); }
+}
+
+async function launchWarm(): Promise<WarmBrowser> {
   // @sparticuz/chromium ships a Linux binary — only use it in actual serverless
   // environments, not for any production build (next start on macOS would ENOEXEC).
   const isServerless = !!(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
@@ -216,56 +224,70 @@ async function launchWarm(): Promise<{ browser: PWBrowser; context: PWBrowserCon
   const noSandbox = !!process.env.RENDER || process.env.SCRAPER_NO_SANDBOX === "1";
 
   const chromium = await getChromium();
-  const browser = await chromium.launch({
-    headless: true,
-    executablePath,
-    args: [
-      ...lambdaArgs,
-      "--disable-blink-features=AutomationControlled",
-      ...(noSandbox ? ["--no-sandbox", "--disable-setuid-sandbox"] : []),
-    ],
-  });
+  const proxy = await startScraperProxy();
+  let browser: PWBrowser | undefined;
+  try {
+    browser = await chromium.launch({
+      headless: true,
+      executablePath,
+      proxy: { server: proxy.server },
+      args: [
+        ...lambdaArgs,
+        "--disable-blink-features=AutomationControlled",
+        // Force loopback through the gate even if Playwright's implicit bypass
+        // override is disabled in the environment.
+        ...SCRAPER_BROWSER_NETWORK_ARGS,
+        ...(noSandbox ? ["--no-sandbox", "--disable-setuid-sandbox"] : []),
+      ],
+    });
 
-  // A post-launch crash must not leave a dead browser cached forever — uncache
-  // so the next scrape relaunches. Only clear _warm if it still points at THIS
-  // browser (closeScraper / a newer launch may have replaced it already).
-  browser.on("disconnected", () => {
-    const cached = _warm;
-    if (!cached) return;
-    cached
-      .then((w) => {
-        if (w.browser === browser && _warm === cached) _warm = null;
-      })
-      .catch(() => {});
-  });
+    // A post-launch crash must not leave a dead browser cached forever — uncache
+    // so the next scrape relaunches. Only clear _warm if it still points at THIS
+    // browser (closeScraper / a newer launch may have replaced it already).
+    browser.on("disconnected", () => {
+      void proxy.close().catch(() => {});
+      const cached = _warm;
+      if (!cached) return;
+      cached
+        .then((w) => {
+          if (w.browser === browser && _warm === cached) _warm = null;
+        })
+        .catch(() => {});
+    });
 
-  const context = await browser.newContext({
-    userAgent: USER_AGENT,
-    viewport: { width: 1280, height: 800 },
-    locale: "en-US",
-    extraHTTPHeaders: { "Accept-Language": "en-US,en;q=0.9" },
-  });
+    const context = await browser.newContext({
+      userAgent: USER_AGENT,
+      viewport: { width: 1280, height: 800 },
+      locale: "en-US",
+      extraHTTPHeaders: { "Accept-Language": "en-US,en;q=0.9" },
+    });
 
-  // Skip subresources for speed — we only need the server-rendered HTML.
-  // abort()/continue() reject ("Target page closed") when the page is closing;
-  // the rejections are fire-and-forget so they MUST be observed or they become
-  // unhandled rejections that crash the standalone server process.
-  await context.route("**/*", (route: import("playwright").Route) => {
-    if (["image", "media", "font", "stylesheet"].includes(route.request().resourceType())) {
-      route.abort().catch(() => {});
-    } else {
-      route.continue().catch(() => {});
-    }
-  });
+    // Skip subresources for speed — we only need the server-rendered HTML.
+    // abort()/continue() reject ("Target page closed") when the page is closing;
+    // the rejections are fire-and-forget so they MUST be observed or they become
+    // unhandled rejections that crash the standalone server process.
+    await context.route("**/*", (route: import("playwright").Route) => {
+      if (["image", "media", "font", "stylesheet"].includes(route.request().resourceType())) {
+        route.abort().catch(() => {});
+      } else {
+        route.continue().catch(() => {});
+      }
+    });
 
-  return { browser, context };
+    return { browser, context, proxy };
+  } catch (e) {
+    try { await browser?.close(); }
+    finally { await proxy.close(); }
+    throw e;
+  }
 }
 
-function getWarm(): Promise<{ browser: PWBrowser; context: PWBrowserContext }> {
+function getWarm(): Promise<WarmBrowser> {
   if (!_warm) {
-    _warm = launchWarm();
+    const warm = launchWarm();
+    _warm = warm;
     // A failed launch must not be cached forever.
-    _warm.catch(() => { _warm = null; });
+    warm.catch(() => { if (_warm === warm) _warm = null; });
   }
   return _warm;
 }
@@ -278,8 +300,7 @@ export async function closeScraper(): Promise<void> {
   _warm = null;
   if (!warm) return;
   try {
-    const { browser } = await warm;
-    await browser.close();
+    await closeWarm(await warm);
   } catch {
     // already gone
   }
@@ -310,7 +331,7 @@ async function fetchViaBrowser(url: string, ref: TitleRef): Promise<{ html: stri
     // _warm alone would orphan a live Chromium process nothing can reach again.
     if (_warm === warm) {
       _warm = null;
-      warm.then((w) => void w.browser.close().catch(() => {})).catch(() => {});
+      await warm.then(closeWarm).catch(() => {});
     }
     _activeBrowserScrapes--;
     scheduleIdleClose();
@@ -341,7 +362,10 @@ async function fetchViaBrowser(url: string, ref: TitleRef): Promise<{ html: stri
     // A raw Playwright failure usually means the browser died mid-scrape —
     // uncache it (the "disconnected" handler covers most cases; this is the
     // belt to its suspenders) and surface a typed error.
-    if (!browser.isConnected() && _warm === warm) _warm = null;
+    if (!browser.isConnected() && _warm === warm) {
+      _warm = null;
+      await warm.then(closeWarm).catch(() => {});
+    }
     throw new ScrapeError(
       `browser scrape failed: ${e instanceof Error ? e.message : String(e)}`,
       "TIMEOUT"
@@ -394,6 +418,9 @@ async function readWith(fetchPage: Fetcher, ref: TitleRef): Promise<ScrapeResult
     await assertFetchable(url);
     const page = await fetchPage(url, ref);
     if (!page) return null;
+    // The browser's rendered DOM can be larger than the fast layer's body.
+    // Apply the same cap before either layer enters the synchronous parser.
+    if (page.html.length > MAX_HTML) return { reason: "the page is too large to read" };
     const reading = readPage(page.html, page.url);
     if (reading.kind === "gallery") return checked(reading, ref, page.url);
     if (reading.kind === "none") return { reason: reading.reason };
