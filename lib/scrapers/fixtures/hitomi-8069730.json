@@ -1,0 +1,10 @@
+{
+  "url": "https://hitomi.la/galleries/8069730.html",
+  "rendered": true,
+  "description": "Saved live browser-rendered DOM 2026-10-12; each thumbnail names its page in the reader fragment.",
+  "expect": {
+    "gallery": true,
+    "source_id": "8069730",
+    "pages": 30
+  }
+}

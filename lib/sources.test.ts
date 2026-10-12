@@ -27,6 +27,45 @@ it("skips oversized dotted paste fragments without repeatedly scanning their suf
 
 const ref = (source: string, id: string, url: string): TitleRef => ({ source, id, url });
 
+describe("a number leading a slug is part of the name, not an id", () => {
+  it.each([
+    ["https://hentai2read.com/doujinshi/86958-morningledgerzqsvunf", "86958-morningledgerzqsvunf"],
+    ["https://hentai2read.com/original/89990-morningledgergycevzl", "89990-morningledgergycevzl"],
+    ["https://hentai2read.com/imageset/80478-morningledgerqdsqxfo", "80478-morningledgerqdsqxfo"],
+    // The reader of the same title names the same title.
+    ["https://hentai2read.com/reader/89990-morningledgergycevzl/859692/page-1", "89990-morningledgergycevzl"],
+    ["https://gallery.example/books/86958-morningledgerzqsvunf", "86958-morningledgerzqsvunf"],
+    ["https://gallery.example/86958-morningledgerzqsvunf", "86958-morningledgerzqsvunf"],
+    ["https://gallery.example/manga/2019-summer-story", "2019-summer-story"],
+    ["https://gallery.example/1950-summer-story", "1950-summer-story"],
+  ])("%s names %s", (raw, id) => {
+    expect(galleryIdOf(new URL(raw))).toBe(id);
+  });
+
+  it("keeps two titles that start with the same number apart", () => {
+    for (const [a, b] of [
+      ["https://site.example/manga/1001-nights/", "https://site.example/manga/1001-nights-of-love/"],
+      ["https://site.example/1001-arabian-nights/", "https://site.example/1001-nights/"],
+      ["https://site.example/manga/9999-ways/", "https://site.example/manga/9999-ways-to-love/"],
+    ]) {
+      const [x, y] = [galleryIdOf(new URL(a)), galleryIdOf(new URL(b))];
+      expect(x).toBeTruthy();
+      expect(y).toBeTruthy();
+      expect(x).not.toBe(y);
+    }
+    expect(galleryIdOf(new URL("https://site.example/manga/1001-nights/"))).toBe("1001-nights");
+  });
+
+  it("reads hentai2read's numbered titles at /doujinshi/, which redirects to the right type, and old slugs where they were", () => {
+    expect(legacyUrl("hentai2read", "89990-morningledgergycevzl"))
+      .toBe("https://hentai2read.com/doujinshi/89990-morningledgergycevzl");
+    expect(legacyUrl("hentai2read", "trial_note_book")).toBe("https://hentai2read.com/trial_note_book/");
+    expect(parseTitleRef("https://hentai2read.com/original/89990-morningledgergycevzl"))
+      .toEqual(ref("hentai2read", "89990-morningledgergycevzl", "https://hentai2read.com/doujinshi/89990-morningledgergycevzl"));
+    expect(parseTitleRef("hentai2read:trial_note_book")?.id).toBe("trial_note_book");
+  });
+});
+
 /** The gallery id of an address that must itself be a valid web address. */
 function idOf(raw: string): string | null {
   const url = parseWebUrl(raw);
@@ -275,6 +314,30 @@ describe("galleryIdOf — any other site, by the shape of its address", () => {
 // What is not a title
 // ---------------------------------------------------------------------------
 
+describe("L1.16 — service pages and files are not title slugs", () => {
+  it.each([
+    "/favicon.png", "/watched", "/torrents.php", "/toplist.php", "/discord",
+    "/comments", "/advsearch/", "/hentai-lists/",
+    "/image.jpg", "/image.gif", "/image.webp", "/image.svg", "/favicon.ico",
+    "/style.css", "/script.js", "/feed.xml", "/robots.txt", "/IMAGE.PNG",
+    "/favicon%2Epng", "/image.png?id=12345", "/some-title.php",
+    "/12345.php", "/some-title-12345.php", "/some-title%2Ephp",
+  ])("rejects %s before fetching it", (path) => {
+    expect(parseTitleRef(`https://example.org${path}`)).toBeNull();
+  });
+
+  it.each([
+    ["/some-title.php?id=12345", "12345"],
+    ["/view.php?id=12345", "12345"],
+    ["/index.php?p=12345", "12345"],
+    ["/manga/discord/", "discord"],
+    ["/manga/comments/", "comments"],
+    ["/some-title.html", "some-title"],
+  ])("keeps the title identity in %s", (path, id) => {
+    expect(idOf(`https://example.org${path}`)).toBe(id);
+  });
+});
+
 describe("galleryIdOf — listings are not titles", () => {
   // The user-facing promise: only titles. Search, tag and listing pages — the
   // very links one copies while browsing — are not titles, on any site.
@@ -464,7 +527,7 @@ describe("site helpers", () => {
     ["hentaifox", "hentaifox.com", "https://hentaifox.com/gallery/1/"],
     ["imhentai", "imhentai.xxx", "https://imhentai.xxx/gallery/1/"],
     ["pururin", "pururin.me", "https://pururin.me/gallery/1/x"],
-    ["hentai2read", "hentai2read.com", "https://hentai2read.com/1/"],
+    ["hentai2read", "hentai2read.com", "https://hentai2read.com/doujinshi/1"],
   ] as const;
 
   it.each(LEGACY)("%s: host %s, page %s", (key, host, page) => {

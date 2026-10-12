@@ -316,6 +316,28 @@ describe("scrapeTitle: public addresses only", () => {
 });
 
 describe("scrapeTitle: where the page landed", () => {
+  it.each([
+    ["hentai2read:morning_ledger_tayeanr", "https://hentai2read.com/morning_ledger_tayeanr/", "https://hentai2read.com/doujinshi/80791-morning-ledger-tayeanr", "morning_ledger_tayeanr"],
+    [`${SITE}/trial_note_book/`, `${SITE}/trial_note_book/`, `${SITE}/manga/86958-trial-note-book/`, "trial_note_book"],
+  ])("L1.12: keeps the old identity when %s redirects to its numeric slug", async (input, oldUrl, landed, oldId) => {
+    site({ [oldUrl]: { redirect: landed }, [landed]: galleryPage("Some Title") });
+    const { scraped } = await scrapeTitle(input);
+    expect(scraped.source_id).toBe(oldId);
+    expect(scraped.url).toBe(oldUrl);
+    expect(fetchMock.mock.calls.map((c) => c[0])).toEqual([oldUrl, landed]);
+  });
+
+  it.each([
+    ["some_book_title", "86958-other-book-title"],
+    ["short", "86958-short"],
+    ["some_book_title", "86958-not-somebook-title"],
+  ])("L1.12: refuses ambiguous or different slug redirects %s → %s", async (slug, segment) => {
+    const from = `${SITE}/${slug}/`;
+    site({ [from]: { redirect: `${SITE}/manga/${segment}/` } });
+    await expect(scrapeTitle(from)).rejects.toMatchObject({ code: "NOT_FOUND", message: expect.stringMatching(/now redirects/) });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("asks impit not to follow redirects — the scraper follows them itself", async () => {
     site({ "https://hentaifox.com/gallery/42/": HENTAIFOX });
     await scrapeTitle("hentaifox:42");
@@ -466,6 +488,14 @@ describe("scrapeTitle: the browser layer", () => {
       message: expect.stringMatching(/^hitomi 8367076 on hitomi\.la is not a title page: the page has no title data/),
     });
     expect(launch).toHaveBeenCalled();
+  });
+
+  it("L1.13: retains the browser failure cause after impit cannot read a client-rendered page", async () => {
+    fetchMock.mockResolvedValue(answer(fixture("hitomi-shell.html")));
+    await expect(scrapeTitle("https://hitomi.la/galleries/8367076.html")).rejects.toMatchObject({
+      code: "NOT_FOUND",
+      message: expect.stringMatching(/the page has no title data.*browser fallback also failed:.*Executable doesn't exist/),
+    });
   });
 
   it("refuses a listing the browser cannot turn into a title either", async () => {

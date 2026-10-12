@@ -21,6 +21,7 @@ import { readPage, type PageReading } from "./extract";
 //   expect.<kind>      names that must be among the title's <kind>; an empty
 //                      list means the title has none of that kind
 //   expect.not.<kind>  names that must NOT be among the title's <kind>
+//   expect.exact.<kind>  the complete set of names, without extra entities
 //
 // Names compare through normalizeEntityName, the fold the write boundary
 // applies, so a fixture may write "Big Breasts" for "big breasts". A gallery
@@ -36,6 +37,7 @@ interface Expectation {
   uploaded_at?: string | null;
   image_link?: string;
   not?: Partial<Record<EntityKind, string[]>>;
+  exact?: Partial<Record<EntityKind, string[]>>;
   tags?: string[];
   artists?: string[];
   groups?: string[];
@@ -70,7 +72,7 @@ const ids = readdirSync(DIR)
   .map((f) => f.slice(0, -".json".length))
   .sort();
 
-const EXPECT_KEYS = new Set(["gallery", "follow", "source_id", "title_name", "pages", "uploaded_at", "image_link", "not", ...ENTITY_KINDS]);
+const EXPECT_KEYS = new Set(["gallery", "follow", "source_id", "title_name", "pages", "uploaded_at", "image_link", "not", "exact", ...ENTITY_KINDS]);
 const fold = (names: string[]) => names.map(normalizeEntityName);
 
 function load(id: string): { fx: Fixture; html: string } {
@@ -83,6 +85,11 @@ function load(id: string): { fx: Fixture; html: string } {
   for (const key of Object.keys(fx.expect)) if (!EXPECT_KEYS.has(key)) throw new Error(`${id}.json: unknown expectation "${key}"`);
   for (const key of Object.keys(fx.expect.not ?? {})) {
     if (!(ENTITY_KINDS as readonly string[]).includes(key)) throw new Error(`${id}.json: unknown expectation "not.${key}"`);
+  }
+  for (const [key, names] of Object.entries(fx.expect.exact ?? {})) {
+    if (!(ENTITY_KINDS as readonly string[]).includes(key) || !Array.isArray(names) || names.some((name) => typeof name !== "string")) {
+      throw new Error(`${id}.json: invalid expectation "exact.${key}"`);
+    }
   }
   return { fx, html: readFileSync(htmlPath, "utf8") };
 }
@@ -117,6 +124,10 @@ function checksOf(fx: Fixture, reading: PageReading): { independent: Check[]; de
   }
   for (const kind of ENTITY_KINDS) {
     const got = fold(title[kind].map((e) => e.name));
+    const exact = want.exact?.[kind];
+    if (exact !== undefined) {
+      dependent.push({ name: `exact.${kind}`, run: () => expect([...got].sort(), `${kind}: exact names`).toEqual(fold(exact).sort()) });
+    }
     const required = want[kind];
     if (required !== undefined && required.length === 0) {
       dependent.push({ name: `${kind}:empty`, run: () => expect(got, `${kind} must be empty`).toEqual([]) });

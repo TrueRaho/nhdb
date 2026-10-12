@@ -49,6 +49,22 @@ function describe(ref: TitleRef): string {
   return `${refLabel(ref)} on ${siteName(ref.source)}`;
 }
 
+// A redesigned site may prefix an old title slug with its numeric id. Keep
+// the requested slug identity when the landed segment repeats its full words.
+function repeatsTitleSlug(url: URL, id: string): boolean {
+  const words = (s: string) => s.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  const slug = words(id);
+  if (/^\d/.test(id) || id.includes("/") || slug.length < 8) return false;
+  return url.pathname.split("/").some((segment) => {
+    try {
+      const landed = words(decodeURIComponent(segment));
+      return landed === slug || landed.endsWith(` ${slug}`);
+    } catch {
+      return false;
+    }
+  });
+}
+
 // Where a response finally came from, once redirects were followed. A page
 // that bounced to another site is not read — whatever is there, it is not the
 // title that was asked for. A gallery the site replaced answers with a
@@ -61,7 +77,7 @@ function assertLanded(finalUrl: string, ref: TitleRef): void {
     throw new ScrapeError(`${describe(ref)} redirected off the site — not a title page`, "NOT_FOUND");
   }
   const landed = galleryIdOf(url);
-  if (landed && landed !== ref.id) {
+  if (landed && landed !== ref.id && !repeatsTitleSlug(url, ref.id)) {
     const other = refFromUrl(url.toString());
     throw new ScrapeError(
       `${describe(ref)} now redirects to ${other ? refLabel(other) : url.pathname} — add that one instead`,
@@ -454,7 +470,7 @@ export async function scrapeTitle(input: string | TitleRef): Promise<ScrapeOutco
   } catch (e) {
     // Both layers failed — make the message say so for the user.
     if (e instanceof ScrapeError && e.code !== "NOT_FOUND" && e.code !== "BAD_INPUT") {
-      if (viaImpit) throw new ScrapeError(`${describe(ref)} is not a title page: ${viaImpit.reason}`, "NOT_FOUND");
+      if (viaImpit) throw new ScrapeError(`${describe(ref)} is not a title page: ${viaImpit.reason}; browser fallback also failed: ${e.message}`, "NOT_FOUND");
       throw new ScrapeError(`impit was blocked and the browser fallback also failed: ${e.message}`, e.code);
     }
     throw e;

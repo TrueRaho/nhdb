@@ -79,6 +79,7 @@ const WORDS: Record<string, Meaning> = {
   translators: "skip", scanlator: "skip", scanlators: "skip", scanlation: "skip", scanlations: "skip",
   scanlationgroup: "skip", translation: "skip", translations: "skip", uploader: "skip", uploadedby: "skip",
   user: "skip", status: "skip", rating: "skip", ratings: "skip", views: "skip", favorites: "skip",
+  collection: "skip", collections: "skip",
   favorited: "skip", favourites: "skip", size: "skip", filesize: "skip", year: "skip", releaseyear: "skip",
   ranking: "skip", visible: "skip", reclass: "skip", cosplayer: "skip", temp: "skip", alternative: "skip",
   alternativetitle: "skip", alttitle: "skip", altname: "skip", comments: "skip", convention: "skip",
@@ -199,12 +200,16 @@ function isNoiseElement(el: El): boolean {
   // A class names what an element is by its head or its tail: "related-content",
   // "popular-tags", "site-footer", "entry-comments". A word in the middle is a
   // layout's description ("content-sidebar-wrap" holds the content).
-  const names = `${attrOf(el, "class")} ${attrOf(el, "id")}`.toLowerCase();
-  for (const token of names.split(/\s+/)) {
-    if (!token) continue;
-    if (NOISE_PARTS.has(token.replace(/[^a-z]/g, ""))) return true;
-    const parts = token.split(/[-_]/).filter(Boolean);
-    if (NOISE_PARTS.has(parts[0]) || NOISE_PARTS.has(parts[parts.length - 1])) return true;
+  for (const [names, styling] of [[attrOf(el, "class"), true], [attrOf(el, "id"), false]] as const) {
+    for (const token of names.toLowerCase().split(/\s+/)) {
+      if (!token) continue;
+      // Utility classes describe styling, not the block's semantic role:
+      // "bg-nav", "text-sidebar" and responsive/color modifiers are not noise.
+      if (styling && /[:\[\]\/]|^-?(?:bg|text|border|from|via|to|ring|shadow|fill|stroke|outline|divide|decoration|accent|caret|placeholder)-/.test(token)) continue;
+      if (NOISE_PARTS.has(token.replace(/[^a-z]/g, ""))) return true;
+      const parts = token.split(/[-_]/).filter(Boolean);
+      if (NOISE_PARTS.has(parts[0]) || NOISE_PARTS.has(parts[parts.length - 1])) return true;
+    }
   }
   // A block whose own heading says it is about other titles.
   let seen = 0;
@@ -510,7 +515,18 @@ function rowLabel($: CheerioAPI, a: El, root: El | null): string {
       for (const node of (cur as { children?: El[] }).children ?? []) {
         if ((node as { type?: string }).type === "text") lead += (node as { data?: string }).data ?? "";
         else if (tagOf(node) === "a" || $(node).find("a").length) break;
-        else lead += $(node).text();
+        else {
+          const text = $(node).text();
+          const block = /^(?:div|section|article|p|ul|ol|table|header|footer|aside|figure)$/.test(tagOf(node));
+          const marked = /:\s*$/.test(text) ||
+            /^(?:h[2-6]|dt|th|label|b|strong)$/.test(tagOf(node)) ||
+            $(node).find("h2, h3, h4, h5, h6, dt, th, label, b, strong").length > 0 ||
+            /(?:^|[\s_-])(?:head|heading|header|label|title|name)(?:$|[\s_-])/i.test(`${attrOf(node, "class")} ${attrOf(node, "id")}`);
+          // A sibling content block (category, uploader, action panel) does
+          // not label the following row just because it comes first.
+          if (block && !marked) lead = "";
+          else lead += text;
+        }
         if (lead.length > 60) break;
       }
       const t = cleanText(lead);
@@ -593,10 +609,14 @@ const CJK = /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af\uff66-\uff9f]/;
 
 // "English Title / 日本語タイトル" → the first half. Only when the second half is
 // Japanese/Chinese/Korean: "Love / Hate" is one name.
-function firstOfBilingual(name: string): string {
+function firstOfBilingual(name: string, documentTitle = ""): string {
   const at = name.search(/\s+\/\s+/);
   if (at < 0) return name;
   const rest = name.slice(at).replace(/^\s+\/\s+/, "");
+  const left = fold(name.slice(0, at));
+  if (left && left === fold(rest)) return name.slice(0, at);
+  const doc = fold(documentTitle);
+  if (left && (doc === left || doc.startsWith(`${left} `)) && !doc.includes(fold(name))) return name.slice(0, at);
   return CJK.test(rest) && !CJK.test(name.slice(0, at)) ? name.slice(0, at) : name;
 }
 
@@ -607,7 +627,14 @@ function cleanName(raw: string, kind: EntityKind): string[] {
   if (kind === "parodies") name = name.replace(/\s+(?:dj\.?|doujinshi)$/i, "");
   // "English / 日本語" bilingual names → the first; "a | b" aliases → both.
   const first = firstOfBilingual(name);
-  return first.split(/\s+\|\s+/).map((n) => n.trim()).filter((n) => n && !PLACEHOLDER.test(n) && n.length <= 80);
+  return first.split(/\s+\|\s+/).map((n) => {
+    n = n.trim();
+    if (kind === "tags") {
+      n = n.replace(/\s*(?:\(([^()[\]]+)\)|\[([^()[\]]+)\])\s*$/, (suffix, round: string | undefined, square: string | undefined) =>
+        meaningOf(round ?? square ?? "") === "tags" ? "" : suffix).trim();
+    }
+    return n;
+  }).filter((n) => n && !PLACEHOLDER.test(n) && n.length <= 80);
 }
 
 function classify($: CheerioAPI, a: El, root: El | null, pageUrl: URL): Hit[] {
@@ -615,6 +642,7 @@ function classify($: CheerioAPI, a: El, root: El | null, pageUrl: URL): Hit[] {
   const abs = absoluteUrl(href, pageUrl.toString());
   const url = abs ? parseWebUrl(abs) : null;
   if (url && !isSameSite(url.hostname, pageUrl.hostname)) return [];
+  if (url && url.pathname === pageUrl.pathname && url.search === pageUrl.search) return [];
   const { name: rawName, count } = nameAndCount($, a);
   if (!rawName || rawName.length > 100) return [];
 
@@ -632,6 +660,7 @@ function classify($: CheerioAPI, a: El, root: El | null, pageUrl: URL): Hit[] {
   // 2. The row's label.
   const label = rowLabel($, a, root);
   const labelMeaning = label ? meaningOf(label.replace(/[:：]\s*$/, "")) : null;
+  if (!meaning && path?.meaning === "skip" && (!labelMeaning || labelMeaning === "tags" || labelMeaning === "format")) return [];
   if (!meaning && labelMeaning) meaning = labelMeaning;
   // 3. The path's words.
   if (!meaning && path) meaning = path.meaning;
@@ -706,6 +735,11 @@ function labeledRows($: CheerioAPI, scope: Sel): { meaning: Meaning; text: strin
   return out;
 }
 
+function readerFragmentPage(url: URL, pageUrl: URL, id: string): number {
+  if (!/^#\d{1,5}$/.test(url.hash) || !/(?:^|\/)(?:reader|read|view|viewer|mpv)(?:\/|\.php$)/i.test(url.pathname)) return 0;
+  return parseWebUrl(url.href) && isSameSite(url.hostname, pageUrl.hostname) && galleryIdOf(url) === id ? Number(url.hash.slice(1)) : 0;
+}
+
 function pageCount($: CheerioAPI, scope: Sel, rows: { meaning: Meaning; text: string }[], pageUrl: URL, id: string | null): number {
   for (const r of rows) {
     if (r.meaning !== "pages") continue;
@@ -722,8 +756,10 @@ function pageCount($: CheerioAPI, scope: Sel, rows: { meaning: Meaning; text: st
     $("a[href]").each((_, a) => {
       const abs = absoluteUrl(attrOf(a, "href"), pageUrl.toString());
       if (!abs) return;
-      const m = new URL(abs).pathname.match(new RegExp(`/${head}(?:/[0-9a-f]{6,40})?/(\\d{1,5})/?$`, "i"));
+      const u = new URL(abs);
+      const m = u.pathname.match(new RegExp(`/${head}(?:/[0-9a-f]{6,40})?/(\\d{1,5})/?$`, "i"));
       if (m) max = Math.max(max, Number(m[1]));
+      max = Math.max(max, readerFragmentPage(u, pageUrl, id));
     });
     if (max >= 2) return max;
   }
@@ -742,7 +778,8 @@ function hasOwnReader($: CheerioAPI, pageUrl: URL, id: string | null): boolean {
     if (!abs) return false;
     const u = new URL(abs);
     const m = u.pathname.match(pattern);
-    return !!m && Number(m[1]) >= 2 && isSameSite(u.hostname, pageUrl.hostname) && galleryIdOf(u) === id;
+    return ((!!m && Number(m[1]) >= 2) || readerFragmentPage(u, pageUrl, id) >= 2) &&
+      isSameSite(u.hostname, pageUrl.hostname) && galleryIdOf(u) === id;
   });
 }
 
@@ -1112,7 +1149,7 @@ function backToGallery($: CheerioAPI, pageUrl: URL, id: string | null): { url: s
     if (there.length >= here.length) continue;
     // What the shorter address drops must include a page number.
     const dropped = here.filter((seg) => !there.includes(seg));
-    if (!dropped.some((seg) => /^\d{1,4}$/.test(seg))) continue;
+    if (!dropped.some((seg) => /^(?:p(?:age)?[-_]?)?\d{1,4}$/i.test(seg))) continue;
     if (!best || there.length < best.pathname.split("/").filter(Boolean).length) best = u;
   }
   return best ? { url: best.toString(), why: "went from the reader page to the gallery" } : null;
@@ -1191,11 +1228,41 @@ function read($: CheerioAPI, url: URL, decl: Declared): PageReading {
   const looksLikeWork = /book|comic|manga/i.test(decl.type);
   if (!linked.artists.length && !titledKinds.has("artists")) [...conv.artists, ...(looksLikeWork ? decl.authors : [])].forEach((n) => bag.add("artists", n, ""));
   if (!linked.parodies.length && !titledKinds.has("parodies")) conv.parodies.forEach((n) => bag.add("parodies", n, ""));
+  // Headings can explicitly name the creator of a work. Enrich missing
+  // credits without changing linkedKinds or any evidence that it IS a work.
+  const dashCredit = rawTitle.match(/^([a-z][a-z ]{1,20})\s+[-–—]\s+(.+)$/i);
+  const headingCredit = namespaced(rawTitle) ?? (dashCredit ? [words(dashCredit[1]), dashCredit[2]] : null);
+  const headingKind = headingCredit ? meaningOf(headingCredit[0]) : null;
+  if (headingCredit && (headingKind === "artists" || headingKind === "groups") && bag.result()[headingKind].length === 0) {
+    let value = headingCredit[1];
+    const release = value.search(/\s+[-–—]\s+(?:part|ch(?:apter)?\.?|vol(?:ume)?\.?|episode)\s*\d/i);
+    if (release >= 0) value = value.slice(0, release);
+    cleanName(value, headingKind).forEach((name) => bag.add(headingKind, name, ""));
+  }
   const entities = bag.result();
   // A tag that names the title's own parody, artist, group or character is that
   // entity listed twice (a blog files the post under its series as a category).
   const named = new Set((["parodies", "artists", "groups", "characters"] as const).flatMap((k) => entities[k].map((e) => e.name)));
-  entities.tags = entities.tags.filter((t) => !named.has(t.name));
+  const creators = new Set([...entities.artists, ...entities.groups].map((e) => fold(e.name)).filter(Boolean));
+  const creatorWords = new Set([...creators].flatMap((name) => name.split(" ")));
+  entities.tags = entities.tags.filter((t) => {
+    if (named.has(t.name)) return false;
+    if (creators.size < 2) return true;
+    const parts = fold(t.name).split(" ");
+    if (parts.length < 2 || !parts.every((word) => creatorWords.has(word))) return true;
+    // Require two complete credit names, not just incidental shared words.
+    // Search bounded tag spans rather than scanning every creator per tag.
+    const matched = new Set<string>();
+    for (let start = 0; start < parts.length; start++) {
+      let span = "";
+      for (let end = start; end < parts.length; end++) {
+        span += `${end === start ? "" : " "}${parts[end]}`;
+        if (creators.has(span)) matched.add(span);
+        if (matched.size >= 2) return false;
+      }
+    }
+    return true;
+  });
 
   // Enough to be a title: what the PAGE says — entity links, a page count, a
   // cover — not just a heading that reads like a doujin's name (a content
@@ -1258,7 +1325,7 @@ function read($: CheerioAPI, url: URL, decl: Declared): PageReading {
   return {
     kind: "gallery",
     title: {
-      title_name: clip(prettyTitle(firstOfBilingual(tail.title))),
+      title_name: clip(prettyTitle(firstOfBilingual(tail.title, textOf($, $("title"))))),
       image_link: image_link.length <= 1024 ? image_link : "",
       pages: pages > 0 && pages <= 100_000 ? pages : 0,
       uploaded_at,

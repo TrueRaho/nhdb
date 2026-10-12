@@ -1,0 +1,28 @@
+{
+  "url": "https://3hentai.net/d/865651",
+  "description": "Saved live HTML 2026-10-12: languages are not tags, tag namespace qualifiers normalize, and joined artist/group credits do not become descriptive tags.",
+  "expect": {
+    "gallery": true,
+    "source_id": "865651",
+    "artists": [
+      "penbdya",
+      "penhrkz"
+    ],
+    "groups": [
+      "penamww"
+    ],
+    "not": {
+      "tags": [
+        "english",
+        "translated",
+        "big breasts (female)",
+        "ponytail (female)",
+        "quill coks"
+      ]
+    },
+    "tags": [
+      "big breasts",
+      "ponytail"
+    ]
+  }
+}

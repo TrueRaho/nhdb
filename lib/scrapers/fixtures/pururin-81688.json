@@ -1,0 +1,9 @@
+{
+  "url": "https://pururin.me/gallery/81688/trial-ledger-bdkuyvk-2",
+  "description": "Saved live HTML 2026-10-12: collection metadata and its neighboring works are not tags of this gallery.",
+  "expect": {
+    "gallery": true,
+    "source_id": "81688",
+    "not": {"tags": ["collection", "morning ledger hcfflhk... / morning ledger hcfflhk...", "morning ledger hcfflhk..."]}
+  }
+}

@@ -695,6 +695,83 @@ describe("readPage: choosing the title's heading", () => {
 });
 
 describe("readPage: what a link is", () => {
+  it.each(["Artist: Foo", "Circle: Foo"])("L1.6: a creator heading alone is not work evidence (%s)", (title) => {
+    expect(readPage(page({ title, pages: "" }), GALLERY).kind).toBe("none");
+  });
+
+  it("L1.6: retains explicit metadata credits and numeric creator-name suffixes", () => {
+    expect(names(gallery(page({ title: "Artist - Wrong - Part1", rows: '<li>Artist: <a href="/artist/good/">Good</a></li>' }), GALLERY).artists)).toEqual(["good"]);
+    expect(names(gallery(page({ title: "Circle: Studio - 2019" }), GALLERY).groups)).toEqual(["studio - 2019"]);
+  });
+
+  it("L1.5: retains descriptive tags that share only parts of credit names", () => {
+    const r = gallery(page({ rows: `<li>Artist: <a href="/artist/quill-wdxw/">Quill Wdxw</a></li>
+      <li>Circle: <a href="/group/quill-xozo/">Quill Xozo</a></li>
+      <li>Tags: <a href="/tag/big-breasts/">big breasts</a></li>` }), GALLERY);
+    expect(names(r.tags)).toEqual(["big breasts"]);
+  });
+
+  it.each([
+    "<title>Love / Hate - Site</title>",
+    '<meta property="og:title" content="Love">',
+    "<title>Lovely Work - Site</title>",
+  ])("L1.9: preserves a genuine slash title with document evidence %s", (head) => {
+    expect(gallery(page({ head, title: "Love / Hate" }), GALLERY).title_name).toBe("Love / Hate");
+  });
+
+  it("L1.8: collapses identical Latin names while retaining distinct slash-separated titles", () => {
+    const r = gallery(page({ title: "Love / Hate", rows: '<li>Artist: <a href="/artist/foo/">Foo / FOO</a></li>' }), GALLERY);
+    expect(names(r.artists)).toEqual(["foo"]);
+    expect(r.title_name).toBe("Love / Hate");
+  });
+
+  it.each([
+    ["/reader/12345.html#12", 12],
+    ["/reader/99999.html#12", 0],
+    ["https://other.example/reader/12345.html#12", 0],
+    ["/reader/12345.html#1", 0],
+  ])("L1.14: counts owned reader fragments %s as %s", (href, pages) => {
+    const r = gallery(page({ pages: "", rows: '<li>Artist: <a href="/artist/foo/">Foo</a></li>', extra: `<a href="${href}">page</a>` }), GALLERY);
+    expect(r.pages).toBe(pages);
+  });
+
+  it.each(["/reader/some-work.html#24", "#24"])("L1.14: distinguishes a reader from an ordinary footnote (%s)", (href) => {
+    const cards = Array.from({ length: 6 }, (_, i) => `<a href="/gallery/${200 + i}/"><img src="/${i}.jpg">Other Work ${i}</a>`).join("");
+    const html = `<html><body><main><section><h1>Some Work</h1>Artist: <a href="/artist/foo/">Foo</a>
+      <a href="${href}">24</a></section><section>${cards}</section></main></body></html>`;
+    if (href.startsWith("/reader/")) expect(gallery(html, `${SITE}/some-work/`).pages).toBe(24);
+    else expect(refused(html, `${SITE}/some-work/`)).toMatch(/lists other titles/);
+  });
+
+  it.each(["female", "male", "mixed", "other"])("L1.4: normalizes %s tag qualifiers in both bracket forms", (qualifier) => {
+    const r = gallery(page({ rows: `<li>Tags: <a href="/tag/a/">big breasts (${qualifier}) | ponytail [${qualifier}]</a></li>` }), GALLERY);
+    expect(names(r.tags)).toEqual(["big breasts", "ponytail"]);
+  });
+
+  it("L1.4: retains unknown tag qualifiers and qualifiers in artist names", () => {
+    const r = gallery(page({ rows: `<li>Tags: <a href="/tag/a/">story (original)</a></li>
+      <li>Artist: <a href="/artist/foo/">Foo (female)</a></li>` }), GALLERY);
+    expect(names(r.tags)).toEqual(["story (original)"]);
+    expect(names(r.artists)).toEqual(["foo (female)"]);
+  });
+
+  it("L1.3: taxonomy skip beats generic labels while explicit namespaces retain priority", () => {
+    const r = gallery(page({ rows: `<li>Tags: <a href="/language/english/">english</a></li>
+      <li>Category: <a href="/language/translated/">translated</a></li>
+      <li>Tags: <a href="/language/artist%3Afoo/">Foo</a></li>` }), GALLERY);
+    expect(r.tags).toEqual([]);
+    expect(names(r.artists)).toEqual(["foo"]);
+  });
+
+  it.each([
+    [GALLERY, "#"],
+    [GALLERY, "/gallery/12345/"],
+    [`${GALLERY}?mode=full`, "?mode=full#ghost"],
+  ])("L1.2: refuses self-page entity links on %s (%s)", (url, href) => {
+    const r = gallery(page({ rows: `<li>Tags: <a href="${href}">female: ghost</a></li>` }), url);
+    expect(r.tags).toEqual([]);
+  });
+
   const read = (rows: string) => gallery(page({ rows }), GALLERY);
 
   it("a namespace in the link text outranks the row's label", () => {
@@ -1064,6 +1141,13 @@ describe("readPage: what is not a gallery", () => {
     expect(r.tags).toEqual([]);
   });
 
+  it("L1.11: ignores styling utility classes while retaining semantic element ids", () => {
+    const html = `<html><body><main><section class="bg-nav text-sidebar"><h1>Some Title</h1><p>Pages:24</p>
+      Artists: <a href="/artist/own/">Own Artist</a></section>
+      <div id="text-sidebar"><a href="/artist/other/">Other Artist</a></div></main></body></html>`;
+    expect(names(gallery(html, GALLERY).artists)).toEqual(["own artist"]);
+  });
+
   it("refuses a profile whose other works are outside its metadata block", () => {
     const html = `<html><head><title>Some Fandom</title></head><body><main>
       <section><h1>Some Fandom</h1><div>Series: <a href="/series/other/">Other Series</a></div></section>
@@ -1241,6 +1325,11 @@ describe("readPage: what is not a gallery", () => {
 });
 
 describe("readPage: following", () => {
+  it.each(["page-1", "page_1", "p1", "p-1", "1"])("L1.15: follows a numbered reader suffix %s back to its gallery", (suffix) => {
+    const html = `<html><body><h1>Some Title</h1><a href="${GALLERY}">Gallery</a></body></html>`;
+    expect(follows(html, `${SITE}/reader/12345/123456/${suffix}`).url).toBe(GALLERY);
+  });
+
   it("follows an age gate even when its head repeats the gallery cover and credit title", () => {
     const html = `<html><head><meta property="og:image" content="${SITE}/cover.jpg">
       <title>[Circle (Artist)] Some Title (Parody)</title></head><body>

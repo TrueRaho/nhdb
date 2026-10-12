@@ -1,0 +1,16 @@
+{
+  "url": "https://hentaiera.com/gallery/8937648/",
+  "description": "Saved live HTML 2026-10-12: creator is explicitly named in the gallery heading; Part metadata is not part of the creator name.",
+  "expect": {
+    "gallery": true,
+    "source_id": "8937648",
+    "artists": [
+      "penkamr"
+    ],
+    "exact": {
+      "artists": [
+        "penkamr"
+      ]
+    }
+  }
+}

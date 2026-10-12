@@ -1,0 +1,35 @@
+{
+  "url": "https://e-hentai.org/g/8398323/91292797d5/",
+  "description": "Saved live HTML 2026-10-12; incidental category/uploader/actions must not label entity rows.",
+  "expect": {
+    "gallery": true,
+    "source_id": "8398323/91292797d5",
+    "groups": [
+      "penamww"
+    ],
+    "artists": [
+      "quill coks"
+    ],
+    "exact": {
+      "groups": [
+        "penamww"
+      ],
+      "artists": [
+        "quill coks"
+      ]
+    },
+    "not": {
+      "tags": [
+        "english",
+        "translated",
+        "penubxn",
+        "add to favorites"
+      ],
+      "artists": [
+        "english",
+        "translated",
+        "penubxn"
+      ]
+    }
+  }
+}

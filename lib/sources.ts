@@ -49,7 +49,13 @@ const LEGACY: Record<string, { host: string; also?: readonly string[]; url: (id:
   // pururin.to / .io are the site's former domains; the ids carried over. The
   // route wants a slug segment and does not check it.
   pururin: { host: "pururin.me", also: ["pururin.to", "pururin.io"], url: (id) => `https://pururin.me/gallery/${id}/x` },
-  hentai2read: { host: "hentai2read.com", url: (id) => `https://hentai2read.com/${id}/` },
+  // Since its 2026-10 redesign a title lives at /<type>/<number>-<slug>, and
+  // /doujinshi/<number>… answers 301 with the right type. Rows saved before
+  // keep their old slug key; that address redirects to the new one.
+  hentai2read: {
+    host: "hentai2read.com",
+    url: (id) => /^\d+(?:-[a-z0-9-]+)?$/.test(id) ? `https://hentai2read.com/doujinshi/${id}` : `https://hentai2read.com/${id}/`,
+  },
 };
 
 const LEGACY_BY_HOST = new Map(
@@ -109,7 +115,7 @@ export function isSameSite(a: string, b: string): boolean {
 const GALLERY_WORDS = new Set([
   "g", "gallery", "galleries", "view", "read", "reader", "mpv", "d", "doujin", "doujins", "doujinshi",
   "manga", "comic", "comics", "hentai", "album", "albums", "post", "posts", "title", "titles", "work",
-  "works", "book", "books", "cg", "artistcg", "gamecg", "imageset", "anime", "m", "item", "watch",
+  "works", "book", "books", "cg", "artistcg", "gamecg", "imageset", "original", "anime", "m", "item", "watch",
 ]);
 
 // Path words of the pages AROUND titles — a tag's list, an artist's, a search.
@@ -124,6 +130,11 @@ const LISTING_WORDS = new Set([
   "content", "contents", "uploads", "info", "help", "about", "contact", "faq", "dmca", "terms", "privacy",
   "blog", "news", "forum", "forums", "rss", "feed", "sitemap", "api", "static", "assets", "cdn", "images",
   "img", "css", "js", "settings",
+]);
+
+// Only reserve these at the site root: /manga/comments/ can still name a work.
+const SERVICE_PAGES = new Set([
+  "watched", "torrents", "toplist", "discord", "comments", "advsearch", "hentai-lists",
 ]);
 
 // Query parameters that carry a title's id on sites without clean paths. The
@@ -201,7 +212,13 @@ const isToken = (seg: string | undefined): seg is string =>
   !!seg && (/^[0-9a-f]{10}$/.test(seg) || (/^[0-9a-f]{6,40}$/.test(seg) && /[a-f]/.test(seg) && /\d/.test(seg)));
 
 export function galleryIdOf(url: URL): string | null {
+  const path = url.pathname.split("/").filter(Boolean);
+  let loneFile = path.length === 1 ? path[0] : "";
+  try { loneFile = decodeURIComponent(loneFile); } catch { /* keep the raw path */ }
+  // A file is not an HTML gallery, even when its query happens to contain id=.
+  if (/\.(?:png|jpe?g|gif|webp|svg|ico|css|js|xml|txt)$/i.test(loneFile)) return null;
   let segs = segments(url);
+  if (segs.length === 1 && SERVICE_PAGES.has(segs[0])) return null;
   // "/index.php?p=123" is the site's front script, i.e. no path at all.
   if (segs.length === 1 && segs[0] === "index") segs = [];
   if (segs.length > 0 && LISTING_WORDS.has(segs[0])) return null;
@@ -225,6 +242,9 @@ export function galleryIdOf(url: URL): string | null {
     if (!NUMERIC_ONLY_PARAMS.has(key) && /^[A-Za-z0-9][A-Za-z0-9_-]{2,63}$/.test(v)) return v;
   }
 
+  // A front script needs an id parameter; its filename cannot name a title.
+  if (/\.php$/i.test(loneFile)) return null;
+
   for (const [i, seg] of segs.entries()) {
     // "/2024/05/some-post/" is a date, not an id.
     if (/^(?:19|20)\d\d$/.test(seg) && /^\d{1,2}$/.test(segs[i + 1] ?? "")) continue;
@@ -234,6 +254,9 @@ export function galleryIdOf(url: URL): string | null {
     }
     const tail = tailId(seg, false);
     if (tail) return tail;
+    // A number LEADING a slug ("1001-nights", "86958-morningledgerzqsvunf") is not taken
+    // for an id: it is as often the start of the name, and "1001-nights" and
+    // "1001-nights-of-love" would become one title. The whole slug names it.
   }
 
   // A blog files a post under its date: "/2024/05/<slug>/" names the slug.
