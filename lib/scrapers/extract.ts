@@ -637,6 +637,32 @@ function cleanName(raw: string, kind: EntityKind): string[] {
   }).filter((n) => n && !PLACEHOLDER.test(n) && n.length <= 80);
 }
 
+// An event a work was sold at — Comic Market ("C74", "Comiket 92"), COMIC1 —
+// is where it appeared, not what it is: event rows are skipped already, and a
+// site that files the event among the tags does not make it one.
+const EVENT_CODE = /^(?:c|comiket\s*|comic\s*market\s*)\d{2,3}$|^comic\s*1\s*☆?\s*\d{1,2}$/i;
+
+const isSearchUrl = (url: URL) =>
+  url.pathname.split("/").some((seg) => /^search(?:\.\w+)?$/i.test(seg)) || ["q", "query", "keyword", "s"].some((k) => url.searchParams.has(k));
+
+// A search shortcut in a row of taxonomy links ("/tags/glasses/" … "/search?q=
+// penhclp") is a name the site never filed under any kind. The row's label
+// cannot vouch for it the way it does for the row's real values.
+function isStrayShortcut($: CheerioAPI, a: El, url: URL, pageUrl: URL): boolean {
+  if (!isSearchUrl(url) || pathMeaning(url)) return false;
+  for (let row = (a as { parent?: El | null }).parent ?? null, depth = 0; row && depth < 4; row = (row as { parent?: El | null }).parent ?? null, depth++) {
+    const links = $(row).find("a[href]").toArray().filter((o) => o !== a);
+    if (links.length === 0) continue;
+    return links.some((o) => {
+      const abs = absoluteUrl(attrOf(o, "href"), pageUrl.toString());
+      const u = abs ? parseWebUrl(abs) : null;
+      const m = u && !isSearchUrl(u) ? pathMeaning(u)?.meaning : null;
+      return !!m && m !== "skip" && m !== "pages" && m !== "date";
+    });
+  }
+  return false;
+}
+
 function classify($: CheerioAPI, a: El, root: El | null, pageUrl: URL): Hit[] {
   const href = attrOf(a, "href");
   const abs = absoluteUrl(href, pageUrl.toString());
@@ -661,6 +687,7 @@ function classify($: CheerioAPI, a: El, root: El | null, pageUrl: URL): Hit[] {
   const label = rowLabel($, a, root);
   const labelMeaning = label ? meaningOf(label.replace(/[:：]\s*$/, "")) : null;
   if (!meaning && path?.meaning === "skip" && (!labelMeaning || labelMeaning === "tags" || labelMeaning === "format")) return [];
+  if (!meaning && labelMeaning && url && !valueNs && !textNs && isStrayShortcut($, a, url, pageUrl)) return [];
   if (!meaning && labelMeaning) meaning = labelMeaning;
   // 3. The path's words.
   if (!meaning && path) meaning = path.meaning;
@@ -680,6 +707,7 @@ function classify($: CheerioAPI, a: El, root: El | null, pageUrl: URL): Hit[] {
   return cleanName(rawName, kind)
     .filter((n) => !FORMAT_WORDS.has(n.toLowerCase()) && !(!explicitTag && GENRE_FORMAT_WORDS.has(n.toLowerCase())))
     .filter((n) => !(fromFormatRow && FORMAT_IN_FORMAT_ROW.has(n.toLowerCase())))
+    .filter((n) => !(kind === "tags" && EVENT_CODE.test(n)))
     .map((name) => ({ kind, name, link, count, fromFormatRow }));
 }
 
@@ -947,10 +975,21 @@ const RELEASE_NUMBER = /^(?:(?:part|ch(?:apter)?\.?|vol(?:ume)?\.?|episode)\s*)?
 // Magazine issues/dates describe a release, rather than its franchise.
 const ISSUE_DATE = /\b(?:19|20)\d{2}[-/.]\d{1,2}(?:[-/.]\d{1,2})?\b/;
 
+// A lead bracket that names where a collection was posted, not who made it:
+// "[Pixiv] Name (8811893)" is the Pixiv user Name, whose user id follows.
+const PLATFORM = /^(?:pixiv(?: fanbox)?|fanbox|twitter|x|patreon|fantia|ci-en|skeb|booth|dlsite|fanza|gumroad|subscribestar|instagram|tumblr|deviantart|weibo|lofter|bilibili|misskey|bluesky)$/i;
+
 function fromTitleConvention(raw: string): { groups: string[]; artists: string[]; parodies: string[] } {
   const out = { groups: [] as string[], artists: [] as string[], parodies: [] as string[] };
   const s = cleanText(raw).replace(/^(?:\([^()]*\)\s*)+/, "");
   const lead = s.match(/^\[([^\]]+)\]/);
+  if (lead && PLATFORM.test(lead[1].trim())) {
+    // The platform is no credit. The name is one only when the platform's user
+    // id follows it; otherwise the rest is a collection's title.
+    const user = s.slice(lead[0].length).replace(/(?:\s*\[[^\]]*\]|\s*\{[^}]*\})+\s*$/, "").match(/^\s*(.+?)\s*\(\d{3,12}\)\s*$/);
+    const clean = (l: string[]) => l.map((x) => x.trim()).filter((x) => x && x.length <= 60);
+    return { groups: [], artists: clean(user ? [user[1]] : []), parodies: [] };
+  }
   if (lead) {
     const inner = lead[1].match(/^(.+?)\s*\(([^()]+)\)\s*$/);
     if (inner) {

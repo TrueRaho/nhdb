@@ -1,0 +1,13 @@
+{
+  "url": "https://e-hentai.org/g/8648417/58c4c0da3e/",
+  "description": "Saved live HTML, 2026-10-12: a Pixiv collection titled \"[Pixiv] Name (user id)\" with no artist tag. The Pixiv user is the artist; the platform is not (L3.2).",
+  "expect": {
+    "gallery": true,
+    "source_id": "8648417/58c4c0da3e",
+    "artists": ["サンプルケセアエ@penuapg"],
+    "parodies": ["quill yjpt"],
+    "characters": ["quill uphn", "quill stxf"],
+    "tags": ["ai generated", "mosaic censorship"],
+    "not": { "artists": ["pixiv"], "groups": ["pixiv"] }
+  }
+}

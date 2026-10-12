@@ -1,0 +1,16 @@
+{
+  "url": "https://hitomi.la/galleries/8069730.html",
+  "rendered": true,
+  "description": "Saved live browser-rendered DOM 2026-10-12, after the site tagged the gallery: its Tags row holds the Comic Market event c74, which is not a tag (L3.3).",
+  "expect": {
+    "gallery": true,
+    "source_id": "8069730",
+    "pages": 30,
+    "artists": ["quill sppw"],
+    "groups": ["quill ttmc"],
+    "parodies": ["quill krio"],
+    "characters": ["quill tdtd"],
+    "tags": ["big breasts"],
+    "not": { "tags": ["c74"] }
+  }
+}

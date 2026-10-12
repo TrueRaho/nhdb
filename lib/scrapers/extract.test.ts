@@ -899,6 +899,36 @@ describe("readPage: what a link is", () => {
     expect(names(r.characters)).toEqual(["penkqga"]);
     expect(names(r.tags)).toEqual(["x"]);
   });
+
+  it("does not take an event code in a Tags row for a tag", () => {
+    // Hitomi files a doujin's Comiket under its tags: /tag/c74-all.html.
+    const html = page({ rows: `<li>Tags: <a href="/tag/big-breasts/">big breasts</a> <a href="/tag/c74/">c74</a>
+      <a href="/tag/comiket-92/">Comiket 92</a> <a href="/tag/comic1-15/">COMIC1☆15</a> <a href="/tag/c4/">c4</a></li>` });
+    expect(names(gallery(html, GALLERY).tags)).toEqual(["big breasts", "c4"]);
+  });
+
+  it("drops a search shortcut from a row whose other values are taxonomy links", () => {
+    // 3hentai's Tags row: /tags/<tag> links, plus /search?q=<a name it did not file>.
+    const odd = page({ rows: `<li>Tags: <a href="/tags/twintails/">twintails</a> <a href="/tags/glasses/">glasses</a>
+      <a href="/search?q=penhclp">penhclp</a></li>` });
+    expect(names(gallery(odd, GALLERY).tags)).toEqual(["twintails", "glasses"]);
+    // A site that links every tag through its search keeps them all.
+    const all = page({ rows: `<li>Tags: <a href="/search?q=twintails">twintails</a> <a href="/search?q=glasses">glasses</a></li>` });
+    expect(names(gallery(all, GALLERY).tags)).toEqual(["twintails", "glasses"]);
+  });
+
+  it("reads '[Platform] Name (user id)' as the artist on that platform, never the platform", () => {
+    // E-Hentai's Pixiv/Twitter/Patreon collections are named this way.
+    const credit = (title: string) => names(gallery(page({ title, rows: `<li>Tags: <a href="/tag/x/">x</a></li>` }), GALLERY).artists);
+    expect(credit("[Pixiv] サンプルケセアエ＠PENUAPG (8811893) [AI Generated]")).toEqual(["サンプルケセアエ@penuapg"]);
+    expect(credit("[Twitter] Some Artist (123456)")).toEqual(["some artist"]);
+    expect(credit("[Patreon] Another-Artist (98765) [English]")).toEqual(["another-artist"]);
+    // Without a user id the rest is a collection's name, not a credit.
+    expect(credit("[Fanbox] Summer Collection 2024")).toEqual([]);
+    // A circle or artist in the lead bracket is read as it always was.
+    expect(credit("[Pixel Works (Some Artist)] Title")).toEqual(["some artist"]);
+    expect(credit("[Twitterpated] Title")).toEqual(["twitterpated"]);
+  });
 });
 
 describe("readPage: noise", () => {

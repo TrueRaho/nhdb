@@ -1,0 +1,14 @@
+{
+  "url": "https://3hentai.net/d/855471",
+  "description": "Saved live HTML 2026-10-12: the Tags row holds /tags/ links plus a /search?q=penhclp shortcut for a name the site never filed — not a tag (L3.4).",
+  "expect": {
+    "gallery": true,
+    "source_id": "855471",
+    "artists": ["penjang"],
+    "groups": ["quill sdly"],
+    "parodies": ["quill jdrn"],
+    "characters": ["pengntd", "penwbqa"],
+    "tags": ["twintails"],
+    "not": { "tags": ["penhclp", "english", "translated", "twintails (female)"] }
+  }
+}
