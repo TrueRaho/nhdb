@@ -13,8 +13,8 @@
 //   * a web address only (lib/sources.ts parseWebUrl): http(s), a DNS name (no
 //     IP literal), no credentials, the scheme's own port — so nothing but a
 //     web server's port 80/443 is ever dialled;
-//   * every resolved address must be public (lib/net-address.ts), checked again
-//     before each hop — a name can point anywhere, including 169.254.169.254;
+//   * every resolved address must be public (lib/net-address.ts), checked before
+//     each hop and pinned by the socket lookup (lib/public-fetch.ts);
 //   * redirects are followed by hand, at most three, each hop re-checked;
 //   * the answer must BE an image — the type is sniffed from the bytes and set
 //     by us, never echoed, so an SVG or an HTML page cannot pass for a cover and
@@ -26,6 +26,8 @@
 import "server-only";
 import { assertPublicHostname } from "./net-address";
 import { parseWebUrl } from "./sources";
+import { readCapped } from "./read-capped";
+import { fetchPublic } from "./public-fetch";
 
 // Covers are thumbnails, typically well under 500 KB.
 export const MAX_COVER_BYTES = 1024 * 1024;
@@ -55,31 +57,6 @@ export function sniffImageType(b: Uint8Array): string | null {
   return null;
 }
 
-// The whole body, or null once it passes the cap (the rest is not downloaded).
-async function readCapped(res: Response, max: number): Promise<Uint8Array<ArrayBuffer> | null> {
-  if (!res.body) return new Uint8Array(0);
-  const reader = res.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    size += value.byteLength;
-    if (size > max) {
-      await reader.cancel().catch(() => {});
-      return null;
-    }
-    chunks.push(value);
-  }
-  const out = new Uint8Array(size);
-  let at = 0;
-  for (const c of chunks) {
-    out.set(c, at);
-    at += c.byteLength;
-  }
-  return out;
-}
-
 /**
  * The cover at `raw`, fetched as a browser on `referer`'s site would. The
  * referer is reduced to an origin (what browsers send cross-site anyway); a
@@ -96,7 +73,7 @@ export async function fetchCover(raw: string, referer?: string | null): Promise<
   try {
     for (let hop = 0; ; hop++) {
       await assertPublicHostname(url.hostname);
-      const res = await fetch(url, {
+      const res = await fetchPublic(url, {
         headers: {
           ...(ref ? { Referer: `${ref.origin}/` } : {}),
           "User-Agent": USER_AGENT,

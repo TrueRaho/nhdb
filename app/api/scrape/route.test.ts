@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { gzipSync } from "node:zlib";
+import { MockAgent } from "undici";
+import { publicDispatcher } from "@/lib/public-fetch";
 
 // The route pulls in lib/titles (→ prisma → DATABASE_URL at import time) and
 // next/cache (request-scoped) — both must be mocked before the route loads.
@@ -52,6 +55,8 @@ import { revalidateTag } from "next/cache";
 import { upsertScrapedTitle } from "@/lib/titles";
 import { ScrapeError, scrapeTitle } from "@/lib/scraper";
 
+const nativeFetch = globalThis.fetch;
+
 const SCRAPED = {
   source: "nhentai",
   source_id: "177013",
@@ -82,7 +87,7 @@ function req(body: unknown): Request {
   });
 }
 
-// One upstream scraper-host response. `json` rejecting simulates an ngrok HTML
+// One upstream scraper-host response. Invalid JSON simulates an ngrok HTML
 // error page (invalid JSON); `reject` simulates the host being unreachable.
 type Upstream =
   | { reject: true }
@@ -97,15 +102,7 @@ function stubHosts(...responses: Upstream[]) {
       calls.push({ url, init });
       const r = responses[Math.min(i++, responses.length - 1)];
       if ("reject" in r) throw new TypeError("fetch failed");
-      return {
-        ok: r.status >= 200 && r.status < 300,
-        status: r.status,
-        statusText: String(r.status),
-        json: async () => {
-          if (r.invalidJson) throw new SyntaxError("Unexpected token <");
-          return r.body;
-        },
-      } as unknown as Response;
+      return new Response(r.invalidJson ? "<html>tunnel down</html>" : JSON.stringify(r.body), { status: r.status });
     }),
   );
   return calls;
@@ -122,9 +119,116 @@ beforeEach(() => {
   vi.stubEnv("SCRAPER_SECRET", "s3cret");
 });
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   vi.clearAllMocks();
+});
+
+describe("POST /api/scrape — bounded host answers", () => {
+  it.each([200, 400, 404, 500])("refuses an oversized HTTP %s answer and cancels its stream", async (status) => {
+    vi.mocked(resolveScraperTargets).mockResolvedValueOnce([DEFAULT_HOSTS[0]]);
+    const cancel = vi.fn();
+    let pulls = 0;
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(new ReadableStream({
+      pull(controller) {
+        pulls++;
+        controller.enqueue(new Uint8Array(64 * 1024).fill(32));
+      },
+      cancel,
+    }, { highWaterMark: 0 }), { status })));
+    const response = await POST(req({ input: "177013", persist: false }));
+    expect(response.status).toBe(502);
+    expect((await response.text()).length).toBeLessThan(200);
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(pulls).toBe(33); // 2 MiB retained, then one chunk detects overflow.
+    expect(upsertScrapedTitle).not.toHaveBeenCalled();
+  });
+
+  it.each([400, 404, 500])("rebuilds HTTP %s errors from bounded known fields", async (status) => {
+    stubHosts({ status, body: { error: "e".repeat(2000), code: "c".repeat(1000), reads: "any-site", secret: "never forward", scraped: SCRAPED } });
+    const response = await POST(req({ input: "177013", persist: false }));
+    expect(response.status).toBe(status);
+    expect(await response.json()).toEqual({ error: "e".repeat(500), code: "c".repeat(64), reads: "any-site" });
+  });
+
+  it.each([null, [], "invalid"])("refuses a non-object host answer: %j", async (body) => {
+    stubHosts({ status: 404, body });
+    const response = await POST(req({ input: "177013", persist: false }));
+    expect(response.status).toBe(502);
+  });
+
+  it("handles non-string errors and refuses non-string codes or arbitrary reads fields", async () => {
+    stubHosts({ status: 404, body: { error: { toString: null, valueOf: null }, code: {}, reads: "x".repeat(1000) } });
+    const response = await POST(req({ input: "177013", persist: false }));
+    expect(await response.json()).toEqual({ error: "Scraper service failed" });
+  });
+
+  it.each([200, 400, 404])("caps a gzip-compressed HTTP %s answer after native fetch decompresses it", async (status) => {
+    const agent = new MockAgent();
+    agent.disableNetConnect();
+    const compressed = gzipSync(JSON.stringify({ error: "x".repeat(2 * 1024 * 1024 + 1) }));
+    expect(compressed.byteLength).toBeLessThan(4096);
+    agent.get("https://compressed.test").intercept({ method: "POST", path: "/scrape" })
+      .reply(status, compressed, { headers: { "content-encoding": "gzip", "content-length": String(compressed.byteLength) } });
+    vi.mocked(resolveScraperTargets).mockResolvedValueOnce([{ ...DEFAULT_HOSTS[0], url: "https://compressed.test" }]);
+    vi.stubGlobal("fetch", (url: string, init: RequestInit) => nativeFetch(url, { ...init, dispatcher: agent } as RequestInit));
+    try {
+      const response = await POST(req({ input: "177013", persist: false }));
+      expect(response.status).toBe(502);
+      expect(await response.json()).toEqual({ error: "Scraper service response is too large" });
+      agent.assertNoPendingInterceptors();
+    } finally {
+      await agent.close();
+    }
+  });
+
+  it("bounds eight slow hosts by one 50s deadline", async () => {
+    vi.useFakeTimers();
+    vi.mocked(resolveScraperTargets).mockResolvedValueOnce(Array.from({ length: 8 }, (_, i) => ({ ...DEFAULT_HOSTS[0], url: `https://host-${i}.test` })));
+    const fetch = vi.fn((_: unknown, init: RequestInit) => new Promise((_, reject) => {
+      init.signal!.addEventListener("abort", () => reject(new Error("timeout")), { once: true });
+    }));
+    vi.stubGlobal("fetch", fetch);
+    const start = Date.now();
+    const pending = POST(req({ input: "177013", persist: false }));
+    await vi.advanceTimersByTimeAsync(50_000);
+    expect((await pending).status).toBe(503);
+    expect(Date.now() - start).toBe(50_000);
+    expect(fetch).toHaveBeenCalledTimes(5);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("bounds DNS and never starts a fetch when the lookup finishes after its attempt", async () => {
+    vi.useFakeTimers();
+    let finishDns!: () => void;
+    vi.mocked(assertReachableHost).mockImplementationOnce(() => new Promise<void>((resolve) => { finishDns = resolve; }));
+    stubHosts({ status: 200, body: { scraped: SCRAPED } });
+    const pending = POST(req({ input: "177013", persist: false }));
+    await vi.advanceTimersByTimeAsync(12_000);
+    expect((await pending).status).toBe(200); // fallback, not the stalled primary
+    finishDns();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(fetch).mock.calls[0][0]).toBe("http://fallback.test/scrape");
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("keeps each attempt timer and the absolute deadline armed through stalled bodies", async () => {
+    vi.useFakeTimers();
+    const fetch = vi.fn(async (_: unknown, init: RequestInit) => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"scraped":'));
+        init.signal!.addEventListener("abort", () => controller.error(new Error("body timeout")), { once: true });
+      },
+    })));
+    vi.stubGlobal("fetch", fetch);
+    const pending = POST(req({ input: "177013", persist: false }));
+    await vi.advanceTimersByTimeAsync(50_000);
+    expect((await pending).status).toBe(503);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(vi.getTimerCount()).toBe(0);
+  });
 });
 
 describe("POST /api/scrape — input validation", () => {
@@ -359,6 +463,7 @@ describe("POST /api/scrape — per-user scraper hosts", () => {
     const calls = stubHosts({ status: 200, body: { scraped: SCRAPED, via: "impit" } });
     await POST(req({ input: "177013", persist: false }));
     expect(calls[0].init.redirect).toBe("error");
+    expect(calls[0].init).toHaveProperty("dispatcher", publicDispatcher);
   });
 
   it("skips a host the address guard rejects, without fetching it", async () => {

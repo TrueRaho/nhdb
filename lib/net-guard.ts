@@ -61,6 +61,8 @@ export function normalizeScraperUrl(raw: string): string {
  *
  * ALL resolved addresses must pass. A host that answers with one public and one
  * private address is a rebinding attempt, not a misconfiguration.
+ * This is a preflight, not connection pinning: fetches must also use fetchPublic
+ * (lib/public-fetch.ts), whose socket lookup returns only checked addresses.
  */
 export async function assertReachableHost(rawUrl: string): Promise<void> {
   const url = new URL(normalizeScraperUrl(rawUrl));

@@ -131,8 +131,9 @@ Three things here are load-bearing and easy to undo:
 - **The URL is user input that the server fetches**, i.e. SSRF. `lib/net-guard.ts`
   requires https, rejects every non-public resolved address (IPv4-mapped and
   NAT64 IPv6 unwrapped so `::ffff:169.254.169.254` cannot sneak through),
-  re-checks DNS immediately before connecting, and the fetch sets
-  `redirect: "error"`. Removing any one of those re-opens it.
+  pins each connection to checked IPs via `lib/public-fetch.ts` (undici socket
+  lookup, no second resolution; standard TLS hostname/SNI checks), and the fetch
+  sets `redirect: "error"`. Removing any one of those re-opens it.
 - **Secrets are AES-GCM encrypted** (`lib/secret-box.ts`, `SCRAPER_CRED_KEY`) and
   never reach the browser — the UI gets `hasSecret`, not the value. A host whose
   secret will not decrypt is dropped, never called unauthenticated.
@@ -420,7 +421,10 @@ reading points at (≤ 2 hops, same site), and checks every address with
 the scraper host is plain Node) before fetching it. Two layers:
 
 1. **impit** — TLS/HTTP2-impersonating HTTP client that passes Cloudflare's
-   fingerprint gate without a browser (~200 ms). Fast path.
+   fingerprint gate without a browser (~200 ms). Fast path. Its `proxyUrl`
+   points at the same pinned loopback proxy implementation as Chromium;
+   `http3: false` is load-bearing because HTTP/3 bypasses impit's proxy support.
+   The client/proxy are shared, and closed by `closeScraper` or idle expiry.
 2. **Playwright** (playwright-extra + stealth) — a warm singleton browser used
    when impit is challenged **or** the page it got did not read as a title
    (client-rendered sites like Hitomi have no title until their scripts run);
@@ -443,10 +447,21 @@ The scraper can't run on Vercel (no Chromium), so `app/api/scrape/route.ts` is a
 **proxy** to external scraper hosts, tried in order:
 `SCRAPER_SERVICE_URL` (primary — local box via ngrok, residential IP where impit
 passes fast) then `SCRAPER_SERVICE_URL_FALLBACK` (Render backup, always pays the
-slow browser fallback). A *definitive* verdict (404/400) from the primary is
-returned as-is; only an *unreachable* primary falls through. `scripts/scraper-server.ts`
-is the standalone host (runs the same `scrapeTitle`, adds ngrok + Render lifecycle).
-Full topology is in `SCRAPER.md`.
+slow browser fallback). All hosts share one 50 s outbound deadline from route
+entry, including DNS and body reads: each attempt gets min(12 s, remaining), or
+min(45 s, remaining) for the last host. This leaves headroom under the 60 s
+function duration for persistence (authentication/DB calls are not cancelled).
+Host answers are capped at 2 MiB **after decompression** by `lib/read-capped.ts`
+(also used by covers with their unchanged 1 MiB cap). A definitive 404/400 stops
+fallback, but its body is rebuilt with only error (500 chars), code (64 chars)
+and the recognized `reads` capability; successful titles still pass the payload
+gate. Only an unreachable/broken host falls through.
+`scripts/scraper-server.ts` is the standalone host (same `scrapeTitle`, ngrok +
+Render lifecycle). Without `SCRAPER_SECRET` it binds only `127.0.0.1` and requires
+`DISABLE_NGROK=1`; with a secret it keeps `0.0.0.0`. Full topology is in `SCRAPER.md`.
+
+`app/design-preview/*` are dev harnesses. Their shared layout calls `notFound()`
+in production; the proxy bypass exists only to make them usable in `pnpm dev`.
 
 ### Postgres-maintained invariants (migrations `3_avg_tag_value`, `4_orphan_cleanup_triggers`)
 

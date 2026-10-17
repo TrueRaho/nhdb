@@ -4,6 +4,8 @@ import { consumeScrapeBudget } from "@/lib/rate-limit";
 import { UsageLimitError } from "@/lib/usage-limits";
 import { resolveScraperTargets, type ScraperTarget } from "@/lib/scraper-endpoints";
 import { assertReachableHost, UnsafeUrlError } from "@/lib/net-guard";
+import { fetchPublic } from "@/lib/public-fetch";
+import { readCapped } from "@/lib/read-capped";
 import { titlesListTag, datasetTag, statsTag, titleTag, similarTag, similarAnyTag } from "@/lib/cache-tags";
 import { revalidateTag } from "next/cache";
 import { scrapeTitle, ScrapeError, type ScrapeVia } from "@/lib/scraper";
@@ -20,10 +22,25 @@ export const maxDuration = 60;
 // warm browser fallback runs ~15-30s.
 const SCRAPER_PRIMARY_TIMEOUT_MS = 12_000;
 const SCRAPER_FALLBACK_TIMEOUT_MS = 45_000;
+const SCRAPE_DEADLINE_MS = 50_000;
+const MAX_HOST_BYTES = 2 * 1024 * 1024;
+
+type HostError = { error: string; code?: string; reads?: "any-site" };
+
+function hostError(data: Record<string, unknown>): HostError {
+  let error = "Scraper service failed";
+  // JSON can contain an object whose own toString/valueOf prevent coercion.
+  try { error = String(data.error ?? error); } catch { /* keep the default */ }
+  return {
+    error: error.slice(0, 500),
+    ...(typeof data.code === "string" ? { code: data.code.slice(0, 64) } : {}),
+    ...(data.reads === "any-site" ? { reads: "any-site" as const } : {}),
+  };
+}
 
 type ScraperCall =
   | { kind: "ok"; scraped: ScrapeResult; via: ScrapeVia }
-  | { kind: "answered"; status: number; data: unknown }
+  | { kind: "answered"; status: number; data: HostError }
   | { kind: "unreachable"; response: NextResponse };
 
 // What a host is asked for: the title's page address as parsed here, never
@@ -38,11 +55,29 @@ function hostInput(ref: TitleRef): string {
 // error, timeout, HTML error page (tunnel down), or a non-input error — the
 // caller should fall through to the next host.
 async function callScraper(target: ScraperTarget, ref: TitleRef, timeoutMs: number): Promise<ScraperCall> {
-  // Re-checked immediately before connecting, not just when the URL was saved:
-  // a name that resolved to a public address at save time can resolve to
-  // 127.0.0.1 now, and only the check next to the request sees that.
+  const controller = new AbortController();
+  const timedOut = new Promise<ScraperCall>((resolve) => {
+    controller.signal.addEventListener("abort", () => resolve({
+      kind: "unreachable",
+      response: NextResponse.json({ error: "Scraper service timed out" }, { status: 503 }),
+    }), { once: true });
+  });
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    // DNS itself is not abortable. Race the entire attempt, and check the signal
+    // after DNS so a late lookup cannot start a fetch after this attempt ended.
+    return await Promise.race([readScraper(target, ref, controller.signal), timedOut]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function readScraper(target: ScraperTarget, ref: TitleRef, signal: AbortSignal): Promise<ScraperCall> {
+  // Keep the URL/save-time guard; the dispatcher independently validates and
+  // pins DNS at connection time, closing the gap after this preflight check.
   try {
     await assertReachableHost(target.url);
+    signal.throwIfAborted();
   } catch (e) {
     return {
       kind: "unreachable",
@@ -53,25 +88,22 @@ async function callScraper(target: ScraperTarget, ref: TitleRef, timeoutMs: numb
     };
   }
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
   let upstream: Response;
   try {
-    upstream = await fetch(`${target.url.replace(/\/$/, "")}/scrape`, {
+    upstream = await fetchPublic(`${target.url.replace(/\/$/, "")}/scrape`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         ...(target.secret ? { Authorization: `Bearer ${target.secret}` } : {}),
       },
       body: JSON.stringify({ input: hostInput(ref) }),
-      signal: controller.signal,
+      signal,
       // The host is user-supplied, so a redirect is an SSRF bypass: the address
       // checks above apply to the URL we chose, and a 302 would send the next
       // request — bearer token attached — somewhere nobody validated.
       redirect: "error",
-    });
+    }, true);
   } catch {
-    clearTimeout(timer);
     return {
       kind: "unreachable",
       response: NextResponse.json({ error: "Scraper service unreachable" }, { status: 503 }),
@@ -81,11 +113,23 @@ async function callScraper(target: ScraperTarget, ref: TitleRef, timeoutMs: numb
   // ngrok/proxies return HTML error pages when the tunnel is down — a JSON parse
   // failure means "not a real scraper response", so fall through to the next host.
   // The abort timer stays armed through the body read: headers can arrive fast
-  // while the body stalls, and an undisarmed abort makes json() reject so we
+  // while the body stalls, and an undisarmed abort makes the read reject so we
   // fall through to the next host instead of hanging until maxDuration.
-  let data: { scraped?: ScrapeResult; error?: string; via?: ScrapeVia; code?: string };
+  let data: Record<string, unknown>;
   try {
-    data = await upstream.json();
+    // Node fetch decompresses gzip/br before exposing this stream. Never trust
+    // Content-Length (which may describe only a tiny compressed body).
+    const bytes = await readCapped(upstream, MAX_HOST_BYTES);
+    if (!bytes) {
+      return {
+        kind: "unreachable",
+        response: NextResponse.json({ error: "Scraper service response is too large" }, { status: 502 }),
+      };
+    }
+    signal.throwIfAborted();
+    const parsed: unknown = JSON.parse(new TextDecoder().decode(bytes));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("expected an object");
+    data = parsed as Record<string, unknown>;
   } catch {
     return {
       kind: "unreachable",
@@ -94,8 +138,6 @@ async function callScraper(target: ScraperTarget, ref: TitleRef, timeoutMs: numb
         { status: 502 },
       ),
     };
-  } finally {
-    clearTimeout(timer);
   }
 
   // A host is the user's own machine running whatever version (or edit) of the
@@ -125,11 +167,11 @@ async function callScraper(target: ScraperTarget, ref: TitleRef, timeoutMs: numb
     return { kind: "ok", scraped, via: data.via === "fallback" ? "fallback" : "impit" };
   }
   if (upstream.status === 400 || upstream.status === 404) {
-    return { kind: "answered", status: upstream.status, data };
+    return { kind: "answered", status: upstream.status, data: hostError(data) };
   }
   return {
     kind: "unreachable",
-    response: NextResponse.json(data, { status: upstream.status }),
+    response: NextResponse.json(hostError(data), { status: upstream.status }),
   };
 }
 
@@ -159,6 +201,9 @@ function quotaResponse(error: UsageLimitError) {
 }
 
 export async function POST(req: Request) {
+  // Authentication/setup time also spends this allowance; leave ten seconds
+  // under maxDuration for validation and persistence after outbound work.
+  const deadline = Date.now() + SCRAPE_DEADLINE_MS;
   let userId: string;
   try {
     userId = await requireUserId();
@@ -261,15 +306,17 @@ export async function POST(req: Request) {
       { status: 503 },
     );
     for (let i = 0; i < hosts.length; i++) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
       const timeout = i === hosts.length - 1 ? SCRAPER_FALLBACK_TIMEOUT_MS : SCRAPER_PRIMARY_TIMEOUT_MS;
-      const result = await callScraper(hosts[i], ref, timeout);
+      const result = await callScraper(hosts[i], ref, Math.min(timeout, remaining));
 
       if (result.kind === "answered") {
         // A 400 about a link this app accepted, from a host that does not say
         // it reads any site, means a scraper from before it could. Say so, and
         // let a newer host further down the list try. A current host's 400 is
         // its verdict (a site resolving into a private network, say) and stands.
-        const readsAnySite = (result.data as { reads?: unknown } | null)?.reads === "any-site";
+        const readsAnySite = result.data.reads === "any-site";
         if (result.status === 400 && ref.source !== "nhentai" && !readsAnySite) {
           lastError = NextResponse.json(
             {

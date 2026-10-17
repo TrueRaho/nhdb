@@ -126,7 +126,7 @@ if (!SECRET && (process.env.RENDER || useNgrok)) {
 // Render fallback, and the orphaned ngrok child blocks the reserved domain.
 process.on("unhandledRejection", (e) => console.error("unhandled rejection:", e));
 
-server.listen(PORT, "0.0.0.0", () => {
+server.listen(PORT, SECRET ? "0.0.0.0" : "127.0.0.1", () => {
   console.log(`Scraper listening on port ${PORT}`);
 
   if (useNgrok) {

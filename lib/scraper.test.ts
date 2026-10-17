@@ -12,8 +12,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 //   node:dns/promises  → lookup(host) answers the addresses (public by default)
 //   playwright-extra   → launch() rejects (no browser) unless a test installs
 //                        the fake browser, whose pages answer from browserServe
-const { fetchMock, lookup, launch, browserServe, startProxy } = vi.hoisted(() => ({
+const { fetchMock, impitOptions, lookup, launch, browserServe, startProxy } = vi.hoisted(() => ({
   fetchMock: vi.fn(),
+  impitOptions: vi.fn(),
   lookup: vi.fn<(host: string, opts: unknown) => Promise<{ address: string }[]>>(),
   launch: vi.fn(),
   browserServe: vi.fn<(url: string) => { status?: number; html: string; url?: string }>(),
@@ -21,6 +22,7 @@ const { fetchMock, lookup, launch, browserServe, startProxy } = vi.hoisted(() =>
 }));
 vi.mock("impit", () => ({
   Impit: class {
+    constructor(options: unknown) { impitOptions(options); }
     fetch = fetchMock;
   },
 }));
@@ -105,6 +107,7 @@ const SITE = "https://doujin-site.com";
 
 beforeEach(() => {
   fetchMock.mockReset();
+  impitOptions.mockReset();
   lookup.mockReset();
   lookup.mockResolvedValue([{ address: "93.184.216.34" }]);
   launch.mockReset();
@@ -120,13 +123,13 @@ describe("browser proxy lifecycle", () => {
     fetchMock.mockResolvedValue(answer("", { status: 503 }));
     browserServe.mockReturnValue({ html: galleryPage() });
   };
-  const proxy = async () => startProxy.mock.results[0].value;
+  const proxy = async () => startProxy.mock.results.at(-1)!.value;
 
   it("launches with a proxy, reuses it, and closes it with the warm browser", async () => {
     installBrowser(); fallback();
     await scrapeTitle(`${SITE}/gallery/12345/`);
     await scrapeTitle(`${SITE}/gallery/12345/`);
-    expect(startProxy).toHaveBeenCalledTimes(1);
+    expect(startProxy).toHaveBeenCalledTimes(2); // impit + warm browser
     expect(launch).toHaveBeenCalledWith(expect.objectContaining({
       proxy: { server: "http://127.0.0.1:7777" },
       args: expect.arrayContaining(["--proxy-bypass-list=<-loopback>", "--force-webrtc-ip-handling-policy=disable_non_proxied_udp"]),
@@ -168,16 +171,56 @@ describe("browser proxy lifecycle", () => {
     await Promise.resolve();
     expect((await proxy()).close).toHaveBeenCalledOnce();
     await scrapeTitle(`${SITE}/gallery/12345/`);
-    expect(startProxy).toHaveBeenCalledTimes(2);
+    expect(startProxy).toHaveBeenCalledTimes(3); // impit + two browsers
   });
 });
 
 afterEach(async () => {
   await closeScraper();
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
 describe("scrapeTitle: what is fetched", () => {
+  it("pins impit through the loopback proxy, reuses it and closes it on shutdown", async () => {
+    fetchMock.mockResolvedValue(answer(galleryPage()));
+    await scrapeTitle(`${SITE}/gallery/12345/`);
+    await scrapeTitle(`${SITE}/gallery/12345/`);
+    expect(impitOptions).toHaveBeenCalledExactlyOnceWith({
+      browser: "chrome", timeout: 30_000, proxyUrl: "http://127.0.0.1:7777", http3: false,
+    });
+    expect(startProxy).toHaveBeenCalledOnce();
+    const proxy = await startProxy.mock.results[0].value;
+    expect(proxy.close).not.toHaveBeenCalled();
+    await closeScraper();
+    expect(proxy.close).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the impit proxy alive during a concurrent scrape, then closes it when idle", async () => {
+    vi.useFakeTimers();
+    let finish!: (value: ReturnType<typeof answer>) => void;
+    fetchMock.mockResolvedValueOnce(answer(galleryPage()))
+      .mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const first = scrapeTitle(`${SITE}/gallery/12345/`);
+    const second = scrapeTitle(`${SITE}/gallery/12346/`);
+    await first;
+    const proxy = await startProxy.mock.results[0].value;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(proxy.close).not.toHaveBeenCalled();
+    finish(answer(galleryPage()));
+    await second;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(proxy.close).toHaveBeenCalledOnce();
+  });
+
+  it("closes impit's proxy when client construction fails before browser fallback", async () => {
+    impitOptions.mockImplementationOnce(() => { throw new Error("invalid browser profile"); });
+    installBrowser();
+    browserServe.mockReturnValue({ html: galleryPage() });
+    expect((await scrapeTitle(`${SITE}/gallery/12345/`)).via).toBe("fallback");
+    const proxy = await startProxy.mock.results[0].value;
+    expect(proxy.close).toHaveBeenCalledOnce();
+  });
   it("refuses an oversized browser document before extraction", async () => {
     fetchMock.mockResolvedValue(answer("", { status: 503 }));
     installBrowser();

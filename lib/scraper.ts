@@ -110,19 +110,33 @@ async function assertFetchable(raw: string): Promise<void> {
 const IMPIT_PROFILE = process.env.SCRAPER_BROWSER_PROFILE || "chrome";
 
 type ImpitInstance = InstanceType<typeof import("impit").Impit>;
-let _impit: ImpitInstance | null = null;
+let _impit: Promise<{ client: ImpitInstance; proxy: ScraperProxy }> | null = null;
+let _activeImpitScrapes = 0;
 
 async function getImpit(): Promise<ImpitInstance> {
   if (!_impit) {
-    const { Impit } = await import("impit");
-    // An invalid SCRAPER_BROWSER_PROFILE makes fetches throw, and we simply
-    // fall back to the browser layer — so the env value is trusted, not validated.
-    _impit = new Impit({
-      browser: IMPIT_PROFILE as import("impit").Browser,
-      timeout: 30_000,
-    });
+    const pending = (async () => {
+      const { Impit } = await import("impit");
+      const proxy = await startScraperProxy();
+      try {
+        const client = new Impit({
+          browser: IMPIT_PROFILE as import("impit").Browser,
+          timeout: 30_000,
+          proxyUrl: proxy.server,
+          // HTTP/3 bypasses impit's proxy support. Keep HTTPS inside CONNECT;
+          // the origin still owns the TLS handshake and certificate check.
+          http3: false,
+        });
+        return { client, proxy };
+      } catch (e) {
+        await proxy.close();
+        throw e;
+      }
+    })();
+    _impit = pending;
+    pending.catch(() => { if (_impit === pending) _impit = null; });
   }
-  return _impit;
+  return (await _impit).client;
 }
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
@@ -138,6 +152,17 @@ const MAX_REDIRECTS = 5;
 // before anything looked at it. Each hop is checked like the first address:
 // on the site, the same title, resolving to public addresses only.
 async function fetchViaImpit(url: string, ref: TitleRef): Promise<{ html: string; url: string } | null> {
+  _activeImpitScrapes++;
+  if (_idleTimer) { clearTimeout(_idleTimer); _idleTimer = null; }
+  try {
+    return await readViaImpit(url, ref);
+  } finally {
+    _activeImpitScrapes--;
+    scheduleIdleClose();
+  }
+}
+
+async function readViaImpit(url: string, ref: TitleRef): Promise<{ html: string; url: string } | null> {
   let res: Awaited<ReturnType<ImpitInstance["fetch"]>>;
   let current = url;
   for (let hop = 0; ; hop++) {
@@ -212,7 +237,7 @@ let _activeBrowserScrapes = 0;
 
 function scheduleIdleClose(): void {
   if (_idleTimer) clearTimeout(_idleTimer);
-  if (IDLE_MS > 0 && _activeBrowserScrapes === 0) {
+  if (IDLE_MS > 0 && _activeBrowserScrapes === 0 && _activeImpitScrapes === 0) {
     _idleTimer = setTimeout(() => void closeScraper(), IDLE_MS);
     _idleTimer.unref?.();
   }
@@ -314,12 +339,12 @@ export async function closeScraper(): Promise<void> {
   if (_idleTimer) { clearTimeout(_idleTimer); _idleTimer = null; }
   const warm = _warm;
   _warm = null;
-  if (!warm) return;
-  try {
-    await closeWarm(await warm);
-  } catch {
-    // already gone
-  }
+  const impit = _impit;
+  _impit = null;
+  await Promise.allSettled([
+    warm?.then(closeWarm),
+    impit?.then(({ proxy }) => proxy.close()),
+  ]);
 }
 
 async function fetchViaBrowser(url: string, ref: TitleRef): Promise<{ html: string; url: string }> {

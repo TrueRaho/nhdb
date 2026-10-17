@@ -1,4 +1,5 @@
-// Chromium follows redirects below Playwright's route handlers. Put the
+// impit and Chromium both use this gateway. Chromium follows redirects below
+// Playwright's route handlers. Put the
 // address gate at the connection boundary, and dial the IP that we checked
 // instead of letting a second DNS lookup choose a different destination.
 import { lookup } from "node:dns/promises";

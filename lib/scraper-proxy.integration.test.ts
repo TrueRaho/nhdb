@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { TLSSocket } from "node:tls";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { chromium } from "playwright";
+import { Impit } from "impit";
 import { startScraperProxy } from "./scraper-proxy";
 import { SCRAPER_BROWSER_NETWORK_ARGS } from "./scraper-browser-options";
 
@@ -48,6 +49,44 @@ function wire(proxy: string, text: string, until?: string): Promise<string> {
 const publicDNS = async () => [{ address: "93.184.216.34", family: 4 }];
 
 describe.skipIf(process.env.NHDB_TEST_BROWSER_PROXY !== "1")("browser proxy with real local sockets", () => {
+  it("real impit uses the pinned proxy for HTTP and refuses private destinations", async () => {
+    let privateHits = 0;
+    const privatePort = await listen(createServer((_req, res) => { privateHits++; res.end("private"); }));
+    const publicPort = await listen(createServer((req, res) => {
+      expect(req.headers.host).toBe("public.example");
+      res.end("public fixture");
+    }));
+    const connect = vi.fn((address) => {
+      expect(address).toEqual({ address: "93.184.216.34", family: 4 });
+      return createConnection({ host: "127.0.0.1", port: publicPort });
+    });
+    const proxy = await startScraperProxy({
+      resolve: async (hostname) => [{ address: hostname === "public.example" ? "93.184.216.34" : "127.0.0.1", family: 4 }], connect,
+    }); cleanup.push(proxy.close);
+    const client = new Impit({ proxyUrl: proxy.server, http3: false, timeout: 2000 });
+    expect(await (await client.fetch("http://public.example/")).text()).toBe("public fixture");
+    expect((await client.fetch("http://rebound.example/")).status).toBe(403);
+    expect((await client.fetch(`http://127.0.0.1:${privatePort}/`)).status).toBe(403);
+    expect(connect).toHaveBeenCalledOnce();
+    expect(privateHits).toBe(0);
+  });
+
+  it("real impit keeps origin Host/SNI and certificate verification through CONNECT", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nhdb-impit-cert-")); cleanup.push(() => rmSync(dir, { recursive: true, force: true }));
+    execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", join(dir, "key.pem"), "-out", join(dir, "cert.pem"), "-days", "1", "-subj", "/CN=public.example"], { stdio: "ignore" });
+    const port = await listen(createSecureServer({ key: readFileSync(join(dir, "key.pem")), cert: readFileSync(join(dir, "cert.pem")) }, (req, res) => {
+      expect(req.headers.host).toBe("public.example");
+      expect((req.socket as TLSSocket).servername).toBe("public.example");
+      res.end("TLS fixture");
+    }));
+    const proxy = await startScraperProxy({ resolve: publicDNS, connect: () => createConnection({ host: "127.0.0.1", port }) }); cleanup.push(proxy.close);
+    const client = new Impit({ proxyUrl: proxy.server, http3: false, timeout: 2000 });
+    await expect(client.fetch("https://public.example/")).rejects.toThrow(); // self-signed certificate
+    // Trust the test fixture only, to observe the successful HTTP request/SNI.
+    const fixtureClient = new Impit({ proxyUrl: proxy.server, http3: false, timeout: 2000, ignoreTlsErrors: true });
+    expect(await (await fixtureClient.fetch("https://public.example/")).text()).toBe("TLS fixture");
+  });
+
   it("R3.6: a proxied page cannot send WebRTC STUN to loopback", async () => {
     const port = await listen(createServer((_req, res) => { res.setHeader("content-type", "text/html"); res.end("<h1>ICE test page</h1>"); }));
     const proxy = await startScraperProxy({ resolve: publicDNS, connect: () => createConnection({ host: "127.0.0.1", port }) }); cleanup.push(proxy.close);

@@ -7,6 +7,7 @@ const { lookup } = vi.hoisted(() => ({
 vi.mock("node:dns/promises", () => ({ lookup }));
 
 import { fetchCover, MAX_COVER_BYTES, sniffImageType } from "./cover-proxy";
+import { publicDispatcher } from "./public-fetch";
 
 const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 0x10, 0x4a, 0x46]);
 const HITOMI = "https://tn.gold-usergeneratedcontent.net/webpbigtn/a/bc/abc.webp";
@@ -68,6 +69,7 @@ describe("fetchCover — Referer", () => {
     expect(String(url)).toBe(HITOMI);
     expect(headersOf(0).Referer).toBe("https://hitomi.la/");
     expect(init?.redirect).toBe("manual");
+    expect(init).toHaveProperty("dispatcher", publicDispatcher);
     expect(lookup).toHaveBeenCalledWith("tn.gold-usergeneratedcontent.net", { all: true });
   });
 

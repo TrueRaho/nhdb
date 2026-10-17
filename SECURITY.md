@@ -23,6 +23,10 @@ around before a page renders. It is deliberately not trusted for authorization �
 a matcher is a configuration file, and Next.js routes Server Actions as POSTs to
 *the page that uses them*, so a matcher change can silently drop coverage.
 
+`/design-preview/*` contains development harnesses. Its shared Server Component
+layout calls `notFound()` in production, including for signed-in users; the
+proxy's bypass keeps them usable without login in `pnpm dev` only.
+
 `lib/session.ts` is the **real** gate, and the only place a `userId` is ever
 produced:
 
@@ -117,13 +121,16 @@ gates — each refuses on its own, and none trusts the one before it:
    redirects (`redirect: "manual"`) and the scraper follows them itself, at
    most five, checking each Location before it is requested — left to impit,
    a `302 Location: http://127.0.0.1:…` was requested before anything looked
-   at it. Chromium's HTTP(S) traffic goes through an ephemeral loopback proxy
-   (`lib/scraper-proxy.ts`): absolute-form HTTP and CONNECT on web ports,
+   at it. Both impit (`proxyUrl`, HTTP/3 disabled) and Chromium send HTTP(S)
+   traffic through loopback proxies (`lib/scraper-proxy.ts`): absolute-form
+   HTTP and CONNECT on web ports,
    all DNS answers must be public before connecting, and the connection uses
    the checked IP without another lookup. Loopback bypass is disabled, so
    redirects also pass through the gate. HTTPS stays end-to-end (Host/SNI are
-   preserved). The browser may contact another public site during a redirect;
-   the final page still has to belong to the requested site/title to be read.
+   preserved, with certificate verification left enabled). The proxy is kept
+   with its client and closed on shutdown or idle expiry. The browser may
+   contact another public site during a redirect; the final page still has to
+   belong to the requested site/title to be read.
 3. **The write boundary re-derives the payload** (`lib/scrape-payload.ts`),
    because a commit's payload comes back from the browser and a host's answer
    comes from a machine the user controls. Unknown keys are dropped; the source
@@ -166,8 +173,11 @@ these rules are the whole defence, and each matters on its own:
   no credentials, the scheme's own port — nothing but a web server's 80/443 is
   ever dialled.
 - **Public addresses only**, checked before every hop with
-  `assertPublicHostname`: a name can resolve anywhere, including
-  `169.254.169.254`, and every resolved address must be public.
+  `assertPublicHostname` and again at the socket boundary by the undici Agent
+  in `lib/public-fetch.ts`. Its lookup returns only the checked IPs, with no
+  second resolution before connecting. A name can resolve anywhere, including
+  `169.254.169.254`, and every resolved address must be public. Host/SNI and TLS
+  certificate verification stay with the standard connector.
 - **Redirects by hand** (`redirect: "manual"`), at most three, each hop
   re-checked the same way.
 - **Only an image comes back.** The type is sniffed from the bytes (JPEG, PNG,
@@ -211,7 +221,8 @@ vars are ignored entirely, and an account with nothing configured gets a `409`
 telling it to go to settings.
 
 This makes the deployment fetch a **user-supplied URL**, which is a request
-forgery primitive by construction. `lib/net-guard.ts` is the whole defence:
+forgery primitive by construction. `lib/net-guard.ts` and the connection gate in
+`lib/public-fetch.ts` enforce these rules:
 
 - **https only**, with one exception: plain `http` to a loopback host outside
   production, which is the local `pnpm scraper` case. In production loopback *is*
@@ -224,15 +235,28 @@ forgery primitive by construction. `lib/net-guard.ts` is the whole defence:
   carry, or `::ffff:169.254.169.254` would walk straight past an IPv4-only list.
 - **All** answers must pass, not the first: one public and one private record is
   a rebinding attempt, not a misconfiguration.
-- **Checked again immediately before connecting**, not only when saved — a name
-  that resolved publicly at save time can resolve to `127.0.0.1` later.
+- **Pinned at connection time** by the undici Agent in `lib/public-fetch.ts`,
+  not only checked when saved. Its socket lookup validates every answer and
+  hands those IPs directly to the connector, without another resolution. IP
+  literals are checked too. Host/SNI and TLS certificate verification stay
+  unchanged. The dev-only `http://localhost` exception pins to `127.0.0.1`.
 - **Redirects are refused** (`redirect: "error"`). The address checks apply to
   the URL we chose; a `302` would send the next request, bearer token attached,
   somewhere nobody validated.
 
-Residual risk: a DNS answer can still change between the check and the socket
-connecting. Closing that fully means pinning the resolved address and connecting
-to it with an explicit `Host` header, which `fetch` does not expose.
+Host responses are read through `lib/read-capped.ts` with a **2 MiB cap on the
+decompressed stream**, for every status (gzip/br Content-Length is not a size
+guarantee). Overflow cancels the stream and becomes a small `502`. Host bodies
+are never relayed verbatim: successful titles are re-derived at the payload
+boundary, errors contain only a 500-character message, an optional 64-character
+code and the recognized `reads: "any-site"` capability.
+
+One absolute **50-second outbound deadline**, measured from route entry,
+includes DNS, connecting and reading the body across all hosts. Each attempt
+gets at most 12 seconds (45 for the last host), further reduced to the remaining
+allowance; an expired deadline returns the last error without contacting more
+hosts. This leaves headroom under `maxDuration = 60` for validation/persistence;
+it does not cancel an already-running authentication or database operation.
 
 ### Scraper secrets at rest
 
@@ -271,7 +295,9 @@ links from the supported sites and fetches the address it rebuilds from the id
 
 The server **fails closed**: if `SCRAPER_SECRET` is unset while the process
 would be publicly reachable (on Render, or with the ngrok tunnel enabled), it
-refuses to start. Local-only runs without a secret need `DISABLE_NGROK=1`.
+refuses to start. Local-only runs without a secret need `DISABLE_NGROK=1` and
+bind to **127.0.0.1 only**, so the LAN cannot use them. With a secret the server
+continues to bind `0.0.0.0` for Render/ngrok.
 
 ## Automation: `pnpm rescrape`
 

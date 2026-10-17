@@ -19,6 +19,7 @@ export default async function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
   // API handlers own their authorization and return JSON 401s, never HTML.
   // Verification must also work before sign-up has issued a session.
+  // Design harnesses are dev-only; their shared layout calls notFound in production.
   if ((pathname.startsWith("/api/") && !pathname.startsWith("/api/auth/")) || pathname === VERIFY_PATH || pathname.startsWith("/design-preview")) {
     return NextResponse.next();
   }
