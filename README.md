@@ -38,10 +38,11 @@ See `SCRAPER.md` for how a page is read.
 The database is shared; the scraper is not. Every account runs its own and
 registers it under **Account** (top right → `/account`):
 
-1. Start one with `pnpm scraper` — on your own machine behind a tunnel, on a
-   small container, anywhere reachable over https.
+1. Set `SCRAPER_SECRET`, install/configure ngrok, and start `pnpm scraper` on
+   your own machine; it opens a public HTTPS tunnel. Or deploy your own service
+   on Render using `render.yaml` — see [SCRAPER.md](SCRAPER.md).
 2. Add its URL as the **primary** host, plus its `SCRAPER_SECRET`.
-3. Add as many **fallbacks** as you like; they are tried in order, top to bottom,
+3. Add **fallbacks** (up to eight hosts total); they are tried in order, top to bottom,
    whenever the one above is unreachable. A fast local box first and a slower
    always-on container behind it is the usual pairing.
 
@@ -89,11 +90,23 @@ version keeps working against it; it may be applied before the code ships.
 Scraper hosts should be updated too — an older host still serves nhentai, but
 answers other sites' links with an error the app reports as "older version".
 
-## Scraper
+## Collection tools
 
-`pnpm scraper` runs the standalone scraper. Set `SCRAPER_SERVICE_URL` (and
-optionally `SCRAPER_SERVICE_URL_FALLBACK` / `SCRAPER_SECRET`) to use it from the app;
-otherwise `/api/scrape` scrapes locally.
+On `/account`, download your collection and reading history as JSON (20 exports
+per UTC day), or permanently delete your data by typing `DELETE`. Deletion also
+requests removal of your Neon Auth login and signs you out. If the auth service
+cannot remove it, the result explicitly says your login remains; contact the
+operator. Quota counters keep their normal windows so deletion cannot reset limits.
+
+Exports stream in batches and exclude additions after their captured start time
+and maximum keys. They are not transactional snapshots: avoid editing your
+collection until the download finishes, and retry if it is interrupted.
+
+New accounts have no scraper hosts. Register your own under `/account` before
+adding titles; production returns a setup error until a host is available. The
+`SCRAPER_SERVICE_URL*` environment variables are a development convenience only.
+
+## Command-line collection tools
 
 For `pnpm rescrape`, set `NHDB_SESSION_COOKIE` to the Cookie header from a
 signed-in browser request. The command resolves the verified account from that

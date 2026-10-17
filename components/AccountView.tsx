@@ -6,6 +6,8 @@ import type { ScraperEndpointView } from "@/lib/scraper-endpoints";
 import { ScraperSettings } from "./ScraperSettings";
 import { SignOutButton } from "./SignOutButton";
 import { Wordmark } from "./Wordmark";
+import { DeleteAccount } from "./DeleteAccount";
+import { EXPORT_LIMIT } from "@/lib/usage-limits";
 
 // Presentation only: the page resolves the session and the endpoint list and
 // hands them in, so nothing here reads cookies or the database.
@@ -106,6 +108,12 @@ export function AccountView({
       </section>
 
       <ScraperSettings initialEndpoints={endpoints} limit={limit} secretStorageReady={secretStorageReady} />
+      <section aria-labelledby="export-heading" className="flex flex-col gap-3 rounded-2xl border border-nh-border bg-nh-surface p-5">
+        <h2 id="export-heading" className="font-display text-lg font-bold">Export my collection</h2>
+        <p className="text-sm text-nh-text-2">Download your titles, names, metadata and reading history as JSON. Scraper credentials are excluded. Up to {EXPORT_LIMIT} exports per UTC day.</p>
+        <a href="/api/export" className={`text-sm text-nh-accent underline ${FOCUS_RING}`}>Download collection JSON</a>
+      </section>
+      <DeleteAccount />
     </div>
   );
 }

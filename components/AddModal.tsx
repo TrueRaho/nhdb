@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { NO_SCRAPER_HOST } from "../lib/scraper-config";
 import { ArrowRight, Database, RotateCw, X, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -113,6 +115,9 @@ export function AddModal({ open, onClose, recentAdds, embedded, onAdd }: {
         </div>
 
         <div className="flex-1 overflow-auto min-h-0 p-4">
+          <p className="mb-3 text-sm text-nh-text-2">
+            Adding titles needs your own scraper host. <Link href="/account" className="text-nh-accent underline">Set up a host in Account settings</Link>.
+          </p>
           <div className="font-mono text-[9.5px] uppercase tracking-widest text-nh-text-3 mb-1.5">
             a title link from any gallery site · bare numbers are nhentai ids · paste a whole tab dump — links that are not a title are ignored
           </div>
@@ -274,7 +279,10 @@ function ErrorRow({ job, onDismiss, onRetry }: { job: ScrapeJob; onDismiss: () =
     >
       <div className="flex-1 min-w-0 flex flex-col gap-1">
         <div className="font-mono text-[9.5px] tracking-wider text-[#ff6b6b] truncate">{label}</div>
-        <div className="font-mono text-[10px] text-nh-text-3 truncate">{job.error ?? "scrape failed"}</div>
+        <div className="font-mono text-[10px] text-nh-text-3">{job.error ?? "scrape failed"}</div>
+        {job.errorCode === NO_SCRAPER_HOST && (
+          <Link href="/account" className="text-xs text-nh-accent underline">Set up a scraper host</Link>
+        )}
       </div>
       <button
         onClick={onRetry}

@@ -5,6 +5,7 @@ import { getSessionUser } from "@/lib/session";
 import { AUTH_TITLES, authPath, safeReturnPath, VERIFY_PATH } from "@/lib/auth/paths";
 import { AuthForm, type AuthMode } from "../AuthForm";
 import { AuthShell } from "../AuthShell";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 
 type Props = {
   params: Promise<{ path: string }>;
@@ -23,7 +24,16 @@ async function AuthScreen({ params, searchParams }: Props) {
   const user = await getSessionUser();
   if (user?.emailVerified) redirect(next);
   if (user && path !== "verify-email") redirect(authPath(VERIFY_PATH, next));
-  return <AuthForm mode={path as AuthMode} next={next} initialEmail={user?.email ?? ""} signedIn={user !== null} />;
+  return <>
+    {path === "sign-in" && ["deleted", "data-deleted"].includes(String(query.account)) && (
+      <Alert className="mb-6"><AlertDescription>
+        {query.account === "deleted"
+          ? "Your collection and login have been deleted. You are signed out."
+          : "Your collection data has been deleted and you are signed out on this device. Your login remains; contact the operator to delete it."}
+      </AlertDescription></Alert>
+    )}
+    <AuthForm mode={path as AuthMode} next={next} initialEmail={user?.email ?? ""} signedIn={user !== null} />
+  </>;
 }
 
 /** Roughly the form's footprint, so switching tabs does not collapse the page. */

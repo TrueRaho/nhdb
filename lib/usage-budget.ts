@@ -3,7 +3,7 @@
 import { Prisma } from "./generated/prisma/client";
 import { COVER_GLOBAL_BYTES, COVER_USER_BYTES, UsageLimitError } from "./usage-limits";
 
-type BudgetKind = "cover-user" | "cover-global" | "cover-request-user" | "cover-request-global" | "commit" | "read";
+type BudgetKind = "cover-user" | "cover-global" | "cover-request-user" | "cover-request-global" | "commit" | "read" | "export";
 type Period = "month" | "hour" | "day";
 type BudgetDb = Pick<Prisma.TransactionClient, "$queryRaw">;
 

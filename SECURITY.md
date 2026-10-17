@@ -88,6 +88,46 @@ Per-collection statistics stay per-collection for the same reason —
 `tags.title_count`, `titles.avg_tag_value`, tag affinity and ghost tags are all
 fractions *of the collection*, and every entity id already belongs to one user.
 
+## Account deletion and collection export
+
+`/account` requires typing `DELETE` before its Server Action deletes the caller’s
+data. The action derives the owner from the verified session, takes the user
+write lock, sweeps pre-existing unlinked entities, and deletes all their titles,
+read logs and scraper endpoints in one transaction. Title joins cascade; the
+deferred triggers remove newly orphaned entities at commit. Other users and deployment-wide budget rows are preserved.
+Every caller cache tag, including each deleted title, expires with `updateTag`.
+Quota counters are kept until their window ends so deletion cannot reset limits.
+
+After commit, the action calls the supported `auth.deleteUser({})` method in
+`@neondatabase/auth` **0.5.0-beta**, followed by `auth.signOut()`. It claims login
+deletion only for `{success: true, message: "User deleted"}`. A disabled endpoint,
+stale session, verification-email response or outage is not proof of deletion:
+the UI says **“your login remains; contact the operator”**. Data is still deleted.
+The UI always navigates out of the retained app state; this browser’s Neon Auth
+cookies are also explicitly expired if remote sign-out fails. In that failure
+case, revocation of remote sessions is unconfirmed. Auth deletion is a separate
+service call after the data transaction; the two cannot be atomic. Existing
+requests or sessions on other devices may still act while deletion is in flight
+or when login deletion fails; the operator must remove the remaining login.
+
+`GET /api/export` checks the verified session and charges the caller’s `export`
+usage counter, limited to **20 exports per UTC day**, before reading data. Titles,
+all five entity kinds and read logs use owner filters. After the budget charge,
+the export captures its start time and the caller's maximum title hashtag and
+read-log ID. It streams JSON in keyset batches of **250 titles** (by hashtag)
+and **1000 read logs** (by read time, then ID), serializing one record per chunk.
+No interactive transaction stays open during the download. Exported titles have
+`created_at <= start` and `hashtag <= captured max`; logs must have
+`read_at <= start` and `id <= captured max`. These bounds exclude later additions,
+including lower-numbered titles and backdated logs; this is not a transactional
+snapshot. Concurrent edits may be reflected and deletions may omit records.
+For a stable copy, avoid changing the collection until the download finishes.
+A failed batch aborts the download; retry rather than use a partial file.
+The response is a private, non-cacheable JSON attachment with explicit selected
+fields; scraper endpoints, bearer tokens, encrypted credentials, auth records
+and budgets are never exported. Quota denial returns 429 + Retry-After before
+streaming; an interrupted download still spends its admitted export attempt.
+
 ## Legacy data: `nhdb:unclaimed`
 
 Migration 6 parks the pre-multi-user rows under the sentinel owner

@@ -155,12 +155,13 @@ export function ScraperSettings({
             {rows.length} / {limit}
           </span>
         </h2>
-        <p className="mt-1.5 max-w-xl text-sm leading-relaxed text-pretty text-nh-text-2">
-          The collection is shared infrastructure; the scraper is yours. Run{" "}
-          <code className="rounded bg-nh-pill px-1.5 py-0.5 font-mono text-[12px] text-nh-text-1">pnpm scraper</code>{" "}
-          and register it here. Hosts are tried top to bottom — put the fast one first; the rest are used only
-          when the one above is unreachable.
-        </p>
+        <div className="mt-1.5 flex max-w-xl flex-col gap-1 text-sm leading-relaxed text-pretty text-nh-text-2">
+          <p>A scraper host reads gallery pages and sends title metadata to your collection. You need your own before adding titles.</p>
+          <p>On your computer, set SCRAPER_SECRET and run <code>pnpm scraper</code> with ngrok installed to get a public HTTPS URL.</p>
+          <p>Or deploy your own host on Render using <code>render.yaml</code>.</p>
+          <p>Add its URL and matching secret below. Hosts are tried top to bottom when one is unreachable.</p>
+          <p><a href="/scraper-guide" target="_blank" rel="noopener noreferrer" className={`text-nh-accent underline ${FOCUS_RING}`}>Read SCRAPER.md for setup instructions</a>.</p>
+        </div>
       </div>
 
       {!secretStorageReady && (

@@ -16,6 +16,7 @@ import { coverBytePrecheckSql, usageBudgetSql, userWriteLockSql, type UsageBudge
 import { COVER_GLOBAL_BYTES, COVER_GLOBAL_REQUESTS, COVER_USER_BYTES, COVER_USER_REQUESTS, READ_LIMIT, TITLE_LIMIT } from "../lib/usage-limits";
 import { markReadSql } from "../lib/read-log";
 import { AUDIT_TITLES_SQL, auditTitleIds, parseAuditTitles } from "../scripts/lib/audit-title-ids";
+import { accountDeletionSql } from "../lib/account-deletion";
 
 const databaseUrl = process.env.NHDB_TEST_DATABASE_URL;
 const psql = process.env.PG_BIN_DIR ? join(process.env.PG_BIN_DIR, "psql") : "psql";
@@ -166,6 +167,68 @@ describe.skipIf(!databaseUrl)("multi-user PostgreSQL migration", { timeout: DB_T
     if (schema) query(`DROP SCHEMA "${schema}" CASCADE;`);
     schema = "";
   }, DB_TIMEOUT);
+
+  it("deletes the caller's collection at commit while preserving all quota counters and other users", () => {
+    query(claimSql("user-a"));
+    addOtherUser();
+    const entities = [
+      ["artists", "artist_name", "artist_link", "titlestoartists", "id_artist"],
+      ["groups", "group_name", "group_link", "titlestogroups", "id_group"],
+      ["characters", "character_name", "character_link", "titlestocharacters", "id_character"],
+      ["parodies", "parodie_name", "parodie_link", "titlestoparodies", "id_parodie"],
+      ["tags", "tag_name", "tag_link", "titlestotags", "id_tag"],
+    ];
+    for (const [table, name, link, joins, id] of entities) {
+      if (table !== "tags") query(`
+        INSERT INTO ${table} (user_id, ${name}, ${link}) VALUES ('other', 'shared', '/shared');
+        INSERT INTO ${joins} (user_id, hashtag, ${id}) SELECT 'other', 101, ${id} FROM ${table} WHERE user_id = 'other';
+      `);
+      // Orphans with no deleted join are unreachable by the deferred triggers.
+      query(`INSERT INTO ${table} (user_id, ${name}, ${link}) VALUES ('user-a', 'unlinked', '/unlinked');`);
+    }
+    query(`INSERT INTO read_logs (user_id, hashtag) VALUES ('other', 101);
+      INSERT INTO scraper_endpoints (user_id, position, url, secret_enc)
+        VALUES ('user-a', 0, 'https://a.example', 'encrypted-a'), ('other', 0, 'https://b.example', 'encrypted-b');
+      INSERT INTO scrape_budget (user_id, window_at, used) VALUES ('user-a', NOW(), 3), ('other', NOW(), 4);
+      INSERT INTO usage_budget (kind, user_id, window_at, used) VALUES
+        ('export', 'user-a', NOW(), 20), ('read', 'user-a', NOW(), 2), ('commit', 'other', NOW(), 3),
+        ('commit', 'user-a', NOW(), 240), ('cover-user', 'user-a', NOW(), 1234),
+        ('cover-request-user', 'user-a', NOW(), 10000),
+        ('cover-global', '', NOW(), 100);`);
+    // Discover ALL user_id tables, including any added in future migrations.
+    const tables = query(`SELECT table_name FROM information_schema.columns
+      WHERE table_schema = '${schema}' AND column_name = 'user_id' ORDER BY table_name`).split("\n");
+    const snapshot = (table: string) => query(`SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text), '[]'::jsonb)
+      FROM "${table}" t WHERE user_id <> 'user-a'`);
+    const others = tables.map(snapshot);
+    const ownBudgets = new Map(["scrape_budget", "usage_budget"].map((table) => [table,
+      query(`SELECT jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text) FROM ${table} t WHERE user_id = 'user-a'`),
+    ]));
+    query(`BEGIN; ${accountDeletionSql("user-a").map((sql) => withLiterals(sql) + ";").join("\n")} COMMIT;`);
+    for (let i = 0; i < tables.length; i++) {
+      if (ownBudgets.has(tables[i])) {
+        expect(query(`SELECT jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text) FROM "${tables[i]}" t WHERE user_id = 'user-a'`))
+          .toBe(ownBudgets.get(tables[i]));
+      } else {
+        expect(query(`SELECT count(*) FROM "${tables[i]}" WHERE user_id = 'user-a'`), tables[i]).toBe("0");
+      }
+      expect(snapshot(tables[i]), tables[i]).toBe(others[i]);
+    }
+    // A surviving login cannot delete data, sign back in and export past its cap.
+    expect(query(withLiterals(usageBudgetSql({
+      kind: "export", userId: "user-a", amount: 1, limit: 20, period: "day", message: "limit",
+    })))).toBe("");
+  });
+
+  it("rolls back all account data deletion statements together", () => {
+    query(claimSql("user-a"));
+    query(`INSERT INTO scrape_budget (user_id, window_at, used) VALUES ('user-a', NOW(), 3);`);
+    const before = query("SELECT row_to_json(t) FROM titles t ORDER BY hashtag");
+    query(`BEGIN; ${accountDeletionSql("user-a").map((sql) => withLiterals(sql) + ";").join("\n")} ROLLBACK;`);
+    expect(query("SELECT row_to_json(t) FROM titles t ORDER BY hashtag")).toBe(before);
+    expect(query("SELECT count(*) FROM scrape_budget WHERE user_id = 'user-a'")).toBe("1");
+    expect(query("SELECT count(*) FROM tags WHERE user_id = 'user-a'")).toBe("1");
+  });
 
   describe("9b_usage_budgets", () => {
     const budget: UsageBudget = {

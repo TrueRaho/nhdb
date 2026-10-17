@@ -93,6 +93,21 @@ afterEach(() => {
 });
 
 describe("scrape pool", () => {
+  it("keeps a no-host setup verdict in the job and does not retry it", async () => {
+    const fn = vi.fn(async () => ({
+      ok: false, status: 409,
+      json: async () => ({ code: "NO_SCRAPER_HOST", error: "No host" }),
+    }));
+    vi.stubGlobal("fetch", fn);
+    mount();
+    await act(async () => probe.ctx.startScrape("111111"));
+    await waitFor(() => expect(probe.ctx.jobs[0]).toMatchObject({
+      status: "error", errorCode: "NO_SCRAPER_HOST",
+      error: "No scraper host configured. Set up your own host in Account settings before adding titles.",
+    }));
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!)[0].errorCode).toBe("NO_SCRAPER_HOST");
+  });
   it("runs at most 4 scrapes concurrently and starts the next as one frees", async () => {
     const f = gatedFetch();
     mount();

@@ -216,6 +216,17 @@ describe("QuickAdd — new title", () => {
 });
 
 describe("QuickAdd — failures", () => {
+  it("links to Account on a missing-host verdict without retrying", async () => {
+    const fetchFn = vi.fn(async () => ({
+      ok: false, status: 409,
+      json: async () => ({ code: "NO_SCRAPER_HOST", error: "No host" }),
+    }));
+    vi.stubGlobal("fetch", fetchFn);
+    render(<QuickAdd titleRef={nh(177013)} />);
+    await waitFor(() => expect(screen.getByRole("link", { name: "Set up a scraper host" }).getAttribute("href")).toBe("/account"));
+    expect(screen.getByText(/Set up your own host in Account settings before adding titles/)).toBeTruthy();
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
   it("treats a 4xx as final and does not retry", async () => {
     const fetchFn = stubScrape({ ok: false, status: 404, error: "Title #177013 not found on nhentai (404)" });
     render(<QuickAdd titleRef={nh(177013)} />);

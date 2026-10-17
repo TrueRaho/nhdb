@@ -2,7 +2,9 @@
 
 The scraper runs outside Vercel because the browser fallback needs a real
 Chromium, which Vercel's serverless runtime can't host comfortably. Vercel's
-`/api/scrape` proxies to it when `SCRAPER_SERVICE_URL` is set.
+`/api/scrape` proxies to the signed-in user’s own hosts, registered on
+`/account`. New accounts start with no hosts: adding titles returns HTTP 409
+until one is configured. Production ignores `SCRAPER_SERVICE_URL*`.
 
 ## Which sites
 
@@ -163,8 +165,15 @@ to scrape any site.
 pnpm scraper            # binds :3333 and opens an ngrok tunnel
 ```
 
-Env (`.env` / `.env.local`): `SCRAPER_SECRET`, optional `NGROK_DOMAIN`,
-optional `SCRAPER_PORT`. Disable the tunnel with `DISABLE_NGROK=1`.
+Install ngrok and configure its auth token before starting. In `.env` /
+`.env.local`, set a strong `SCRAPER_SECRET`; optionally set `NGROK_DOMAIN`
+(a reserved domain) and `SCRAPER_PORT`. Copy the tunnel’s public HTTPS URL into
+`/account` → **Scraper hosts**, enter the same secret, and save. Without a
+reserved domain, update the saved URL whenever the tunnel URL changes.
+
+Disable the tunnel with `DISABLE_NGROK=1` for local-only development. A public
+host refuses to start without a secret; a secret-free local host binds only
+to loopback and cannot be registered as a public host.
 
 ## Deploy on Render
 
@@ -176,40 +185,33 @@ The repo ships a `Dockerfile` (Playwright base image, Chromium included) and a
 2. Set env var **`SCRAPER_SECRET`** (any random string) in the Render dashboard.
    Render injects `PORT` and `RENDER` automatically; the server skips ngrok and
    launches Chromium with `--no-sandbox` when `RENDER` is present.
-3. After deploy, note the public URL, e.g. `https://<your-service>.onrender.com`.
+3. After deploy, add your service’s public HTTPS URL and its matching secret
+   to **Scraper hosts** on `/account`, then save. No database credentials are
+   needed on the scraper.
 
-## Routing: local first, Render as fallback
+## Routing: per-user hosts on /account
 
-`/api/scrape` tries scraper hosts in order (see `app/api/scrape/route.ts`):
+`/api/scrape` tries the caller’s saved hosts in order (up to eight). Put a fast
+local box’s ngrok URL first; optionally add your own Render service as a backup.
+Each row has its own secret, matching that host’s `SCRAPER_SECRET`. Save changes
+on `/account`; no app deployment or shared Vercel variable is needed.
 
-1. **`SCRAPER_SERVICE_URL`** — the primary. Point it at the local box's ngrok
-   tunnel: on a residential IP impit's fast path passes Cloudflare (~200 ms).
-2. **`SCRAPER_SERVICE_URL_FALLBACK`** — Render. Used only when the primary is
-   unreachable (Mac asleep, tunnel down, timeout). On Render's datacenter IP
-   Cloudflare challenges impit, so every scrape there pays the slow browser
-   fallback (~15–30 s) — hence it's the backup, not the default.
+A definitive verdict (404 “no such title” / 400) stops fallback. An unreachable
+or broken host falls through to the next host. The route has one 50-second
+outbound deadline across all attempts, including DNS and body reads, under its
+60-second function budget. A free Render service may sleep long enough that a
+first request times out; retry once the container is warm.
 
-A definitive verdict from the primary (404 "no such title" / 400) is returned
-as-is; only an *unreachable* primary falls through to Render. The route exports
-`maxDuration = 60` so the proxied browser fallback isn't cut off by Vercel's
-short default timeout.
+Hosts must use HTTPS and resolve only to public addresses; redirects and
+private/loopback targets are refused. Secrets are encrypted at rest by the app
+and never included in collection exports or returned to the browser.
 
-Then set these on Vercel (Project → Settings → Environment Variables):
+## Development-only environment defaults
 
-```
-SCRAPER_SERVICE_URL          = https://<your-reserved-ngrok-domain>   # local, primary
-SCRAPER_SERVICE_URL_FALLBACK = https://<your-service>.onrender.com      # Render, backup
-SCRAPER_SECRET               = <one secret, identical on the Mac and Render>
-```
+When no per-user host is registered, development can use
+`SCRAPER_SERVICE_URL` and `SCRAPER_SERVICE_URL_FALLBACK`, with `SCRAPER_SECRET`
+for their bearer token. Without those variables, development scrapes in-process.
+Production ignores these URL variables and never uses a shared fallback: every
+account must register its own hosts on `/account`.
 
-Notes:
-- **One secret for both hosts** — the route sends the same `Bearer` to the
-  primary and the fallback, so `SCRAPER_SECRET` must match in the Mac's `.env`
-  and in Render's dashboard.
-- **ngrok needs a reserved domain** (`NGROK_DOMAIN` in the Mac's `.env`), else
-  the tunnel URL changes on restart and the Vercel var goes stale.
-- The **free** Render plan spins down on idle → if the Mac is also offline, the
-  first fallback scrape pays a cold start (~60–90 s) and may exceed the 60 s
-  function budget; a retry usually lands once the container is warming. **Starter**
-  avoids this (never sleeps, more RAM for Chromium).
-- The scraper needs **no database** — Vercel persists scraped results.
+The scraper needs no database — the app persists scraped results.

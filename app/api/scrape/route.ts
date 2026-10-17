@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { NO_SCRAPER_HOST, NO_SCRAPER_HOST_MESSAGE } from "../../../lib/scraper-config";
 import { requireUserId, UnauthorizedError } from "@/lib/session";
 import { consumeScrapeBudget } from "@/lib/rate-limit";
 import { UsageLimitError } from "@/lib/usage-limits";
@@ -283,7 +284,7 @@ export async function POST(req: Request) {
   // them so would be a small, confusing theft.
   if (hosts.length === 0 && process.env.NODE_ENV === "production") {
     return NextResponse.json(
-      { error: "No scraper host configured. Add one in Account settings." },
+      { error: NO_SCRAPER_HOST_MESSAGE, code: NO_SCRAPER_HOST },
       { status: 409 },
     );
   }

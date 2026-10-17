@@ -7,6 +7,7 @@ import { scrapedRef, type ScrapeResult } from "../lib/scrape-payload";
 import { parseInputs, refKey } from "../lib/sources";
 import { scrapedToItem } from "../lib/mappers";
 import { commitScrapedAction, findExistingTitlesAction } from "../app/actions";
+import { NO_SCRAPER_HOST, NO_SCRAPER_HOST_MESSAGE } from "../lib/scraper-config";
 
 export type ScrapeJobStatus = "scraping" | "ready" | "duplicate" | "error";
 
@@ -23,6 +24,7 @@ export interface ScrapeJob {
   raw?: ScrapeResult;
   via?: ScrapeVia;
   error?: string;
+  errorCode?: string;
   /** Transient progress hint shown while retrying (e.g. waking a cold scraper). */
   note?: string;
 }
@@ -205,9 +207,9 @@ function UserScrapeJobsProvider({ userId, children }: { userId: string; children
   // Mark a job as failed. Also used when runOne itself throws: leaving the job
   // "scraping" while the pool forgets the key would let the resume effect below
   // re-enqueue it forever.
-  const failJob = useCallback((key: string, error: string) => {
+  const failJob = useCallback((key: string, error: string, errorCode?: string) => {
     setJobs((prev) =>
-      prev.map((j) => (j.key === key ? { ...j, status: "error", error, note: undefined } : j)),
+      prev.map((j) => (j.key === key ? { ...j, status: "error", error, errorCode, note: undefined } : j)),
     );
   }, []);
 
@@ -256,15 +258,20 @@ function UserScrapeJobsProvider({ userId, children }: { userId: string; children
       // 4xx = definitive verdict about the input (bad / not found / auth);
       // anything else (5xx, network error) is transient — retry until spent.
       let message = "scraper unreachable";
+      let errorCode: string | undefined;
       let definitive = false;
       if (res) {
         definitive = res.status >= 400 && res.status < 500;
-        const body = (await res.json().catch(() => null)) as { error?: string } | null;
+        const body = (await res.json().catch(() => null)) as { error?: string; code?: string } | null;
         message = body?.error ?? res.statusText;
+        if (body?.code === NO_SCRAPER_HOST) {
+          errorCode = NO_SCRAPER_HOST;
+          message = NO_SCRAPER_HOST_MESSAGE;
+        }
       }
 
       if (definitive || attempt >= MAX_SCRAPE_ATTEMPTS) {
-        failJob(placeholderKey, definitive ? message : "scraper didn't respond — retry");
+        failJob(placeholderKey, definitive ? message : "scraper didn't respond — retry", errorCode);
         return;
       }
 
@@ -419,7 +426,7 @@ function UserScrapeJobsProvider({ userId, children }: { userId: string; children
       const job = jobs.find((j) => j.key === key);
       if (!job) return;
       setJobs((prev) =>
-        prev.map((j) => (j.key === key ? { ...j, status: "scraping", error: undefined, note: undefined } : j)),
+        prev.map((j) => (j.key === key ? { ...j, status: "scraping", error: undefined, errorCode: undefined, note: undefined } : j)),
       );
       enqueue(job.input, key);
     },

@@ -487,7 +487,7 @@ describe("POST /api/scrape — per-user scraper hosts", () => {
     const res = await POST(req({ input: "177013", persist: false }));
 
     expect(res.status).toBe(409);
-    expect((await res.json()).error).toMatch(/Account settings/);
+    expect(await res.json()).toMatchObject({ error: expect.stringMatching(/Account settings/), code: "NO_SCRAPER_HOST" });
     expect(consumeScrapeBudget).not.toHaveBeenCalled();
     expect(fetch).not.toHaveBeenCalled();
   });

@@ -19,6 +19,13 @@ const saveButton = () => screen.getByRole("button", { name: "Save hosts" });
 const hostCards = () => screen.getAllByRole("heading", { level: 3 });
 
 describe("ScraperSettings", () => {
+  it("explains how to run a host and links to the deployed SCRAPER.md guide", () => {
+    render(ui([]));
+    expect(screen.getByText(/You need your own before adding titles/)).toBeTruthy();
+    expect(screen.getByText(/ngrok installed/)).toBeTruthy();
+    expect(screen.getByText("render.yaml")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Read SCRAPER.md for setup instructions" }).getAttribute("href")).toBe("/scraper-guide");
+  });
   it("renders identical markup on every server render", () => {
     // Row keys become input ids; a module-level counter made each request's
     // markup differ from the browser's first render and broke hydration.

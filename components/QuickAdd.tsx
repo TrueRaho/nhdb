@@ -13,6 +13,7 @@ import type { ScrapeResult } from "../lib/scrape-payload";
 import { scrapedToItem } from "../lib/mappers";
 import { refKey, refLabel, siteName, type TitleRef } from "../lib/sources";
 import { commitScrapedAction, findExistingTitlesAction, updateAlterNameAction } from "../app/actions";
+import { NO_SCRAPER_HOST, NO_SCRAPER_HOST_MESSAGE } from "../lib/scraper-config";
 
 // Deliberately standalone: this route exists to open in under a second from a
 // share-sheet shortcut, so it pulls in NOTHING from the main app — no
@@ -35,7 +36,7 @@ type Phase =
   | { k: "scraped"; item: Item; raw: ScrapeResult; via?: ScrapeVia }
   | { k: "existing"; item: Item }
   | { k: "saved"; item: Item }
-  | { k: "error"; message: string };
+  | { k: "error"; message: string; needsHost?: boolean };
 
 export function QuickAdd({ titleRef }: { titleRef: TitleRef }) {
   // Primitives for the effect's deps: the page hands over a fresh object. The
@@ -93,14 +94,17 @@ export function QuickAdd({ titleRef }: { titleRef: TitleRef }) {
 
         // 4xx is a verdict about this title (not found / bad input) — never retried.
         let message = "scraper unreachable";
+        let needsHost = false;
         let definitive = false;
         if (res) {
           definitive = res.status >= 400 && res.status < 500;
-          const body = (await res.json().catch(() => null)) as { error?: string } | null;
+          const body = (await res.json().catch(() => null)) as { error?: string; code?: string } | null;
           message = body?.error ?? res.statusText;
+          needsHost = body?.code === NO_SCRAPER_HOST;
+          if (needsHost) message = NO_SCRAPER_HOST_MESSAGE;
         }
         if (definitive || n === MAX_ATTEMPTS) {
-          setPhase({ k: "error", message: definitive ? message : "scraper didn't respond" });
+          setPhase({ k: "error", message: definitive ? message : "scraper didn't respond", needsHost });
           return;
         }
         await delay(RETRY_DELAY_MS);
@@ -176,6 +180,7 @@ export function QuickAdd({ titleRef }: { titleRef: TitleRef }) {
           {phase.k === "error" && (
             <div className="flex flex-col items-start gap-2">
               <div className="font-mono text-[11px] text-[#ff6b6b]">{phase.message}</div>
+              {phase.needsHost && <Link href="/account" className="text-sm text-nh-accent underline">Set up a scraper host</Link>}
               <Button
                 variant="ghost"
                 onClick={() => setAttempt((a) => a + 1)}
