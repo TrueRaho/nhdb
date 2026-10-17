@@ -84,8 +84,36 @@ Sign-up is open, so `/api/scrape` charges a per-user budget
 scraper, and a serverless function held open for up to `maxDuration`.
 It lives in Postgres **because** the app is serverless — an in-memory bucket is
 per lambda instance, which multiplies the limit by the instance count. Charge it
-only on paths that actually scrape: a commit of an already-scraped payload and a
-malformed request both spend nothing. The single-statement upsert is what keeps
+only on paths that actually scrape: a commit of an already-scraped payload spends
+no scrape budget, and a malformed request spends nothing. New titles instead
+spend a separate **240/hour** commit budget inside `upsertScrapedTitle`, shared
+by the route and Server Action; re-scrapes spend no commit budget. A **5000-title**
+cap admits existing identities even when the collection is already over it.
+The title write takes a per-user transaction advisory lock before the conditional
+insert/count, then charges only a fresh insert (`RETURNING xmax = 0`), before
+creating entities. Any denial or later failure rolls the whole transaction back.
+`markRead` uses the same lock, dedupes a title within **10 minutes** and charges
+only a new log against **500/day** (UTC). Payloads allow **64 entities/kind**;
+the unchanged fixture corpus measured 24 tags and at most 3 of any other kind.
+
+Before fetching, `/api/cover` charges **10,000 requests/user/UTC day** and
+**500,000 requests/deployment/UTC month**, in one transaction (both or neither).
+Failed fetches and byte-precheck denials still spend a request. A read-only
+pre-check rejects already-exhausted user/global byte counters without fetching;
+the after-fetch byte charge remains authoritative under concurrency.
+The route caps an image at **1 MiB**, then charges its actual returned bytes
+against **3 GiB/user** and **4 GB/deployment** per UTC calendar month. Both
+conditional upserts live in one transaction, so either denial increments neither
+counter. Browser copies stay private and immutable for 30 days; failures fall
+back to procedural art. Migration `9b_usage_budgets` adds `usage_budget`, whose
+rows reset in place, leaving migration 7's key untouched. The builders are in
+`lib/usage-budget.ts`; limits/errors are client-safe in `lib/usage-limits.ts`.
+`markRead`'s SQL is shared with DB-backed tests through `lib/read-log.ts`.
+Quota failures return HTTP 429 with Retry-After; `commitScrapedAction` returns
+`{error}` as data so Next's production error redaction cannot hide it from quick
+add, refresh or batch jobs (failed jobs keep their payload for retry).
+
+The single-statement conditional upsert is what keeps
 four concurrent pool scrapes from losing updates; don't split it into a read and
 a write.
 

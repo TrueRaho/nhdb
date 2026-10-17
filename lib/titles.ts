@@ -9,6 +9,9 @@ import { titleUpsertSql } from "./title-upsert";
 import { parseTitleRef, refLabel, titleUrl, toTitleKey, type TitleKey } from "./sources";
 import { isHashtag } from "./utils";
 import { DELETE_BATCH } from "./swipe";
+import { consumeUsageBudget, userWriteLockSql } from "./usage-budget";
+import { COMMIT_LIMIT, READ_LIMIT, TITLE_LIMIT, UsageLimitError } from "./usage-limits";
+import { markReadSql } from "./read-log";
 
 // Session identity is resolved by callers outside cached scopes. Fail closed if
 // a missing identity reaches this boundary: Prisma omits undefined filters.
@@ -88,6 +91,19 @@ export async function upsertScrapedTitle(userId: string, payload: unknown) {
   const s = parseScrapePayload(payload);
 
   return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw(userWriteLockSql(userId));
+    // File the title before any entities. The per-user lock serializes the cap
+    // and new/existing decision across tabs/instances. A failed charge rolls
+    // back the title too, so only a successfully created row spends a commit.
+    const [filed] = await tx.$queryRaw<{ hashtag: number; created: boolean }[]>(titleUpsertSql(userId, s));
+    if (!filed) throw new UsageLimitError(`Title limit reached (${TITLE_LIMIT}). Delete a title before adding another.`, 3600);
+    const { hashtag } = filed;
+    if (filed.created) {
+      await consumeUsageBudget(tx, {
+        kind: "commit", userId, amount: 1, limit: COMMIT_LIMIT, period: "hour",
+        message: `New-title limit reached (${COMMIT_LIMIT}/hour). Try again later.`,
+      });
+    }
     // Entity upserts live INSIDE the transaction on purpose: creating an
     // entity in autocommit and linking it in a later transaction leaves a
     // window where the entity exists with zero links — a concurrently
@@ -103,10 +119,6 @@ export async function upsertScrapedTitle(userId: string, payload: unknown) {
     const characterIds = await batchUpsertCharacters(tx, userId, s.characters);
     const parodyIds = await batchUpsertParodies(tx, userId, s.parodies);
     const tagIds = await batchUpsertTags(tx, userId, s.tags);
-
-    // One statement (lib/title-upsert.ts): the title's row, keyed by where it
-    // comes from, under the hashtag it already has or a new one.
-    const [{ hashtag }] = await tx.$queryRaw<{ hashtag: number }[]>(titleUpsertSql(userId, s));
 
     await tx.titleArtist.deleteMany({ where: { userId, hashtag } });
     await tx.titleGroup.deleteMany({ where: { userId, hashtag } });
@@ -144,7 +156,7 @@ export async function upsertScrapedTitle(userId: string, payload: unknown) {
       where: { userId_hashtag: { userId, hashtag } },
       include: titleInclude,
     });
-  });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
 }
 
 const titleInclude = {
@@ -483,13 +495,26 @@ export async function deleteTitles(userId: string, hashtags: number[]): Promise<
 
 export async function markRead(userId: string, hashtag: number) {
   assertUserId(userId);
-  return prisma.$transaction([
-    prisma.title.update({
-      where: { userId_hashtag: { userId, hashtag } },
-      data: { readCount: { increment: 1 }, lastReadAt: new Date() },
-    }),
-    prisma.readLog.create({ data: { userId, hashtag } }),
-  ]);
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw(userWriteLockSql(userId));
+    // Deduplication and the counter update are one conditional write. Denied
+    // budgets roll it back; a duplicate consumes no budget and adds no log.
+    const rows = await tx.$queryRaw<{ read_count: number }[]>(markReadSql(userId, hashtag));
+    if (!rows.length) {
+      // Also reconciles optimistic client counts on duplicate reads; missing
+      // or foreign titles still fail like the previous ownership-scoped write.
+      const title = await tx.title.findUniqueOrThrow({
+        where: { userId_hashtag: { userId, hashtag } }, select: { readCount: true },
+      });
+      return title.readCount;
+    }
+    await consumeUsageBudget(tx, {
+      kind: "read", userId, amount: 1, limit: READ_LIMIT, period: "day",
+      message: `Read history limit reached (${READ_LIMIT}/day). Try again tomorrow.`,
+    });
+    await tx.readLog.create({ data: { userId, hashtag } });
+    return rows[0].read_count;
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
 }
 
 export type DatasetPayload = {

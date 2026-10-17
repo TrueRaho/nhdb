@@ -44,6 +44,7 @@ vi.mock("@/lib/scraper", async (importOriginal) => ({
 
 import { POST } from "./route";
 import { consumeScrapeBudget } from "@/lib/rate-limit";
+import { UsageLimitError } from "@/lib/usage-limits";
 import { resolveScraperTargets } from "@/lib/scraper-endpoints";
 import { assertReachableHost } from "@/lib/net-guard";
 import { requireUserId, UnauthorizedError } from "@/lib/session";
@@ -298,12 +299,35 @@ describe("POST /api/scrape — scrape budget", () => {
     expect(consumeScrapeBudget).toHaveBeenCalledExactlyOnceWith("user-a");
   });
 
-  it("does not spend budget on a commit of an already-scraped payload", async () => {
-    // That path writes the caller's own rows and never touches the shared
-    // scraper, so it must not consume a scrape the user could have spent.
+  it("commits through the shared new-title budget boundary without spending the scrape budget", async () => {
     const response = await POST(req({ scraped: SCRAPED }));
     expect(response.status).toBe(200);
     expect(consumeScrapeBudget).not.toHaveBeenCalled();
+    expect(upsertScrapedTitle).toHaveBeenCalledWith("user-a", SCRAPED);
+  });
+
+  it.each(["commit", "host", "local"])("returns 429 for new-title quotas on the %s persist branch", async (branch) => {
+    const message = "New-title limit reached (240/hour). Try again later.";
+    vi.mocked(upsertScrapedTitle).mockRejectedValueOnce(new UsageLimitError(message, 300));
+    if (branch === "host") stubHosts({ status: 200, body: { scraped: SCRAPED, via: "impit" } });
+    if (branch === "local") {
+      vi.stubEnv("SCRAPER_SERVICE_URL", "");
+      vi.stubEnv("SCRAPER_SERVICE_URL_FALLBACK", "");
+      vi.mocked(resolveScraperTargets).mockResolvedValueOnce([]);
+      vi.mocked(scrapeTitle).mockResolvedValueOnce({ scraped: SCRAPED, via: "impit" });
+    }
+    const response = await POST(req(branch === "commit" ? { scraped: SCRAPED } : { input: "177013" }));
+    expect(response.status).toBe(429);
+    expect(response.headers.get("retry-after")).toBe("300");
+    expect(await response.json()).toEqual({ error: message });
+    if (branch === "commit") expect(consumeScrapeBudget).not.toHaveBeenCalled();
+  });
+
+  it("returns 429 for the per-user title cap", async () => {
+    vi.mocked(upsertScrapedTitle).mockRejectedValueOnce(new UsageLimitError("Title limit reached (5000). Delete a title.", 3600));
+    const response = await POST(req({ scraped: SCRAPED }));
+    expect(response.status).toBe(429);
+    expect((await response.json()).error).toContain("Title limit reached");
   });
 
   it("does not spend budget when the request is rejected as malformed", async () => {

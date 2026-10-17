@@ -257,7 +257,12 @@ export default function NhdbApp({
     const updated = { ...prev, readCount: prev.readCount + 1, lastReadAt: 0 };
     setDetailItem(updated);
     setItems(c => c.map(x => x.hashtag === hashtag ? updated : x));
-    markReadAction(hashtag).catch(err => {
+    markReadAction(hashtag).then(readCount => {
+      // A repeat within the dedupe window records no new read. Reconcile the
+      // optimistic increment with the server's count in either case.
+      setDetailItem(cur => (cur && cur.hashtag === hashtag ? { ...cur, readCount } : cur));
+      setItems(c => c.map(x => x.hashtag === hashtag ? { ...x, readCount } : x));
+    }).catch(err => {
       console.error("Failed to update read count:", err);
       setDetailItem(cur => (cur && cur.hashtag === hashtag ? prev : cur));
       setItems(c => c.map(x => x.hashtag === hashtag ? prev : x));
@@ -296,6 +301,7 @@ export default function NhdbApp({
     // the title as a fresh row with zeroed read history. Drop the result.
     if (deletedRef.current.has(hashtag)) return;
     const fresh = await commitScrapedAction(scraped);
+    if ("error" in fresh) throw new Error(fresh.error);
     // The scrape can take a long time; only swap the modal content if it is
     // still open on the same title — never force it back open or yank a
     // different title the user has since navigated to.

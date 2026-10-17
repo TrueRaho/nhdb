@@ -17,10 +17,11 @@ const { findMany, count, queryRaw, db, transaction } = vi.hoisted(() => {
     createMany: reply({ count: 0 }),
   });
   const db = {
+    $executeRaw: vi.fn(async () => 1),
     title: {
       findMany, count,
       findUnique: reply<unknown>(null),
-      findUniqueOrThrow: reply({ hashtag: 42 }),
+      findUniqueOrThrow: reply({ hashtag: 42, readCount: 1 }),
       update: reply({ hashtag: 42 }),
       upsert: reply({ hashtag: 42 }),
       deleteMany: reply({ count: 0 }),
@@ -47,6 +48,7 @@ import {
   queryTitles, updateAlterName, upsertScrapedTitle, type QueryParams,
 } from "./titles";
 import type { ScrapeResult } from "./scrape-payload";
+import { COMMIT_LIMIT, READ_DEDUPE_MINUTES, READ_LIMIT, UsageLimitError } from "./usage-limits";
 
 const USER = "alice";
 
@@ -79,6 +81,8 @@ beforeEach(() => {
   // three reads through Promise.all, so the order is not ours to rely on.
   queryRaw.mockImplementation(async (q) => {
     const text = (q.strings ?? []).join(" ");
+    if (text.includes("UPDATE titles SET read_count")) return [{ read_count: 1 }];
+    if (text.includes("INSERT INTO usage_budget")) return [{ used: BigInt(1) }];
     if (text.includes("titlestoartists")) return ENTITY_ROWS;
     if (text.includes("FROM titlestotags")) return TAG_ROWS;
     if (text.includes("FROM titles")) return [{ n: 100 }];
@@ -377,7 +381,7 @@ describe("collection ownership", () => {
     expect(cacheTag).toHaveBeenCalledWith("title:bob:42");
   });
 
-  it("scopes delete, rename, and both parts of a read transaction", async () => {
+  it("scopes delete, rename, and every part of a read transaction", async () => {
     await deleteTitle(USER, 42);
     await updateAlterName(USER, 42, "  My title  ");
     await markRead(USER, 42);
@@ -386,13 +390,14 @@ describe("collection ownership", () => {
       where: { userId_hashtag: { userId: USER, hashtag: 42 } },
       data: { alterName: "My title" },
     });
-    expect(db.title.update).toHaveBeenLastCalledWith({
-      where: { userId_hashtag: { userId: USER, hashtag: 42 } },
-      data: { readCount: { increment: 1 }, lastReadAt: expect.any(Date) },
-    });
+    const read = queryRaw.mock.calls[0][0];
+    expect(read.strings.join("?")).toContain("WHERE user_id = ? AND hashtag = ?");
+    expect(read.values).toEqual([USER, 42, READ_DEDUPE_MINUTES]);
     expect(db.readLog.create).toHaveBeenCalledWith({ data: { userId: USER, hashtag: 42 } });
     expect(transaction).toHaveBeenCalledOnce();
-    expect(transaction.mock.calls[0][0]).toHaveLength(2);
+    expect(transaction.mock.calls[0][0]).toBeTypeOf("function");
+    expect(db.$executeRaw).toHaveBeenCalledBefore(queryRaw);
+    expect(queryRaw.mock.calls[1][0].values).toEqual(expect.arrayContaining(["read", USER, READ_LIMIT]));
   });
 
   // The entity upserts answer with ids; the title upsert answers with the key
@@ -458,6 +463,7 @@ describe("collection ownership", () => {
     expect(title.values).toEqual([
       USER, USER, "3hentai.net", "612345", "3hentai.net", "612345", "https://3hentai.net/d/612345",
       scrape.title_name, "https://s5.3hentai.net/d612345/cover.jpg", 20, null,
+      USER, "3hentai.net", "612345", USER, 5000,
     ]);
     expect(db.titleTag.createMany).toHaveBeenCalledWith({
       data: [{ userId: USER, hashtag: 1_000_000_005, idTag: 7 }],
@@ -481,6 +487,7 @@ describe("collection ownership", () => {
     expect(titleStatement().values).toEqual([
       USER, USER, "hitomi", "1234567", "hitomi", "1234567", "https://hitomi.la/galleries/1234567.html",
       scrape.title_name, "", 20, null,
+      USER, "hitomi", "1234567", USER, 5000,
     ]);
   });
 
@@ -638,6 +645,77 @@ describe("collection ownership", () => {
     }
     expect(transaction).not.toHaveBeenCalled();
     expect(cacheTag).not.toHaveBeenCalled();
+  });
+});
+
+describe("shared write quotas", () => {
+  function answerWrite(created: boolean) {
+    queryRaw.mockImplementation(async (q) => {
+      const sql = q.strings.join("");
+      if (sql.includes("INSERT INTO titles")) return [{ hashtag: 42, created }];
+      if (sql.includes("INSERT INTO usage_budget")) return [{ used: BigInt(1) }];
+      return [{ id: 7, name: q.values[1] }];
+    });
+  }
+
+  it("charges a new title exactly once, after the title and before entities, in its transaction", async () => {
+    answerWrite(true);
+    await upsertScrapedTitle(USER, scrape);
+    expect(db.$executeRaw).toHaveBeenCalledBefore(queryRaw);
+    const queries = queryRaw.mock.calls.map(([q]) => q);
+    expect(queries[0].strings.join("")).toContain("INSERT INTO titles");
+    expect(queries[1].values).toEqual(expect.arrayContaining(["commit", USER, 1, COMMIT_LIMIT]));
+    expect(queries[2].strings.join("")).toContain('INSERT INTO "artists"');
+    expect(transaction).toHaveBeenCalledOnce();
+  });
+
+  it("allows re-scraping existing titles without ever touching the commit budget", async () => {
+    answerWrite(false);
+    await upsertScrapedTitle(USER, scrape);
+    expect(queryRaw.mock.calls.some(([q]) => q.strings.join("").includes("usage_budget"))).toBe(false);
+    expect(db.title.findUniqueOrThrow).toHaveBeenCalled();
+  });
+
+  it("a title-cap denial aborts before creating entities or spending a commit", async () => {
+    queryRaw.mockResolvedValue([]);
+    await expect(upsertScrapedTitle(USER, scrape)).rejects.toThrow("Title limit reached (5000)");
+    expect(queryRaw).toHaveBeenCalledOnce();
+    expect(db.titleTag.createMany).not.toHaveBeenCalled();
+  });
+
+  it("a new-title budget denial throws inside the title transaction before creating entities", async () => {
+    queryRaw.mockResolvedValueOnce([{ hashtag: 42, created: true }])
+      .mockResolvedValueOnce([]).mockResolvedValueOnce([{ reset_in: 200 }]);
+    await expect(upsertScrapedTitle(USER, scrape)).rejects.toEqual(
+      new UsageLimitError("New-title limit reached (240/hour). Try again later.", 200),
+    );
+    expect(queryRaw).toHaveBeenCalledTimes(3);
+    expect(db.titleTag.createMany).not.toHaveBeenCalled();
+  });
+
+  it("dedupes a repeat read without changing its budget, log or read counter", async () => {
+    queryRaw.mockResolvedValue([]);
+    expect(await markRead(USER, 42)).toBe(1);
+    expect(queryRaw).toHaveBeenCalledOnce();
+    expect(queryRaw.mock.calls[0][0].strings.join("")).toContain("last_read_at <=");
+    expect(db.readLog.create).not.toHaveBeenCalled();
+    expect(db.title.update).not.toHaveBeenCalled();
+    expect(db.title.findUniqueOrThrow).toHaveBeenCalledWith({
+      where: { userId_hashtag: { userId: USER, hashtag: 42 } }, select: { readCount: true },
+    });
+  });
+
+  it("returns the actual recorded count for the client's optimistic update", async () => {
+    queryRaw.mockResolvedValueOnce([{ read_count: 3 }]).mockResolvedValueOnce([{ used: BigInt(1) }]);
+    expect(await markRead(USER, 42)).toBe(3);
+    expect(db.readLog.create).toHaveBeenCalledExactlyOnceWith({ data: { userId: USER, hashtag: 42 } });
+  });
+
+  it("a daily-cap denial rolls back the read counter and never appends a log", async () => {
+    queryRaw.mockResolvedValueOnce([{ hashtag: 42 }]).mockResolvedValueOnce([]).mockResolvedValueOnce([{ reset_in: 99 }]);
+    await expect(markRead(USER, 42)).rejects.toThrow("Read history limit reached (500/day)");
+    expect(db.readLog.create).not.toHaveBeenCalled();
+    expect(transaction).toHaveBeenCalledOnce();
   });
 });
 

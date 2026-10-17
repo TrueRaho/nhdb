@@ -8,6 +8,58 @@
 import "server-only";
 import { Prisma } from "./generated/prisma/client";
 import { prisma } from "./db";
+import { consumeUsageBudget, coverBytePrecheckSql } from "./usage-budget";
+import { COVER_GLOBAL_BYTES, COVER_GLOBAL_REQUESTS, COVER_USER_BYTES, COVER_USER_REQUESTS, UsageLimitError } from "./usage-limits";
+
+/** Admit a request before any upstream work; both request counters or neither. */
+export async function consumeCoverRequestBudget(userId: string): Promise<BudgetVerdict> {
+  try {
+    await prisma.$transaction(async (tx) => {
+      await consumeUsageBudget(tx, {
+        kind: "cover-request-user", userId, amount: 1, limit: COVER_USER_REQUESTS, period: "day",
+        message: "Daily cover request limit reached. Try again tomorrow.",
+      });
+      await consumeUsageBudget(tx, {
+        kind: "cover-request-global", userId: "", amount: 1, limit: COVER_GLOBAL_REQUESTS, period: "month",
+        message: "Deployment cover request limit reached. Try again next month.",
+      });
+    });
+    return { allowed: true, used: 1, limit: COVER_USER_REQUESTS };
+  } catch (error) {
+    if (!(error instanceof UsageLimitError)) throw error;
+    return { allowed: false, limit: COVER_USER_REQUESTS, retryAfterSeconds: error.retryAfterSeconds };
+  }
+}
+
+/** Read-only fast rejection, never a replacement for the after-fetch charge. */
+export async function checkCoverByteBudget(userId: string): Promise<BudgetVerdict> {
+  const [row] = await prisma.$queryRaw<{ reset_in: number }[]>(coverBytePrecheckSql(userId));
+  return row
+    ? { allowed: false, limit: COVER_USER_BYTES, retryAfterSeconds: Math.max(1, row.reset_in) }
+    : { allowed: true, used: 0, limit: COVER_USER_BYTES };
+}
+
+/** Charge delivered image bytes to BOTH counters or neither. */
+export async function consumeCoverBudget(userId: string, bytes: number): Promise<BudgetVerdict> {
+  try {
+    await prisma.$transaction(async (tx) => {
+      await consumeUsageBudget(tx, {
+        kind: "cover-user", userId, amount: bytes, limit: COVER_USER_BYTES, period: "month",
+        message: "Monthly cover budget reached. Try again next month.",
+      });
+      await consumeUsageBudget(tx, {
+        kind: "cover-global", userId: "", amount: bytes, limit: COVER_GLOBAL_BYTES, period: "month",
+        message: "Deployment cover budget reached. Try again next month.",
+      });
+    });
+    return { allowed: true, used: bytes, limit: COVER_USER_BYTES };
+  } catch (error) {
+    // Throwing inside the transaction rolls back a successful first charge
+    // when the other counter denies. Database failures must fail closed.
+    if (!(error instanceof UsageLimitError)) throw error;
+    return { allowed: false, limit: COVER_USER_BYTES, retryAfterSeconds: error.retryAfterSeconds };
+  }
+}
 
 /**
  * Scrapes allowed per user per window.

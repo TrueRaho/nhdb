@@ -118,6 +118,7 @@ export function QuickAdd({ titleRef }: { titleRef: TitleRef }) {
     try {
       if (phase.k === "scraped") {
         const item = await commitScrapedAction(phase.raw, typedName);
+        if ("error" in item) throw new Error(item.error);
         setPhase({ k: "saved", item });
       } else if (phase.k === "existing") {
         // Only write when the user actually typed something. Sending the empty

@@ -1,5 +1,6 @@
 import { requireUserId, UnauthorizedError } from "@/lib/session";
 import { fetchCover } from "@/lib/cover-proxy";
+import { checkCoverByteBudget, consumeCoverBudget, consumeCoverRequestBudget } from "@/lib/rate-limit";
 
 // GET /api/cover?src=<cover URL>&ref=<title page origin> — the cover, fetched
 // with the title's site as Referer. Every <img> of a cover points here
@@ -32,19 +33,45 @@ function refuse(status: number, reason: string, cache = "no-store"): Response {
   });
 }
 
+function overBudget(reason: string, retryAfterSeconds: number) {
+  const response = refuse(429, reason);
+  response.headers.set("Retry-After", String(retryAfterSeconds));
+  return response;
+}
+
 export async function GET(request: Request) {
+  let userId: string;
   try {
-    await requireUserId();
+    userId = await requireUserId();
   } catch (error) {
     if (error instanceof UnauthorizedError) return refuse(401, error.message);
     console.error("session lookup failed:", error);
     return refuse(503, "Authentication unavailable");
   }
 
+  try {
+    const requests = await consumeCoverRequestBudget(userId);
+    if (!requests.allowed) return overBudget("Cover request limit reached. Try again later.", requests.retryAfterSeconds);
+    const bytes = await checkCoverByteBudget(userId);
+    if (!bytes.allowed) return overBudget("Monthly cover budget reached. Try again later.", bytes.retryAfterSeconds);
+  } catch (error) {
+    console.error("cover budget unavailable:", error);
+    return refuse(503, "Cover budget unavailable");
+  }
+
   const params = new URL(request.url).searchParams;
   const cover = await fetchCover(params.get("src") ?? "", params.get("ref"));
   if (!cover.ok) {
     return refuse(cover.status, cover.reason, cover.status === 404 ? CACHE_MISSING : "no-store");
+  }
+  try {
+    const budget = await consumeCoverBudget(userId, cover.body.byteLength);
+    if (!budget.allowed) {
+      return overBudget("Monthly cover budget reached. Try again later.", budget.retryAfterSeconds);
+    }
+  } catch (error) {
+    console.error("cover budget unavailable:", error);
+    return refuse(503, "Cover budget unavailable");
   }
   return new Response(cover.body, {
     headers: {

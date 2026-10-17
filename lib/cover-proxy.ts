@@ -21,15 +21,14 @@
 //     run on this origin, and a JSON/HTML answer from some internal-looking
 //     service is never relayed — and it is size-capped.
 // What is left is what a signed-in user can do with it: fetch a public image
-// through the deployment. SECURITY.md lists that as a known gap.
+// through the deployment, within the byte budgets enforced by the route.
 
 import "server-only";
 import { assertPublicHostname } from "./net-address";
 import { parseWebUrl } from "./sources";
 
-// Vercel caps a function's response body at 4.5 MB; covers are thumbnails,
-// typically well under 500 KB.
-export const MAX_COVER_BYTES = 4 * 1024 * 1024;
+// Covers are thumbnails, typically well under 500 KB.
+export const MAX_COVER_BYTES = 1024 * 1024;
 const MAX_REDIRECTS = 3;
 const TIMEOUT_MS = 10_000;
 

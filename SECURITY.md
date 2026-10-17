@@ -173,13 +173,34 @@ these rules are the whole defence, and each matters on its own:
 - **Only an image comes back.** The type is sniffed from the bytes (JPEG, PNG,
   GIF, WebP, AVIF) and set by the proxy, never echoed from upstream, so an SVG or
   HTML answer cannot run on this origin and no JSON/HTML answer from anything is
-  relayed; the body is capped at 4 MB (Vercel's response limit is 4.5 MB).
+  relayed; the body is capped at 1 MiB.
   Responses carry `nosniff`, a `sandbox` CSP and
   `Cross-Origin-Resource-Policy: same-origin`, so other sites cannot embed the
   proxy.
 - **Signed-in users only**, or the deployment would be a public Referer-spoofing
   image fetcher. Answers are cached `private` (browser only), so no shared cache
   serves them past the check.
+- **Request budgets before fetching:** 10,000 requests per user per UTC day and
+  500,000 across the deployment per UTC month. Both conditional upserts run in
+  one transaction; a denial increments neither and returns an uncached `429`
+  with `Retry-After`, without fetching upstream. This leaves room for two full
+  5000-title gallery passes/day and caps admitted cover requests at half the
+  launch target's monthly invocation allowance. Failed fetches and byte-precheck
+  denials consume requests too. Counter errors return `503` before fetching.
+- **Byte budgets in Postgres:** a read-only pre-check rejects already-exhausted
+  current user/global counters before fetching. After-fetch charges remain the
+  authoritative protection against concurrent requests. Successful image bytes consume at most
+  3 GiB per user and 4 GB across the deployment per UTC calendar month. Both
+  single-statement conditional upserts run in one transaction: a denial rolls
+  back both charges and returns an uncached `429` with `Retry-After`. Counter
+  failures return `503`, never an unmetered image. Failed upstream fetches spend
+  no bytes. Successful responses are browser-cached `immutable` for 30 days, so
+  scrolling a collection again normally spends nothing. 3 GiB covers 3072 images
+  at the full 1 MiB cap, or 5000 averaging 629 KiB; typical thumbnails are smaller.
+  The 4 GB ceiling leaves headroom under the launch target's 10 GB/month Fast
+  Origin Transfer allowance, including other routes and error responses. It
+  meters this route's image bodies, not the platform's entire transfer bill.
+  `NhCover` falls back to procedural art on a failed load, including `429`.
 
 ## Per-user scraper hosts
 
@@ -265,10 +286,11 @@ leaked into the route.
 `VERCEL_AUTOMATION_BYPASS_SECRET` is still needed when `APP_URL` points at a
 deployment with Preview protection enabled.
 
-## Scrape budget
+## Usage budgets
 
-Sign-up is open and every account shares **one** scraper, where a browser
-fallback costs a 15–30 s Playwright page. `lib/rate-limit.ts` caps each user at
+Sign-up is open; the database and deployment are shared, while scraper hosts
+belong to each user. A browser fallback costs a 15–30 s Playwright page.
+`lib/rate-limit.ts` caps each user at
 `SCRAPE_LIMIT` (120) scrapes per hour and returns `429` with `Retry-After`.
 
 Two details that are the point of it:
@@ -277,8 +299,8 @@ Two details that are the point of it:
   lambda instance, so an in-memory bucket hands N times the limit to a caller who
   can make the platform spin up N instances.
 - **It is charged only by the paths that reach the scraper.** Committing an
-  already-scraped payload writes the caller's own rows and spends nothing, and a
-  request rejected as malformed spends nothing either.
+  already-scraped payload spends no scrape budget; creating a new title spends
+  the separate commit budget below. A malformed request spends nothing.
 
 The charge is a single atomic upsert whose `WHERE` refuses on the conflict path,
 so concurrent scrapes from one account cannot lose updates (the batch pool fires
@@ -287,6 +309,26 @@ further out by retrying.
 
 The client-side pool cap (`MAX_CONCURRENT_SCRAPES = 4`) is per tab and is about
 politeness to the tunnel, not abuse. It is not a throttle.
+
+`upsertScrapedTitle` enforces **5000 titles/user** and **240 new titles/hour**
+(UTC calendar hours) for both `/api/scrape` persist paths and the Server Action.
+It locks that user's writes in the transaction before the conditional title
+insert/count. Existing identities bypass the title cap and spend no commit
+budget, so re-scrapes still work at or above either limit. Only a newly inserted
+row charges the commit budget, before entity upserts; any failure rolls back
+the title, entities, links and charge together. The payload gate allows at most
+**64 entities/kind** (the unchanged corpus peaks at 24 tags, 3 other entities).
+The route returns `429` with `Retry-After`; the Server Action returns an explicit
+error value that quick add and batch jobs display, preserving unsaved jobs.
+Deleting a title frees its slot but never refunds a commit.
+
+`markRead` takes the same user lock and conditionally updates the title only if
+its last read is at least **10 minutes** old. Duplicates add no log, increment
+no counter and spend no budget. New logs consume at most **500/user/UTC day**;
+a refusal rolls back the title update and appends no log. These counters and
+cover byte budgets use `usage_budget` (expand-only migration `9b`); each counter
+resets its existing row, so windows do not accumulate storage. The original
+`scrape_budget` primary key is unchanged.
 
 ## Known gaps
 
@@ -299,9 +341,13 @@ politeness to the tunnel, not abuse. It is not a throttle.
 - **A signed-in user can fetch any public image through `/api/cover`**, with any
   Referer they name. Titles come from any site, so there is no list of image
   hosts to restrict it to; what it can reach is public web servers on 80/443
-  answering with an image of at most 4 MB, so the exposure is bandwidth, not
-  access. Sign-up is open, so this is abuse a determined account could commit;
-  if it happens, a per-user budget like the scrape budget is the fix.
+  answering with an image of at most 1 MiB. This run meters response bytes per
+  user and globally (above); it does not bind URLs to stored titles or add HMAC
+  signatures. Already-exhausted byte counters and request limits stop upstream
+  fetches. Denied HTTP requests still invoke the handler and do authentication/
+  budget checks; app-level counters cannot prevent those platform invocations.
+  The byte ceiling covers successful image responses, while request budgets
+  also bound admitted upstream fetches of tiny or unsuccessful images.
 
 - **No explicit Origin check on `POST /api/scrape`.** Route Handlers get none
   from Next.js, unlike Server Actions. Session cookies are `SameSite=Lax`, so a

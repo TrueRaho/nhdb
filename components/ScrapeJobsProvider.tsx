@@ -440,7 +440,9 @@ function UserScrapeJobsProvider({ userId, children }: { userId: string; children
     const failed: Error[] = [];
     for (const j of ready) {
       try {
-        saved.push(await commitScrapedAction(j.raw!));
+        const result = await commitScrapedAction(j.raw!);
+        if ("error" in result) throw new Error(result.error);
+        saved.push(result);
       } catch (e) {
         failed.push(new Error(`${j.item ? itemLabel(j.item) : j.input}: ${e instanceof Error ? e.message : "save failed"}`));
       }

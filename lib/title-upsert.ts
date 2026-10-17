@@ -1,5 +1,6 @@
 import { Prisma } from "./generated/prisma/client";
 import type { ScrapeResult } from "./scrape-payload";
+import { TITLE_LIMIT } from "./usage-limits";
 
 // The statement that files a scraped title (lib/titles.ts upsertScrapedTitle).
 // It lives on its own so prisma/migration.test.ts can run the statement the app
@@ -21,6 +22,12 @@ import type { ScrapeResult } from "./scrape-payload";
 //
 // alterName is user-managed (set manually via updateAlterName) — the scrape
 // path never writes it, neither on create nor on re-scrape.
+//
+// Call under userWriteLockSql in the same transaction: a per-user count must
+// see earlier commits before it decides to admit a new row. EXISTS keeps all
+// existing identities writable, even for collections already over the cap.
+// PostgreSQL's conflict update sets xmax; xmax=0 identifies only a fresh insert
+// so the caller charges the commit budget only for that case, atomically.
 export function titleUpsertSql(userId: string, s: ScrapeResult): Prisma.Sql {
   const key = s.source === "nhentai"
     ? Prisma.sql`${Number(s.source_id)}`
@@ -29,14 +36,16 @@ export function titleUpsertSql(userId: string, s: ScrapeResult): Prisma.Sql {
         nextval('titles_foreign_hashtag_seq'))`;
   return Prisma.sql`
     INSERT INTO titles (user_id, hashtag, source, source_id, url, title_name, image_link, pages, uploaded_at)
-    VALUES (${userId}, ${key}, ${s.source}, ${s.source_id}, ${s.url}, ${s.title_name}, ${s.image_link}, ${s.pages},
-            ${s.uploaded_at}::date)
+    SELECT ${userId}, ${key}, ${s.source}, ${s.source_id}, ${s.url}, ${s.title_name}, ${s.image_link}, ${s.pages},
+            ${s.uploaded_at}::date
+    WHERE EXISTS (SELECT 1 FROM titles WHERE user_id = ${userId} AND source = ${s.source} AND source_id = ${s.source_id})
+       OR (SELECT COUNT(*) FROM titles WHERE user_id = ${userId}) < ${TITLE_LIMIT}
     ON CONFLICT (user_id, source, source_id) DO UPDATE SET
       url = EXCLUDED.url,
       title_name = EXCLUDED.title_name,
       image_link = COALESCE(NULLIF(EXCLUDED.image_link, ''), titles.image_link),
       pages = COALESCE(NULLIF(EXCLUDED.pages, 0), titles.pages),
       uploaded_at = COALESCE(EXCLUDED.uploaded_at, titles.uploaded_at)
-    RETURNING hashtag
+    RETURNING hashtag, (xmax = 0) AS created
   `;
 }

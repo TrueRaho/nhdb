@@ -151,6 +151,15 @@ describe("QuickAdd — title already in the collection", () => {
 });
 
 describe("QuickAdd — new title", () => {
+  it("shows an expected quota failure returned by the Server Action", async () => {
+    stubScrape({ ok: true });
+    vi.mocked(commitScrapedAction).mockResolvedValueOnce({ error: "Title limit reached (5000). Delete a title." });
+    render(<QuickAdd titleRef={nh(177013)} />);
+    await waitFor(() => expect(screen.getAllByText("PenXjbs").length).toBeGreaterThan(0));
+    await act(async () => button().click());
+    await waitFor(() => expect(screen.getByText("Title limit reached (5000). Delete a title.")).toBeTruthy());
+    expect(screen.queryByText(/saved to collection/i)).toBeNull();
+  });
   it("scrapes, previews, and commits the name in the same call", async () => {
     stubScrape({ ok: true });
     render(<QuickAdd titleRef={nh(177013)} />);

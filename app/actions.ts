@@ -15,6 +15,7 @@ import { CARD_BATCH } from "../lib/swipe";
 import { dbTitleToItem } from "../lib/mappers";
 import type { Item } from "../lib/data";
 import type { ScrapeResult } from "../lib/scrape-payload";
+import { UsageLimitError } from "../lib/usage-limits";
 
 // Persist a scraped payload and invalidate caches with read-your-writes
 // semantics (updateTag is only allowed in Server Actions, not Route Handlers).
@@ -29,9 +30,17 @@ import type { ScrapeResult } from "../lib/scrape-payload";
 // upsertScrapedTitle re-validates it, and the key the title is filed under is
 // the one the database returns (a title from another site has none until its
 // first save) — never anything the payload claims.
-export async function commitScrapedAction(scraped: ScrapeResult, alterName?: string): Promise<Item> {
+export async function commitScrapedAction(scraped: ScrapeResult, alterName?: string): Promise<Item | { error: string }> {
   const userId = await requireUserId();
-  const saved = await upsertScrapedTitle(userId, scraped);
+  let saved;
+  try {
+    saved = await upsertScrapedTitle(userId, scraped);
+  } catch (error) {
+    // Expected quota failures travel as data: production Next.js redacts
+    // thrown server errors, which would hide the actionable message.
+    if (error instanceof UsageLimitError) return { error: error.message };
+    throw error;
+  }
   const { hashtag } = saved;
   const name = alterName?.trim();
   if (name) await updateAlterName(userId, hashtag, name);
@@ -62,10 +71,11 @@ export async function deleteTitleAction(hashtag: number) {
 
 export async function markReadAction(hashtag: number) {
   const userId = await requireUserId();
-  await markRead(userId, hashtag);
+  const readCount = await markRead(userId, hashtag);
   updateTag(titlesListTag(userId));
   updateTag(titleTag(userId, hashtag));
   updateTag(statsTag(userId));
+  return readCount;
 }
 
 export async function updateAlterNameAction(hashtag: number, alterName: string) {

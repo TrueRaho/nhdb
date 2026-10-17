@@ -52,8 +52,9 @@ const MAX_TEXT = 255; // every name/link column is VARCHAR(255)
 const MAX_ID = 255; // titles.source_id
 const MAX_PAGES = 100_000;
 const MAX_INT4 = 2_147_483_647;
-// nhentai's busiest galleries carry ~60 tags; anything near this is not a title.
-export const MAX_ENTITIES_PER_KIND = 200;
+// Measured corpus (56 pages, 44 galleries): tags max 24, other kinds max 3.
+// 64 leaves room for busy galleries without accepting 1000 entity rows/title.
+export const MAX_ENTITIES_PER_KIND = 64;
 
 // Thrown for a malformed payload. `name` is "ValidationError" so the
 // /api/scrape route maps it to HTTP 400 (not 500) — matching on the message

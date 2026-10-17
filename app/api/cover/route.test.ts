@@ -7,11 +7,15 @@ vi.mock("@/lib/session", () => ({
 // The fetch rules have their own suite (lib/cover-proxy.test.ts); here they are
 // stubbed so these cases pin the gate, what reaches the proxy, and the headers.
 vi.mock("@/lib/cover-proxy", () => ({ fetchCover: vi.fn() }));
+vi.mock("@/lib/rate-limit", () => ({
+  consumeCoverBudget: vi.fn(), consumeCoverRequestBudget: vi.fn(), checkCoverByteBudget: vi.fn(),
+}));
 
 import { GET } from "./route";
 import { requireUserId, UnauthorizedError } from "@/lib/session";
 import { fetchCover } from "@/lib/cover-proxy";
 import { coverSrc } from "@/lib/sources";
+import { checkCoverByteBudget, consumeCoverBudget, consumeCoverRequestBudget } from "@/lib/rate-limit";
 
 const SRC = "https://tn.gold-usergeneratedcontent.net/webpbigtn/a/bc/abc.webp";
 const PAGE = "https://hitomi.la/galleries/1234567.html";
@@ -21,6 +25,9 @@ const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 0xe0]);
 beforeEach(() => {
   vi.mocked(requireUserId).mockReset().mockResolvedValue("user-a");
   vi.mocked(fetchCover).mockReset().mockResolvedValue({ ok: true, body: JPEG, contentType: "image/jpeg" });
+  vi.mocked(consumeCoverBudget).mockReset().mockResolvedValue({ allowed: true, used: 4, limit: 100 });
+  vi.mocked(consumeCoverRequestBudget).mockReset().mockResolvedValue({ allowed: true, used: 1, limit: 10_000 });
+  vi.mocked(checkCoverByteBudget).mockReset().mockResolvedValue({ allowed: true, used: 0, limit: 100 });
 });
 afterEach(() => vi.restoreAllMocks());
 
@@ -28,6 +35,12 @@ describe("GET /api/cover", () => {
   it("serves the cover as an image only this origin may use", async () => {
     const res = await get();
     expect(fetchCover).toHaveBeenCalledWith(SRC, null);
+    expect(consumeCoverBudget).toHaveBeenCalledWith("user-a", JPEG.byteLength);
+    expect(consumeCoverRequestBudget).toHaveBeenCalledExactlyOnceWith("user-a");
+    expect(checkCoverByteBudget).toHaveBeenCalledExactlyOnceWith("user-a");
+    expect(consumeCoverRequestBudget).toHaveBeenCalledBefore(vi.mocked(checkCoverByteBudget));
+    expect(checkCoverByteBudget).toHaveBeenCalledBefore(vi.mocked(fetchCover));
+    expect(fetchCover).toHaveBeenCalledBefore(vi.mocked(consumeCoverBudget));
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("image/jpeg");
     expect(res.headers.get("content-length")).toBe(String(JPEG.byteLength));
@@ -36,6 +49,7 @@ describe("GET /api/cover", () => {
     expect(res.headers.get("cross-origin-resource-policy")).toBe("same-origin");
     // Gated content: the browser may keep it, a shared cache may not.
     expect(res.headers.get("cache-control")).toMatch(/^private,/);
+    expect(res.headers.get("cache-control")).toContain("immutable");
     expect(new Uint8Array(await res.arrayBuffer())).toEqual(JPEG);
   });
 
@@ -72,6 +86,9 @@ describe("GET /api/cover", () => {
     expect(res.headers.get("cache-control")).toBe("no-store");
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
     expect(fetchCover).not.toHaveBeenCalled();
+    expect(consumeCoverBudget).not.toHaveBeenCalled();
+    expect(consumeCoverRequestBudget).not.toHaveBeenCalled();
+    expect(checkCoverByteBudget).not.toHaveBeenCalled();
   });
 
   it("answers 503 and fetches nothing when the session cannot be checked", async () => {
@@ -91,6 +108,8 @@ describe("GET /api/cover", () => {
     expect(res.headers.get("cache-control")).toBe("no-store");
     expect(res.headers.get("content-security-policy")).toContain("sandbox");
     expect(await res.text()).toBe("upstream answered 403");
+    expect(consumeCoverBudget).not.toHaveBeenCalled();
+    expect(consumeCoverRequestBudget).toHaveBeenCalledOnce(); // Failed fetches still spend a request.
   });
 
   it("remembers a missing cover briefly", async () => {
@@ -106,5 +125,49 @@ describe("GET /api/cover", () => {
     expect(fetchCover).toHaveBeenCalledWith("", null);
     expect(res.status).toBe(400);
     expect(res.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it.each([3_221_225_472, 4_000_000_000])("returns uncached 429 with Retry-After for a byte ceiling of %s", async (limit) => {
+    vi.mocked(consumeCoverBudget).mockResolvedValue({ allowed: false, limit, retryAfterSeconds: 1000 });
+    const res = await get();
+    expect(res.status).toBe(429);
+    expect(res.headers.get("retry-after")).toBe("1000");
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(await res.text()).toContain("budget reached");
+  });
+
+  it("serves no image when the budget store is unavailable", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(consumeCoverBudget).mockRejectedValue(new Error("db down"));
+    expect((await get()).status).toBe(503);
+  });
+
+  it.each([10_000, 500_000])("denies an exhausted request ceiling of %s before fetching", async (limit) => {
+    vi.mocked(consumeCoverRequestBudget).mockResolvedValue({ allowed: false, limit, retryAfterSeconds: 300 });
+    const res = await get();
+    expect(res.status).toBe(429);
+    expect(res.headers.get("retry-after")).toBe("300");
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(fetchCover).not.toHaveBeenCalled();
+    expect(checkCoverByteBudget).not.toHaveBeenCalled();
+    expect(consumeCoverBudget).not.toHaveBeenCalled();
+  });
+
+  it.each([3_221_225_472, 4_000_000_000])("pre-check denies an exhausted byte ceiling of %s before fetching", async (limit) => {
+    vi.mocked(checkCoverByteBudget).mockResolvedValue({ allowed: false, limit, retryAfterSeconds: 1000 });
+    const res = await get();
+    expect(res.status).toBe(429);
+    expect(res.headers.get("retry-after")).toBe("1000");
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(fetchCover).not.toHaveBeenCalled();
+    expect(consumeCoverBudget).not.toHaveBeenCalled();
+  });
+
+  it.each([consumeCoverRequestBudget, checkCoverByteBudget])("fails closed before fetching when a preflight store fails (%#)", async (gate) => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(gate).mockRejectedValue(new Error("db down"));
+    expect((await get()).status).toBe(503);
+    expect(fetchCover).not.toHaveBeenCalled();
+    expect(consumeCoverBudget).not.toHaveBeenCalled();
   });
 });

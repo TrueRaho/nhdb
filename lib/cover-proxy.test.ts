@@ -36,6 +36,9 @@ afterEach(() => {
 });
 
 describe("sniffImageType", () => {
+  it("caps a cover at exactly 1 MiB", () => {
+    expect(MAX_COVER_BYTES).toBe(1024 * 1024);
+  });
   const ascii = (s: string) => Uint8Array.from(s, (c) => c.charCodeAt(0));
   it.each([
     [JPEG, "image/jpeg"],

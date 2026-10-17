@@ -3,7 +3,7 @@
 // branch, database nhdb_test, or a disposable local nhdb_test/nhdb_test_*.
 // Never production. Every test builds and drops only its own nhdb_test_* schema.
 // Set PG_BIN_DIR if PostgreSQL's psql is not on PATH.
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -12,6 +12,9 @@ import { claimStatements, COLLECTION_TABLES } from "../scripts/lib/claim";
 import type { Prisma } from "../lib/generated/prisma/client";
 import type { ScrapeResult } from "../lib/scrape-payload";
 import { titleUpsertSql } from "../lib/title-upsert";
+import { coverBytePrecheckSql, usageBudgetSql, userWriteLockSql, type UsageBudget } from "../lib/usage-budget";
+import { COVER_GLOBAL_BYTES, COVER_GLOBAL_REQUESTS, COVER_USER_BYTES, COVER_USER_REQUESTS, READ_LIMIT, TITLE_LIMIT } from "../lib/usage-limits";
+import { markReadSql } from "../lib/read-log";
 import { AUDIT_TITLES_SQL, auditTitleIds, parseAuditTitles } from "../scripts/lib/audit-title-ids";
 
 const databaseUrl = process.env.NHDB_TEST_DATABASE_URL;
@@ -24,6 +27,15 @@ function query(sql: string) {
     encoding: "utf8",
     stdio: ["pipe", "pipe", "pipe"],
   }).trim();
+}
+
+// Separate live psql sessions are needed to test competing transactions.
+function concurrentQuery(sql: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = execFile(psql, ["-X", "-q", "-A", "-t", "--set=ON_ERROR_STOP=1", "--dbname", databaseUrl!],
+      { encoding: "utf8" }, (error, stdout) => error ? reject(error) : resolve(stdout.trim()));
+    child.stdin!.end(`SET search_path TO "${schema}";\n${sql}`);
+  });
 }
 
 function assertDisposable(raw: string) {
@@ -86,6 +98,19 @@ function claimSql(owner: string) {
 // Every migration directory, in the lexicographic order prisma replays them.
 const migrationNames = () => readdirSync("prisma/migrations").filter((name) => /^\d+[a-z]?_/.test(name)).sort();
 
+describe("usage budget migration (offline)", () => {
+  it("replays 9b immediately after 9a and only adds a new table", () => {
+    const names = migrationNames();
+    expect(names.indexOf("9b_usage_budgets")).toBe(names.indexOf("9a_any_site_titles") + 1);
+    const sql = readFileSync("prisma/migrations/9b_usage_budgets/migration.sql", "utf8")
+      .replace(/--[^\n]*/g, "");
+    expect(sql).toMatch(/CREATE TABLE usage_budget/);
+    expect(sql).toContain("PRIMARY KEY (kind, user_id)");
+    expect(sql).toContain("used BIGINT NOT NULL CHECK (used >= 0)");
+    expect(sql).not.toMatch(/\b(?:ALTER|DROP|TRUNCATE|DELETE|UPDATE)\b/i);
+  });
+});
+
 // The single-user rows migration 6 has to adopt.
 const SINGLE_USER_ROWS = `INSERT INTO titles (hashtag, title_name, image_link, pages, uploaded_at)
   VALUES (101, 'legacy one', '/one', 10, '2026-01-01'), (102, 'legacy two', '/two', 20, '2026-01-02');
@@ -141,6 +166,173 @@ describe.skipIf(!databaseUrl)("multi-user PostgreSQL migration", { timeout: DB_T
     if (schema) query(`DROP SCHEMA "${schema}" CASCADE;`);
     schema = "";
   }, DB_TIMEOUT);
+
+  describe("9b_usage_budgets", () => {
+    const budget: UsageBudget = {
+      kind: "cover-user", userId: "u", amount: 100, limit: 200, period: "month", message: "limit",
+    };
+    const charge = (overrides: Partial<UsageBudget> = {}) => withLiterals(usageBudgetSql({ ...budget, ...overrides }));
+
+    // psql equivalent of consumeUsageBudget throwing on an empty RETURNING:
+    // any denied charge aborts the transaction, including earlier charges.
+    const atomicCharges = (budgets: UsageBudget[]) => `BEGIN;
+      DO $budget$ DECLARE n integer; BEGIN
+      ${budgets.map((b) => `
+        WITH charged AS (${withLiterals(usageBudgetSql(b))}) SELECT count(*) INTO n FROM charged;
+        IF n = 0 THEN RAISE EXCEPTION 'usage budget denied'; END IF;
+      `).join("\n")}
+      END $budget$; COMMIT;`;
+
+    it("allows exact remaining bytes, refuses overflow without increments, and resets old windows", () => {
+      expect(query(charge())).toBe("100");
+      expect(query(charge())).toBe("200");
+      expect(query(charge({ amount: 1 }))).toBe("");
+      expect(query("SELECT used FROM usage_budget WHERE kind = 'cover-user' AND user_id = 'u'")).toBe("200");
+      query("UPDATE usage_budget SET window_at = window_at - INTERVAL '1 month'");
+      expect(query(charge())).toBe("100");
+      expect(query(charge({ userId: "v", amount: 201 }))).toBe("");
+      expect(query("SELECT count(*) FROM usage_budget WHERE user_id = 'v'")).toBe("0");
+    });
+
+    it("rolls back a user charge when the global ceiling denies, and vice versa", () => {
+      query(charge({ kind: "cover-global", userId: "", amount: 200 }));
+      // Mirrors consumeCoverBudget: a zero-row charge causes the transaction
+      // callback to throw. Explicit ROLLBACK is psql's equivalent here.
+      expect(query(`BEGIN; ${charge()}; ${charge({ kind: "cover-global", userId: "", amount: 1 })}; ROLLBACK;`)).toBe("100");
+      expect(query("SELECT count(*) FROM usage_budget WHERE kind = 'cover-user'")).toBe("0");
+      expect(query("SELECT used FROM usage_budget WHERE kind = 'cover-global'")).toBe("200");
+      query(charge({ amount: 200 }));
+      expect(query(`BEGIN; ${charge({ amount: 1 })}; ROLLBACK;`)).toBe("");
+      expect(query("SELECT sum(used) FROM usage_budget")).toBe("400");
+    });
+
+    it("caps new rows but re-scrapes an existing identity even above the cap", () => {
+      const title: ScrapeResult = {
+        source: "nhentai", source_id: "42", url: "https://nhentai.net/g/42/", title_name: "one",
+        image_link: "", pages: 1, uploaded_at: null, tags: [], artists: [], groups: [], characters: [], parodies: [],
+      };
+      expect(query(withLiterals(titleUpsertSql("u", title)))).toBe("42|t");
+      query(`INSERT INTO titles (user_id, hashtag, source, source_id, title_name, image_link, pages)
+        SELECT 'u', n, 'nhentai', n::text, 'seed', '', 1 FROM generate_series(100, ${100 + TITLE_LIMIT - 1}) n`);
+      expect(query(withLiterals(titleUpsertSql("u", { ...title, title_name: "updated" })))).toBe("42|f");
+      expect(query(withLiterals(titleUpsertSql("u", { ...title, source_id: "43", url: "https://nhentai.net/g/43/" })))).toBe("");
+      expect(query(withLiterals(titleUpsertSql("v", title)))).toBe("42|t");
+      expect(query("SELECT title_name FROM titles WHERE user_id = 'u' AND hashtag = 42")).toBe("updated");
+    });
+
+    it("acquires the owner lock in a transaction and leaves legacy scrape budgets writable", () => {
+      query(`BEGIN; ${withLiterals(userWriteLockSql("u"))}; COMMIT;`);
+      query("INSERT INTO scrape_budget (user_id, window_at, used) VALUES ('old-app', NOW(), 1) ON CONFLICT (user_id) DO UPDATE SET used = scrape_budget.used + 1");
+      expect(query("SELECT used FROM scrape_budget WHERE user_id = 'old-app'")).toBe("1");
+    });
+
+    it.each(["hour", "day", "month"] as const)("rolls over a %s window once, then denies without moving it or incrementing", (period) => {
+      const b: UsageBudget = { ...budget, period, limit: 1, amount: 1 };
+      query(withLiterals(usageBudgetSql(b)));
+      query(`UPDATE usage_budget SET window_at = window_at - INTERVAL '1 ${period}', used = 1`);
+      expect(query(withLiterals(usageBudgetSql(b)))).toBe("1");
+      const before = query("SELECT window_at, used FROM usage_budget");
+      expect(query(withLiterals(usageBudgetSql(b)))).toBe("");
+      expect(query("SELECT window_at, used FROM usage_budget")).toBe(before);
+    });
+
+    it.each(["user", "global"])("byte pre-check refuses an exhausted %s counter without writes and ignores stale windows", (scope) => {
+      const precheck = withLiterals(coverBytePrecheckSql("u"));
+      expect(query(`BEGIN READ ONLY; ${precheck}; COMMIT;`)).toBe("");
+      query(charge(scope === "user"
+        ? { amount: COVER_USER_BYTES, limit: COVER_USER_BYTES }
+        : { kind: "cover-global", userId: "", amount: COVER_GLOBAL_BYTES, limit: COVER_GLOBAL_BYTES }));
+      const before = query("SELECT kind, user_id, window_at, used FROM usage_budget");
+      expect(Number(query(`BEGIN READ ONLY; ${precheck}; COMMIT;`))).toBeGreaterThan(0);
+      expect(query("SELECT kind, user_id, window_at, used FROM usage_budget")).toBe(before);
+      if (scope === "user") expect(query(withLiterals(coverBytePrecheckSql("other")))).toBe("");
+      query("UPDATE usage_budget SET window_at = window_at - INTERVAL '1 month'");
+      expect(query(`BEGIN READ ONLY; ${precheck}; COMMIT;`)).toBe("");
+    });
+
+    it.each(["bytes", "requests"])("commits both %s counters, and rolls both back on either denial", (meter) => {
+      const user: UsageBudget = meter === "bytes"
+        ? { ...budget, amount: 1, limit: COVER_USER_BYTES }
+        : { ...budget, kind: "cover-request-user", amount: 1, limit: COVER_USER_REQUESTS, period: "day" };
+      const global: UsageBudget = meter === "bytes"
+        ? { ...budget, kind: "cover-global", userId: "", amount: 1, limit: COVER_GLOBAL_BYTES }
+        : { ...budget, kind: "cover-request-global", userId: "", amount: 1, limit: COVER_GLOBAL_REQUESTS };
+      query(atomicCharges([user, global]));
+      expect(query("SELECT count(*), sum(used) FROM usage_budget")).toBe("2|2");
+      query(`UPDATE usage_budget SET used = ${global.limit} WHERE kind = '${global.kind}'`);
+      let before = query("SELECT kind, used, window_at FROM usage_budget ORDER BY kind");
+      expect(() => query(atomicCharges([user, global]))).toThrow(/usage budget denied/);
+      expect(query("SELECT kind, used, window_at FROM usage_budget ORDER BY kind")).toBe(before);
+      query(`UPDATE usage_budget SET used = CASE WHEN kind = '${user.kind}' THEN ${user.limit} ELSE 1 END`);
+      before = query("SELECT kind, used, window_at FROM usage_budget ORDER BY kind");
+      expect(() => query(atomicCharges([user, global]))).toThrow(/usage budget denied/);
+      expect(query("SELECT kind, used, window_at FROM usage_budget ORDER BY kind")).toBe(before);
+    });
+
+    it("serializes concurrent new titles at the cap and reports exactly one created row", async () => {
+      query(`INSERT INTO titles (user_id, hashtag, source, source_id, title_name, image_link, pages)
+        SELECT 'u', n, 'nhentai', n::text, 'seed', '', 1 FROM generate_series(100, ${100 + TITLE_LIMIT - 2}) n`);
+      const attempt = (id: number) => concurrentQuery(`BEGIN ISOLATION LEVEL READ COMMITTED;
+        ${withLiterals(userWriteLockSql("u"))}; SELECT pg_sleep(0.1);
+        ${withLiterals(titleUpsertSql("u", {
+          source: "nhentai", source_id: String(id), url: `https://nhentai.net/g/${id}/`, title_name: "new",
+          image_link: "", pages: 1, uploaded_at: null, tags: [], artists: [], groups: [], characters: [], parodies: [],
+        }))}; COMMIT;`);
+      const results = await Promise.all([attempt(42), attempt(43)]);
+      expect(results.filter((r) => /^(42|43)\|t$/.test(r))).toHaveLength(1);
+      expect(results.filter((r) => r === "")).toHaveLength(1);
+      expect(query("SELECT count(*) FROM titles WHERE user_id = 'u'")).toBe(String(TITLE_LIMIT));
+    });
+
+    const read = (hashtag: number) => `BEGIN ISOLATION LEVEL READ COMMITTED;
+      ${withLiterals(userWriteLockSql("u"))};
+      DO $read$ DECLARE changed integer; charged integer; BEGIN
+        WITH updated AS (${withLiterals(markReadSql("u", hashtag))}) SELECT count(*) INTO changed FROM updated;
+        IF changed > 0 THEN
+          WITH accepted AS (${charge({ kind: "read", amount: 1, limit: READ_LIMIT, period: "day" })})
+            SELECT count(*) INTO charged FROM accepted;
+          IF charged = 0 THEN RAISE EXCEPTION 'read budget denied'; END IF;
+          INSERT INTO read_logs (user_id, hashtag) VALUES ('u', ${hashtag});
+        END IF;
+      END $read$; COMMIT;`;
+    const seedReads = () => query(`INSERT INTO titles (user_id, hashtag, source, source_id, title_name, image_link, pages)
+      VALUES ('u', 42, 'nhentai', '42', 't', '', 1), ('u', 43, 'nhentai', '43', 't', '', 1)`);
+
+    it("dedupes repeat reads without a log, count increment or budget charge, and admits a later read", () => {
+      seedReads();
+      query(read(42));
+      const before = query("SELECT read_count, last_read_at FROM titles WHERE user_id = 'u' AND hashtag = 42");
+      query(read(42));
+      expect(query("SELECT read_count, last_read_at FROM titles WHERE user_id = 'u' AND hashtag = 42")).toBe(before);
+      expect(query("SELECT count(*) FROM read_logs WHERE user_id = 'u'")).toBe("1");
+      expect(query("SELECT used FROM usage_budget WHERE kind = 'read' AND user_id = 'u'")).toBe("1");
+      query("UPDATE titles SET last_read_at = (NOW() AT TIME ZONE 'UTC') - INTERVAL '11 minutes' WHERE user_id = 'u' AND hashtag = 42");
+      query(read(42));
+      expect(query("SELECT read_count FROM titles WHERE user_id = 'u' AND hashtag = 42")).toBe("2");
+      expect(query("SELECT count(*) FROM read_logs WHERE user_id = 'u'")).toBe("2");
+    });
+
+    it("rolls back the title update and log on the daily read cap, then resets the next UTC day", () => {
+      seedReads();
+      query(charge({ kind: "read", amount: READ_LIMIT, limit: READ_LIMIT, period: "day" }));
+      expect(() => query(read(42))).toThrow(/read budget denied/);
+      expect(query("SELECT read_count, last_read_at IS NULL FROM titles WHERE user_id = 'u' AND hashtag = 42")).toBe("0|t");
+      expect(query("SELECT count(*) FROM read_logs WHERE user_id = 'u'")).toBe("0");
+      expect(query("SELECT used FROM usage_budget WHERE kind = 'read' AND user_id = 'u'")).toBe(String(READ_LIMIT));
+      query("UPDATE usage_budget SET window_at = window_at - INTERVAL '1 day' WHERE kind = 'read'");
+      query(read(42));
+      expect(query("SELECT used FROM usage_budget WHERE kind = 'read' AND user_id = 'u'")).toBe("1");
+      expect(query("SELECT count(*) FROM read_logs WHERE user_id = 'u'")).toBe("1");
+    });
+
+    it("serializes competing reads so the same title creates just one log", async () => {
+      seedReads();
+      await Promise.all([concurrentQuery(read(42)), concurrentQuery(read(42))]);
+      expect(query("SELECT read_count FROM titles WHERE user_id = 'u' AND hashtag = 42")).toBe("1");
+      expect(query("SELECT count(*) FROM read_logs WHERE user_id = 'u'")).toBe("1");
+      expect(query("SELECT used FROM usage_budget WHERE kind = 'read' AND user_id = 'u'")).toBe("1");
+    });
+  });
 
   it("audits only the verified collection using a read-only parameterised query", () => {
     query(`INSERT INTO titles (user_id, hashtag, source, source_id, url, title_name, image_link, pages, created_at)
@@ -296,7 +488,7 @@ describe.skipIf(!databaseUrl)("multi-user PostgreSQL migration", { timeout: DB_T
       query(withLiterals(titleUpsertSql("u", {
         title_name: "t", image_link: "", pages: 3, uploaded_at: null,
         tags: [], artists: [], groups: [], characters: [], parodies: [], ...title,
-      })));
+      }))).split("|")[0]; // This helper returns the key; 9b tests pin `created` too.
     const upsertNow = (source: string, id: string, url: string, title = "t") =>
       save({ source, source_id: id, url, title_name: title });
 

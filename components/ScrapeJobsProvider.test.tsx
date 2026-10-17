@@ -406,6 +406,20 @@ describe("scrape pool", () => {
   });
 });
 
+it("keeps a quota-denied job ready and reports its exact error visibly", async () => {
+  vi.mocked(commitScrapedAction).mockResolvedValueOnce({ error: "New-title limit reached (240/hour). Try again later." });
+  const f = gatedFetch();
+  mount();
+  await act(async () => probe.ctx.startScrape("111111"));
+  for (const p of [...f.pending]) await act(async () => f.ok(p));
+  await waitFor(() => expect(probe.ctx.readyCount).toBe(1));
+  let result: Awaited<ReturnType<typeof probe.ctx.commitReady>>;
+  await act(async () => { result = await probe.ctx.commitReady(); });
+  expect(result!.saved).toEqual([]);
+  expect(result!.failedMsg).toContain("New-title limit reached (240/hour)");
+  expect(probe.ctx.jobs).toEqual([expect.objectContaining({ status: "ready", key: "nhentai:111111" })]);
+});
+
 // The `storage` event fires only in OTHER documents, so a test drives it by
 // hand: write what the peer tab would have written, then dispatch the event.
 function peerWrites(jobs: Partial<ScrapeJob>[]) {

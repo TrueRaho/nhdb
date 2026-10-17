@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireUserId, UnauthorizedError } from "@/lib/session";
 import { consumeScrapeBudget } from "@/lib/rate-limit";
+import { UsageLimitError } from "@/lib/usage-limits";
 import { resolveScraperTargets, type ScraperTarget } from "@/lib/scraper-endpoints";
 import { assertReachableHost, UnsafeUrlError } from "@/lib/net-guard";
 import { titlesListTag, datasetTag, statsTag, titleTag, similarTag, similarAnyTag } from "@/lib/cache-tags";
@@ -151,6 +152,12 @@ function isValidationError(e: unknown): e is Error {
   return e instanceof Error && /invalid|validation/i.test(e.name);
 }
 
+function quotaResponse(error: UsageLimitError) {
+  return NextResponse.json({ error: error.message }, {
+    status: 429, headers: { "Retry-After": String(error.retryAfterSeconds) },
+  });
+}
+
 export async function POST(req: Request) {
   let userId: string;
   try {
@@ -183,6 +190,7 @@ export async function POST(req: Request) {
       invalidateAfterUpsert(userId, saved.hashtag);
       return NextResponse.json({ scraped: body.scraped, saved });
     } catch (e) {
+      if (e instanceof UsageLimitError) return quotaResponse(e);
       if (isValidationError(e)) {
         return NextResponse.json({ error: e.message }, { status: 400 });
       }
@@ -236,11 +244,9 @@ export async function POST(req: Request) {
   }
 
   // Charged here rather than at the top of the handler: everything above this
-  // point is a database write the caller makes to their own rows, while
-  // everything below spends real resources — the user's scraper, and a
-  // serverless function held open for up to maxDuration. So a `persist` commit
-  // of an already-scraped payload costs nothing, and a malformed request costs
-  // nothing.
+  // point can commit an existing payload; that spends only the separate
+  // new-title budget at the shared write boundary. Everything below reaches
+  // the scraper and spends the scrape budget, even when no title is saved.
   const budget = await consumeScrapeBudget(userId);
   if (!budget.allowed) {
     return NextResponse.json(
@@ -289,6 +295,7 @@ export async function POST(req: Request) {
         invalidateAfterUpsert(userId, saved.hashtag);
         return NextResponse.json({ scraped, saved, via });
       } catch (e) {
+        if (e instanceof UsageLimitError) return quotaResponse(e);
         if (isValidationError(e)) {
           return NextResponse.json({ error: e.message }, { status: 400 });
         }
@@ -308,6 +315,7 @@ export async function POST(req: Request) {
     invalidateAfterUpsert(userId, saved.hashtag);
     return NextResponse.json({ scraped, saved, via });
   } catch (e) {
+    if (e instanceof UsageLimitError) return quotaResponse(e);
     if (e instanceof ScrapeError) {
       const status = e.code === "BAD_INPUT" ? 400 : e.code === "NOT_FOUND" ? 404 : 502;
       return NextResponse.json({ error: e.message, code: e.code }, { status });

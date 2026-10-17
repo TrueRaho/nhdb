@@ -13,6 +13,7 @@ import * as titles from "../lib/titles";
 import { requireUserId } from "../lib/session";
 import { updateTag } from "next/cache";
 import type { ScrapeResult } from "../lib/scrape-payload";
+import { UsageLimitError } from "../lib/usage-limits";
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -37,6 +38,18 @@ const protectedCalls: [string, () => Promise<unknown>][] = [
 ];
 
 describe("Server Action authorization", () => {
+  it("returns the persisted read count so deduped reads do not inflate the UI", async () => {
+    vi.mocked(titles.markRead).mockResolvedValue(7);
+    expect(await actions.markReadAction(123)).toBe(7);
+    expect(titles.markRead).toHaveBeenCalledWith("user-a", 123);
+  });
+  it.each(["Title limit reached (5000). Delete a title.", "New-title limit reached (240/hour). Try again later."])("returns expected quota errors as production-safe data: %s", async (message) => {
+    vi.mocked(titles.upsertScrapedTitle).mockRejectedValue(new UsageLimitError(message, 600));
+    expect(await actions.commitScrapedAction({} as ScrapeResult)).toEqual({ error: message });
+    expect(titles.upsertScrapedTitle).toHaveBeenCalledWith("user-a", {});
+    expect(updateTag).not.toHaveBeenCalled();
+    expect(titles.updateAlterName).not.toHaveBeenCalled();
+  });
   it.each(protectedCalls)("%s rejects a direct unauthenticated call before any data access", async (_, call) => {
     vi.mocked(requireUserId).mockRejectedValue(new Error("Unauthorized"));
     await expect(call()).rejects.toThrow("Unauthorized");

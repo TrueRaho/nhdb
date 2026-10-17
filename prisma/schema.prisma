@@ -212,6 +212,17 @@ model ScrapeBudget {
   @@map("scrape_budget")
 }
 
+// Atomic counters for cover bytes, new-title commits and read logs (9b).
+model UsageBudget {
+  kind     String   @db.VarChar(32)
+  userId   String   @map("user_id") @db.VarChar(64)
+  windowAt DateTime @map("window_at") @db.Timestamptz()
+  used     BigInt
+
+  @@id([kind, userId])
+  @@map("usage_budget")
+}
+
 // A user's own scraper hosts, tried in `position` order (migration
 // 8_scraper_endpoints). Written only by rewriting the whole list for a user, so
 // positions stay contiguous from 0 without a reordering dance.
