@@ -5,6 +5,13 @@ Auth user, and the whole security model is two independent layers saying the
 same thing: the application never queries without an owner, and the database
 cannot store a row that mixes two owners.
 
+## Reporting a vulnerability
+
+Use GitHub private vulnerability reporting: open this repository's **Security →
+Advisories → Report a vulnerability**. Include reproduction steps, the affected
+version and the expected impact. Keep vulnerability details in the private
+report while a fix is being coordinated.
+
 ## App access: Neon Managed Better Auth
 
 Authentication is **in the application**, not at the platform edge. Vercel
