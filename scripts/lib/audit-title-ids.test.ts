@@ -33,7 +33,7 @@ describe("read-only title ID audit", () => {
   });
   it("lists confirmed old year, paging-query and underscore IDs without changing the input", () => {
     const rows = [
-      title(1, { source_id: "2019", url: "https://manga.example/summer-story-2019/" }),
+      title(1, { source_id: "2019", url: "https://manga.example/morningledgermvylxao-2019/" }),
       title(2, { source_id: "2", url: "https://manga.example/another-title/?p=2" }),
       title(3, { source_id: "1234", url: "https://manga.example/sister_1234/" }),
       title(4),
@@ -41,7 +41,7 @@ describe("read-only title ID audit", () => {
     const before = JSON.stringify(rows);
     const report = auditTitleIds(rows);
     expect(report.mismatches.map((r) => [r.hashtag, r.source_id, r.current_id])).toEqual([
-      [1, "2019", "summer-story-2019"], [2, "2", "another-title"], [3, "1234", "sister_1234"],
+      [1, "2019", "morningledgermvylxao-2019"], [2, "2", "another-title"], [3, "1234", "sister_1234"],
     ]);
     expect(report).toMatchObject({ scanned: 4, in_window: 4, unreadable: [] });
     expect(JSON.stringify(rows)).toBe(before);
@@ -85,13 +85,13 @@ describe("read-only title ID audit", () => {
     const dir = mkdtempSync(join(tmpdir(), "nhdb-id-audit-"));
     try {
       const input = join(dir, "snapshot.json");
-      writeFileSync(input, JSON.stringify([title(1, { source_id: "2019", url: "https://manga.example/summer-story-2019/" })]));
+      writeFileSync(input, JSON.stringify([title(1, { source_id: "2019", url: "https://manga.example/morningledgermvylxao-2019/" })]));
       const run = (args: string[]) => execFileSync(process.execPath, ["--import", "tsx", "scripts/audit-title-ids.ts", ...args], {
         encoding: "utf8", stdio: ["pipe", "pipe", "pipe"],
         env: { ...process.env, DATABASE_URL: "postgresql://do-not-contact.invalid/unused", APP_URL: "http://do-not-contact.invalid", NHDB_SESSION_COOKIE: "do-not-include" },
       });
       const output = run([`--from-json=${input}`]);
-      expect(JSON.parse(output).mismatches[0].current_id).toBe("summer-story-2019");
+      expect(JSON.parse(output).mismatches[0].current_id).toBe("morningledgermvylxao-2019");
       expect(output).not.toContain("do-not-include");
       for (const args of [[], ["--write"], ["--user-id=other"], [`--from-json=${input}`, "--database"]]) expect(() => run(args)).toThrow();
     } finally { rmSync(dir, { recursive: true, force: true }); }

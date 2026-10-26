@@ -76,7 +76,7 @@ export function cleanText(raw: string): string {
 
 /**
  * One spelling per entity, whichever site it came from: nhentai's vocabulary is
- * already lowercase ("big breasts", "penqech"), and the other sites write the
+ * already lowercase ("big breasts", "some artist"), and the other sites write the
  * same names capitalized or in full-width forms. Folding them here is what lets
  * a tag filter, the stats, related tags and ghost tags see one "big breasts"
  * across sources instead of three.

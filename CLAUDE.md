@@ -391,7 +391,7 @@ and `queryTitles` only pays the computation when `ghostTags` is set.
 ### Entity naming rules (migrations `5_split_aliases_and_normalize_links`, `9a`)
 
 nhentai keeps every alias of one entity on a single tag page, separated by
-`" | "` — `pensgfi | pencbfj`, `penvxcz | quill cuoi`. **All five
+`" | "` — `akane | crimson`, `pokemon | pocket monsters`. **All five
 categories are split the same way**, for every site (`cleanName` in
 `lib/scrapers/extract.ts`), so a title lists each name separately and a half
 that also exists on its own stops being a duplicate row. (`" / "` is different:
@@ -400,7 +400,7 @@ it separates one name's English and Japanese spellings, and the first is kept.)
 Know what the split costs before "fixing" it: the separator does **not** mean
 the same thing everywhere. For artists and groups the halves really are separate
 credits. For parodies it carries one work's Japanese and English titles, so
-`penvxcz | quill cuoi` deliberately becomes two parody rows for one
+`pokemon | pocket monsters` deliberately becomes two parody rows for one
 franchise. Uniform tables were chosen over nhentai's semantics on purpose — do
 not "restore" per-category behaviour without asking.
 

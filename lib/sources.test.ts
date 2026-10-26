@@ -235,7 +235,7 @@ describe("galleryIdOf — any other site, by the shape of its address", () => {
     ["https://example.com/12345/some-slug", "12345"],
     ["https://example.com/some-title-123456/", "123456"],
     // ...but a year, or an underscore tail outside a gallery word, is part of the name
-    ["https://hentaixcomic.com/manga/summer-story-2019/", "summer-story-2019"],
+    ["https://hentaixcomic.com/manga/morningledgermvylxao-2019/", "morningledgermvylxao-2019"],
     ["https://example.org/some-title-2021/", "some-title-2021"],
     ["https://example.org/some_title_1234/", "some_title_1234"],
     // a WordPress ?p= is the post only on the front script, elsewhere it is a page
@@ -255,7 +255,7 @@ describe("galleryIdOf — any other site, by the shape of its address", () => {
   it("never gives two titles one id because their slugs end alike", () => {
     // An upsert on a shared (source, id) would overwrite one title with the other.
     const pairs = [
-      ["https://hentaixcomic.com/manga/summer-story-2019/", "https://hentaixcomic.com/manga/morningledgerspmefad-2019/"],
+      ["https://hentaixcomic.com/manga/morningledgermvylxao-2019/", "https://hentaixcomic.com/manga/morningledgerspmefad-2019/"],
       ["https://myreadingmanga.info/circle-summer-vacation-2021/", "https://myreadingmanga.info/other-circle-winter-story-2021/"],
       ["https://somesite.com/some-title-slug/?p=2", "https://somesite.com/another-title/?p=2"],
     ];

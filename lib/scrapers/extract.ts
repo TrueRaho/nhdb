@@ -220,7 +220,7 @@ function isNoiseElement(el: El): boolean {
     if (/^h[2-6]$/.test(ct) || /(?:^|[\s_-])(?:title|heading|header|caption)(?:$|[\s_-])/i.test(attrOf(c, "class"))) {
       const ht = nodeText(c, 80);
       const kw = ht.match(OTHERS_HEADING);
-      // The page's own title heading ("Morning Ledger Gqihnsh [English]") is not a
+      // The page's own title heading ("Title Here [English]") is not a
       // block about other titles, whatever word it starts with.
       if (kw && ct !== "h1" && !isOwnTitle(ht, kw[0])) return true;
     }
@@ -646,7 +646,7 @@ const isSearchUrl = (url: URL) =>
   url.pathname.split("/").some((seg) => /^search(?:\.\w+)?$/i.test(seg)) || ["q", "query", "keyword", "s"].some((k) => url.searchParams.has(k));
 
 // A search shortcut in a row of taxonomy links ("/tags/glasses/" … "/search?q=
-// penhclp") is a name the site never filed under any kind. The row's label
+// some name") is a name the site never filed under any kind. The row's label
 // cannot vouch for it the way it does for the row's real values.
 function isStrayShortcut($: CheerioAPI, a: El, url: URL, pageUrl: URL): boolean {
   if (!isSearchUrl(url) || pathMeaning(url)) return false;

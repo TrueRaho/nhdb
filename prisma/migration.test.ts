@@ -399,15 +399,15 @@ describe.skipIf(!databaseUrl)("multi-user PostgreSQL migration", { timeout: DB_T
 
   it("audits only the verified collection using a read-only parameterised query", () => {
     query(`INSERT INTO titles (user_id, hashtag, source, source_id, url, title_name, image_link, pages, created_at)
-      VALUES ('audit-owner', 1000000001, 'manga.example', '2019', 'https://manga.example/summer-story-2019/', 'old id', '', 1, '2026-10-05 01:00:00'),
-             ('audit-owner', 1000000002, 'manga.example', 'summer-story-2019', 'https://manga.example/summer-story-2019/', 'existing', '', 1, '2026-10-04'),
-             ('other-owner', 1000000001, 'manga.example', '2019', 'https://manga.example/summer-story-2019/', 'other', '', 1, '2026-10-05');`);
+      VALUES ('audit-owner', 1000000001, 'manga.example', '2019', 'https://manga.example/morningledgermvylxao-2019/', 'old id', '', 1, '2026-10-05 01:00:00'),
+             ('audit-owner', 1000000002, 'manga.example', 'morningledgermvylxao-2019', 'https://manga.example/morningledgermvylxao-2019/', 'existing', '', 1, '2026-10-04'),
+             ('other-owner', 1000000001, 'manga.example', '2019', 'https://manga.example/morningledgermvylxao-2019/', 'other', '', 1, '2026-10-05');`);
     expect(query(`SELECT pg_typeof(t.created_at)::text FROM (${AUDIT_TITLES_SQL.replace("$1", "'audit-owner'")}) t LIMIT 1`)).toBe("text");
     const rows = query(`BEGIN READ ONLY;
       PREPARE audit(text) AS SELECT COALESCE(json_agg(t), '[]'::json) FROM (${AUDIT_TITLES_SQL}) t;
       EXECUTE audit('audit-owner'); COMMIT;`);
     const report = auditTitleIds(parseAuditTitles(JSON.parse(rows)));
-    expect(report).toMatchObject({ scanned: 2, in_window: 1, mismatches: [{ user_id: "audit-owner", hashtag: 1000000001, current_id: "summer-story-2019", collides_with: [1000000002] }] });
+    expect(report).toMatchObject({ scanned: 2, in_window: 1, mismatches: [{ user_id: "audit-owner", hashtag: 1000000001, current_id: "morningledgermvylxao-2019", collides_with: [1000000002] }] });
     expect(report.mismatches[0].created_at).toBe("2026-10-05T01:00:00.000Z");
     expect(query("SELECT source_id FROM titles WHERE user_id = 'audit-owner' AND hashtag = 1000000001")).toBe("2019");
     expect(() => query("BEGIN READ ONLY; UPDATE titles SET title_name = 'must not write'; COMMIT;")).toThrow(/read-only transaction/);

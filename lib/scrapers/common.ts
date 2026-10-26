@@ -33,8 +33,8 @@ export function clip(s: string, max = TITLE_MAX): string {
   return /[\uD800-\uDBFF]$/.test(cut) ? cut.slice(0, -1) : cut;
 }
 
-// "(C92) [Quill Rycm (Quill Tjgk)] Morning Ledger Fqkgbiq (Quill Rfns) [English]"
-// → "Morning Ledger Fqkgbiq". The bracketed lead (event, circle, artist) and tail
+// "(C92) [Circle Name (Artist Name)] Title Here (Parody Name) [English]"
+// → "Title Here". The bracketed lead (event, circle, artist) and tail
 // (parody, language, scanlator) are what nhentai keeps out of its `.pretty`
 // title, and they are already stored as entities. A title that is nothing
 // but brackets is returned as it was rather than emptied.

@@ -171,9 +171,10 @@ function segments(url: URL): string[] {
 const SLUG = /^[a-z0-9](?:[a-z0-9_.-]|%(?:20|2f|3f|23|25)){0,119}$/;
 
 // The id a slug carries at its end: "some-title-english-1234567" → the number.
-// A short tail ("-2") is part of the name, and so is a year: "summer-story-2019" and "morningledgerspmefad-2019" are two titles, never one id "2019". An
+// A short tail ("-2") is part of the name, and so is a year: "summer-story-
+// 2019" and "winter-story-2019" are two titles, never one id "2019". An
 // underscore tail counts only after a gallery word ("/albums/some-title_456789/"):
-// a lone underscore slug is a name ("/morningledgerhhxtbzk_2019/", "/sister_1234/").
+// a lone underscore slug is a name ("/summer_festival_2019/", "/sister_1234/").
 function tailId(seg: string, underscore: boolean): string | null {
   const tail = seg.match(underscore ? /[-_](\d{4,12})$/ : /-(\d{4,12})$/);
   if (!tail || /^(?:19|20)\d\d$/.test(tail[1])) return null;
@@ -201,7 +202,7 @@ function idOfSegment(seg: string, slugOk: boolean, afterGalleryWord = false): st
  *   2. an id query parameter: "view.php?id=123" → "123";
  *   3. a long number anywhere in the path: "/12345/some-slug" → "12345";
  *   4. a lone slug, optionally followed by chapter and page numbers (up to two):
- *      "/morningledgerjoregra/" and "/morningledgerjoregra/1/5/" → "morningledgerjoregra".
+ *      "/lone_slug/" and "/lone_slug/1/5/" → "lone_slug".
  */
 // A token after a gallery's number is part of its id: E-Hentai's is 10 hex
 // characters, which can happen to be all digits ("899557/0123456789"); any
@@ -254,7 +255,7 @@ export function galleryIdOf(url: URL): string | null {
     }
     const tail = tailId(seg, false);
     if (tail) return tail;
-    // A number LEADING a slug ("1001-nights", "86958-morningledgerzqsvunf") is not taken
+    // A number LEADING a slug ("1001-nights", "86958-title-slug") is not taken
     // for an id: it is as often the start of the name, and "1001-nights" and
     // "1001-nights-of-love" would become one title. The whole slug names it.
   }

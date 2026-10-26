@@ -56,9 +56,10 @@ const RETRY_DELAY_MS = 4_000;
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 // Scrapes run through a bounded pool rather than all at once. Pasting a phone's
-// whole tab list queues dozens of entries in one go, and firing them together means dozens of concurrent /api/scrape calls funnelling into a single ngrok tunnel — or, when
-// the primary box is asleep, dozens of parallel Playwright launches on the free Render
-// fallback, which it does not survive.
+// whole tab list queues dozens of entries in one go, and firing them together
+// means dozens of concurrent /api/scrape calls funnelling into a single ngrok
+// tunnel — or, when the primary box is asleep, dozens of parallel Playwright
+// launches on the free Render fallback, which it does not survive.
 const MAX_CONCURRENT_SCRAPES = 4;
 const QUEUED_NOTE = "queued…";
 
