@@ -1,7 +1,66 @@
 # nhdb
 
-Personal collections with search, reading statistics and metadata scraping.
-Next.js 16, React 19, Prisma 7, Neon Postgres and Neon Auth.
+**A home for your doujin collection.**
+
+If you read doujinshi, you know how it goes: the good ones end up scattered across
+a dozen gallery sites, in bookmarks you never scroll back through, or in a pile of
+open tabs on your phone. Every site tags things its own way, titles come in three
+languages, and the one you wanted to reread last month has long dropped out of
+your history.
+
+I built nhdb so that stops happening. Paste a link from (almost) any gallery site —
+or a whole dump of tabs at once — and nhdb reads the page, pulls out the title,
+artists, groups, parodies, characters and tags, and files it in your own catalogue.
+From there you can filter by any mix of tags, sort by when you added, read or
+uploaded something, by pages or by how often you come back to it, give titles names
+you will actually remember, and see what your reading habits look like.
+
+### What it does
+
+- **Works with any site, no plugins.** There is no list of supported sites. nhdb
+  reads the conventions gallery engines share (headings, tag and artist links,
+  labelled rows, the usual doujin title format) and politely refuses anything that
+  isn't a single title: search pages, tag listings, 404s, login walls.
+- **One vocabulary across sites.** "Big Breasts" on one site and
+  "female:big breasts" on another become the same tag, so filters and statistics
+  work no matter where a title came from.
+- **Helps you find things again.** *Related tags* widen a search with tags that
+  genuinely characterise what you selected. *Ghost tags* guess which tags a
+  sparsely tagged title is probably missing, from the artist's other works — shown
+  as dashed outlines, off by default, never saved as real tags.
+- **Reading statistics.** What you read, when (by hour and by day of the week),
+  and what you keep coming back to.
+- **Adding from your phone.** Share a page straight to nhdb's quick-add link, or
+  queue a batch with a `?add=` link — handy as a bookmarklet or a phone shortcut.
+- **Swipe mode.** Go through the titles you haven't named yet one cover at a
+  time: name the keepers, mark the rest for deletion.
+- **Your data stays yours.** Export your whole collection as JSON, or delete your
+  account and everything in it in one go.
+
+### Why you bring your own scraper
+
+nhdb stores metadata and links only — never the pages or images themselves
+(covers are fetched on demand through a proxy). Reading the pages is done by a small
+scraper that **you** run: on your own computer behind an ngrok tunnel, or on your own
+server. Gallery sites sit behind Cloudflare and rate limits, and one shared scraper
+would funnel everybody's browsing through a single address, so every account brings
+its own and registers it on the Account page. Setting one up takes a few minutes —
+see [Scraper](#scraper).
+
+### Using it
+
+The hosted version lives at **https://nhdb.vercel.app**: sign up with an email,
+verify it, register your scraper under *Account*, and start adding. It is a hobby
+project running on free tiers, so there are fair-use limits (5,000 titles per
+account, caps on scraping and cover traffic) that keep one heavy user from
+taking it down for everyone. If you would rather keep everything to yourself, run
+your own instance — the rest of this README explains how.
+
+**18+ only.** nhdb catalogues adult content. It is meant for adults, and it never
+hosts or redistributes the works themselves.
+
+Built with Next.js 16, React 19, Prisma 7, Neon Postgres and Neon Auth, deployed on
+Vercel. MIT licensed.
 
 ## Local setup
 
